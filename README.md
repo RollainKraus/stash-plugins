@@ -128,7 +128,7 @@ These act as themed supporting images directly on the performer page that you ca
 
 Intended to work alongside PerformerTagsOverhaul, but works as its own standalone plugin and with some other performer page plugins/themes but largely untested
 
-How-To
+<h2>How To</h2>
 
 ** The panel will not show up unless you have set up the slots and have images that fit the criteria
 
