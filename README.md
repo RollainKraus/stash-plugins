@@ -4,7 +4,16 @@
 - [Performer Tags Overhaul](#Performer-Tags-Overhaul)
 - [Performer Tag Based Supporting Images](#Performer-Tag-Based-Supporting-Images)
 
+## Installation
 
+1. Available Plugins >> Add Source
+
+Source Name: Edit Tags Overhaul
+Source URL: [https://rollainkraus.github.io/PerformerTagsOverhaul/main/index.yml](https://rollainkraus.github.io/stash-plugins/main/index.yml)
+
+2. Click Checkbox >> Install
+
+3. Reload Plugins
 
 
 # Edit Tags Overhaul
