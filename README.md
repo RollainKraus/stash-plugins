@@ -1,4 +1,13 @@
-# EditTagsOverhaul
+## Plugins
+- [Edit Tags Overhaul](#Edit-Tags-Overhaul)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [Contributing](#contributing)
+
+
+
+# Edit Tags Overhaul
 
 The edit tab now has Tag Groups organized by your parent-child tags and supports nesting for an additional group. Applies to scenes, images and galleries.
 
