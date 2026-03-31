@@ -1,0 +1,126 @@
+name: PerformerTagsOverhaul
+description: Hierarchical tag browser for performer details with display and edit modes
+version: 0.1.0
+url: https://example.invalid/PerformerTagsOverhaul
+
+settings:
+  a_defaultMode:
+    displayName: Default Mode
+    type: STRING
+    description: "display or edit (Default: display)"
+
+  a_defaultExpanded:
+    displayName: Default Expanded (Only affects Edit Mode)
+    type: BOOLEAN
+    description: "Expand all parent and subgroup sections by default (Default: true)"
+
+  a_autoExpandIfSelected:
+    displayName: Auto Expand If Selected
+    type: BOOLEAN
+    description: "Auto-expand groups containing selected tags (Default: true)"
+
+  a_duplicateMultiParentTags:
+    displayName: Duplicate Multi-Parent Tags (Only affects Edit Mode)
+    type: BOOLEAN
+    description: "Allow tags with multiple parents to appear in each parent location (Default: false)"
+
+  a_optimizeFormatting:
+    displayName: Optimize Formatting
+    type: BOOLEAN
+    description: "Plugin automatically reformats tags into a compact layout which may override your preferred settings (Default: true)"
+
+  a_parentTagBlacklist:
+    displayName: Parent Tag Blacklist
+    type: STRING
+    description: "parent tag names to hide from the performer panel separated by a comma (Default: empty)"
+
+  a_subgroupTagBlacklist:
+    displayName: Subgroup Tag Blacklist
+    type: STRING
+    description: "subgroup tag names to hide from the performer panel separated by a comma (Default: empty)"
+
+  b_displayModeDisplay:
+    displayName: Display Mode Tag Layout
+    type: STRING
+    description: "text, image, or imageAndText for Display mode (Default: imageAndText)"
+
+  b_imageSizeDisplay:
+    displayName: Display Mode Image Size
+    type: STRING
+    description: "Image size for Display mode in pixels (Default: 72)"
+
+  b_imageColumnsDisplay:
+    displayName: Display Mode Tag Columns
+    type: STRING
+    description: "Number of tag columns in Display mode (Default: 3)"
+
+  b_parentFontSizeDisplay:
+    displayName: Display Mode Parent Font Size
+    type: STRING
+    description: "CSS font size for parent group headers (Default: 16px)"
+
+  b_subgroupFontSizeDisplay:
+    displayName: Display Mode Subgroup Font Size
+    type: STRING
+    description: "CSS font size for subgroup headers (Default: 14.72px)"
+
+  b_tagFontSizeDisplay:
+    displayName: Display Mode Tag Font Size
+    type: STRING
+    description: "CSS font size for tags (Default: 13.12px)"
+
+  c_displayModeEdit:
+    displayName: Edit Mode Tag Layout
+    type: STRING
+    description: "text, image, or imageAndText for Edit mode (Default: text)"
+
+  c_imageSizeEdit:
+    displayName: Edit Mode Image Size
+    type: STRING
+    description: "Image size for Edit mode in pixels (Default: 56)"
+
+  c_imageColumnsEdit:
+    displayName: Edit Mode Tag Columns
+    type: STRING
+    description: "Number of tag columns in Edit mode (Default: 3)"
+
+  c_parentFontSizeEdit:
+    displayName: Edit Mode Parent Font Size
+    type: STRING
+    description: "CSS font size for parent group headers (Default: 15.2px)"
+
+  c_subgroupFontSizeEdit:
+    displayName: Edit Mode Subgroup Font Size
+    type: STRING
+    description: "CSS font size for subgroup headers (Default: 14.08px)"
+
+  c_tagFontSizeEdit:
+    displayName: Edit Mode Tag Font Size
+    type: STRING
+    description: "CSS font size for leaf tags (Default: 12.48px)"
+
+  d_selectedBorderColor:
+    displayName: Selected Border Color
+    type: STRING
+    description: "border highlight color for selected tags (Default: #ffffff)"
+
+  d_panelOpacity:
+    displayName: Panel Background Opacity
+    type: STRING
+    description: "Background opacity for panel surfaces, from 0 to 1 (Default: 0.1)"
+
+  d_fontColor:
+    displayName: Font Color
+    type: STRING
+    description: "Text color for the tag panel, for example #ffffff (Default: #ffffff)"
+
+  d_backgroundColor:
+    displayName: Panel Background Color
+    type: STRING
+    description: "Base background color for panel surfaces, for example #ffffff or rgb(20,20,20) (Default: #808080)"
+
+ui:
+  javascript:
+    - PerformerTagsOverhaul.js
+  css:
+    - PerformerTagsOverhaul.css
