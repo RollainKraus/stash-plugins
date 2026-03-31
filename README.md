@@ -110,6 +110,42 @@ Display Mode makes performer tags much more legible and organized, useful if you
 
 # Performer Tag Based Supporting Images
 
+The Performer Tab now supports a column of mini galleries that use your tags.
+These act as themed supporting images directly on the performer page that you can customize.
+
+- Tag performer images and choose which tags are displayed per slot, supports multiple tags and filters like 'all' and 'any'
+- Up to 6 slots
+- Clicking on the slot label will filter images using that slot's tags
+- Clicking on the image will open the image in a new tab
+- Slots support multiple images and cropping for each image
+- Aspect ratio of slot is determined by the initial image, but can be manually changed by cropping any image
+  - if a slot has multiple images, they will inherit the latest cropped aspect ratio
+- size of the supporting images column can be increased
+- Lots of customization including color, opacity, font, and sizing for buttons/labels and background
+  - Can change if the label appears as a header or as part of the footer, as well as custom label names per slot
+- The panel can loop as you scroll, best kept enabled if you have multiple slots active
+- If multiple images are assigned to a slot, the image display can be set to 'first' (based on the image name), or 'random'
+
+Intended to work alongside PerformerTagsOverhaul, but works as its own standalone plugin and with some other performer page plugins/themes but largely untested
+
+How-To
+
+1. Find images you want to display in the supporting images panel
+2. Insure they are assigned to the performer
+3. Add tags - for example: based on outfit, clothed, nude or different features
+4. In the plugin settings, add one or more tags to a slot and optionally change the label of that slot
+5. They should appear in the performer page in their own column on the right
+6. Crop the images to isolate the specific feature you want to highlight or to just better fit the image in the panel
+
+<h2>Preview</h2>
+<p>
+  <img src="/plugins/PerformerTagBasedSupportingImages/images/PerformerTagBasedSupportingImagesPreview.gif" alt="DetailsTagsOverhaul preview" width="600">
+</p>
+
+<h2>Settings Preview</h2>
+<p>
+  <img src="/plugins/PerformerTagBasedSupportingImages/images/PerformerTagBasedSupportingImagesSettingsPreview.png" alt="DetailsTagsOverhaul settings" width="600">
+</p>
 
 
 Made with AI
