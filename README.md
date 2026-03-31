@@ -55,7 +55,7 @@ The details tab now has Tag Groups organized by your parent-child tags and suppo
   <img src="/plugins/DetailsTagsOverhaul/images/DetailsTagsOverhaulSettingsPreview.png" alt="DetailsTagsOverhaul settings" width="600">
 </p>
 
-# PerformerTagsOverhaul
+# Performer Tags Overhaul
 
 The Performer page now supports the same functionality from EditTagsOverhaul and DetailsTagsOverhaul: A hierarchical toggle based tagging interface and display mode heavily reliant on user-set parent-child tag relationships
 
@@ -79,24 +79,23 @@ Display Mode makes performer tags much more legible and organized, useful if you
 
 <h2>Preview</h2>
 <p>
-  <img src="/plugins/images/PerformerTagsOverhaulPreview.gif" alt="PerformerTagsOverhaul preview" width="600">
+  <img src="/plugins/PerformerTagsOverhaul/images/PerformerTagsOverhaulPreview.gif" alt="PerformerTagsOverhaul preview" width="600">
 </p>
 
 <h2>Text and Image Display Mode Preview</h2>
 <p>
-  <img src="/plugins/images/PerformerTagsSubGroupsPreviewTextAndImageMode.png" alt="PerformerTagsOverhaul search" width="600">
+  <img src="/plugins/PerformerTagsOverhaul/images/PerformerTagsSubGroupsPreviewTextAndImageMode.png" alt="PerformerTagsOverhaul search" width="600">
 </p>
 
 <h2>Text Display Mode Preview</h2>
 <p>
-  <img src="/plugins/images/PerformerTagsSubGroupsPreviewTextMode.png" alt="PerformerTagsOverhaul search" width="600">
+  <img src="/plugins/PerformerTagsOverhaul/images/PerformerTagsSubGroupsPreviewTextMode.png" alt="PerformerTagsOverhaul search" width="600">
 </p>
 
 <h2>Settings Preview</h2>
 <p>
-  <img src="/plugins/images/PerformerTagsOverhaulSettingsPreview.png" alt="PerformerTagsOverhaul settings" width="600">
+  <img src="/plugins/PerformerTagsOverhaul/images/PerformerTagsOverhaulSettingsPreview.png" alt="PerformerTagsOverhaul settings" width="600">
 </p>
-
 
 Made with AI
 
