@@ -110,7 +110,7 @@ Display Mode makes performer tags much more legible and organized, useful if you
 
 # Performer Tag Based Supporting Images
 
-The Performer Tab now supports a column of mini galleries that use your tags.
+The Performer Page now supports a column of mini galleries that use your tags.
 These act as themed supporting images directly on the performer page that you can customize.
 
 - Tag performer images and choose which tags are displayed per slot, supports multiple tags and filters like 'all' and 'any'
