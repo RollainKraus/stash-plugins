@@ -1,0 +1,46 @@
+name: DetailsTagsOverhaul
+description: Hierarchical read-only tag overview for scene, gallery, and image detail pages
+version: 0.1.2
+url: https://example.invalid/DetailsTagsOverhaul
+
+settings:
+  defaultExpanded:
+    displayName: Default Expanded
+    type: BOOLEAN
+    description: Expand all hierarchies by default
+
+  displayMode:
+    displayName: Tag Display Mode
+    type: STRING
+    description: text, image, or imageAndText
+
+  imageSize:
+    displayName: Image Size
+    type: STRING
+    description: Size of tag image in image and imageAndText modes
+
+  linkGroupHeaders:
+    displayName: Link Group/Subgroup Headers
+    type: BOOLEAN
+    description: Adds a link to the tag header to navigate to the tag page. Works best with showCollapseButtons enabled
+
+  showCollapseButtons:
+    displayName: Show Expand/Collapse Buttons
+    type: BOOLEAN
+    description: Use a specific expand/collapse button to tag groups
+
+  duplicateMultiParentTags:
+    displayName: Duplicate Multi-Parent Tags
+    type: BOOLEAN
+    description: Allow tags with multiple parents to exist under each parent
+
+  showParentTagsAsSelectable:
+    displayName: Show Parent Tags As Selectable
+    type: BOOLEAN
+    description: Show selected parent tags even when those tags also have child tags
+
+ui:
+  javascript:
+    - DetailsTagsOverhaul.js
+  css:
+    - DetailsTagsOverhaul.css
