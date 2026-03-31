@@ -2,7 +2,7 @@
 - [Edit Tags Overhaul](#Edit-Tags-Overhaul)
 - [Details Tags Overhaul](#Details-Tags-Overhaul)
 - [Performer Tags Overhaul](#Performer-Tags-Overhaul)
-- [Performer Tag Based Supporting Images](#Performer-TagBased-Supporting-Images)
+- [Performer Tag Based Supporting Images](#Performer-Tag-Based-Supporting-Images)
 
 
 
