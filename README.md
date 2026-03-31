@@ -2,8 +2,8 @@
 - [Edit Tags Overhaul](#Edit-Tags-Overhaul)
 - [Details Tags Overhaul](#Details-Tags-Overhaul)
 - [Performer Tags Overhaul](#Performer-Tags-Overhaul)
-- [Configuration](#configuration)
-- [Contributing](#contributing)
+- [Performer Tag Based Supporting Images](#Performer-TagBased-Supporting-Images)
+
 
 
 
@@ -96,6 +96,11 @@ Display Mode makes performer tags much more legible and organized, useful if you
 <p>
   <img src="/plugins/PerformerTagsOverhaul/images/PerformerTagsOverhaulSettingsPreview.png" alt="PerformerTagsOverhaul settings" width="600">
 </p>
+
+
+# Performer Tag Based Supporting Images
+
+
 
 Made with AI
 
