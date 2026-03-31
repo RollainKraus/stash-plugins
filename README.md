@@ -1,7 +1,7 @@
 ## Plugins
 - [Edit Tags Overhaul](#Edit-Tags-Overhaul)
 - [Details Tags Overhaul](#Details-Tags-Overhaul)
-- [Performer Tags Overhaul](#Performer-Tags_Overhaul)
+- [Performer Tags Overhaul](#Performer-Tags-Overhaul)
 - [Configuration](#configuration)
 - [Contributing](#contributing)
 
