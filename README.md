@@ -130,6 +130,8 @@ Intended to work alongside PerformerTagsOverhaul, but works as its own standalon
 
 How-To
 
+** The panel will not show up unless you have set up the slots and have images that fit the criteria
+
 1. Find images you want to display in the supporting images panel
 2. Insure they are assigned to the performer
 3. Add tags - for example: based on outfit, clothed, nude or different features
