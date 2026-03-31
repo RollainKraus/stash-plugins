@@ -8,8 +8,9 @@
 
 1. Available Plugins >> Add Source
 
-Source Name: Edit Tags Overhaul
-Source URL: [https://rollainkraus.github.io/PerformerTagsOverhaul/main/index.yml](https://rollainkraus.github.io/stash-plugins/main/index.yml)
+Source Name: RollainKraus
+
+Source URL: [https://rollainkraus.github.io/stash-plugins/main/index.yml](https://rollainkraus.github.io/stash-plugins/main/index.yml)
 
 2. Click Checkbox >> Install
 
