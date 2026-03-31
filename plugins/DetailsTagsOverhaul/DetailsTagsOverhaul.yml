@@ -1,7 +1,7 @@
-name: DetailsTagsOverhaul
+name: Details Tags Overhaul
 description: Hierarchical read-only tag overview for scene, gallery, and image detail pages
 version: 0.1.2
-url: https://example.invalid/DetailsTagsOverhaul
+url: https://github.com/RollainKraus/stash-plugins
 
 settings:
   defaultExpanded:
