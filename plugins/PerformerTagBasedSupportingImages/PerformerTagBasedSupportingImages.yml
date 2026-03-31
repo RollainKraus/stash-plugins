@@ -1,0 +1,136 @@
+name: Performer Tag Based Supporting Images
+description: Supporting performer images selected by performer plus slot tag rules
+version: 0.1.0
+url: https://github.com/RollainKraus/stash-plugins
+
+settings:
+  a_selectionMode:
+    displayName: Image Selection Mode
+    type: STRING
+    description: "How each slot chooses among multiple matches: first or random (Default: first)"
+
+  a_slotTagMatchMode:
+    displayName: Slot Tag Match Mode
+    type: STRING
+    description: "How multiple tags within a single slot are matched: any or all (Default: any)"
+
+  a_loopSlots:
+    displayName: Loop Slots
+    type: BOOLEAN
+    description: "Repeat slots for infinite scrolling behavior (Default: true)"
+
+  a_slotInfoPosition:
+    displayName: Slot Info Position
+    type: STRING
+    description: "Whether the tag label row is shown at the top or bottom of the slot: top or bottom (Default: top)"
+
+  a_imageHeight:
+    displayName: Minimum Slot Height
+    type: STRING
+    description: "Sets the minimum height of slots and influences how tall slots can grow (Default: 210)"
+
+  a_panelWidthScale:
+    displayName: Panel Width Scale
+    type: STRING
+    description: "Panel width percentage from 100 to 150 (Default: 100)"
+
+  a_panelBackgroundColor:
+    displayName: Background Panel Color
+    type: STRING
+    description: "Background color for the slot header/footer panels (Default: #808080)"
+
+  a_panelOpacity:
+    displayName: Background Panel Opacity
+    type: STRING
+    description: "Background opacity for the slot header/footer panels from 0 to 1 (Default: 0.1)"
+
+  a_overlayBackgroundColor:
+    displayName: Buttons/Labels Background Color
+    type: STRING
+    description: "Background color for buttons and labels (Default: #808080)"
+
+  a_overlayBackgroundOpacity:
+    displayName: Buttons/Labels Background Opacity
+    type: STRING
+    description: "Background opacity for buttons and labels from 0 to 1 (Default: 0.3)"
+
+  a_overlayFontColor:
+    displayName: Buttons/Labels Font Color
+    type: STRING
+    description: "Text and icon color for buttons and labels (Default: #ffffff)"
+
+  a_overlayFontSize:
+    displayName: Buttons/Labels Font Size
+    type: STRING
+    description: "Font size in pixels for buttons and labels (Default: 13)"
+
+  a_openInNewTab:
+    displayName: Open Images In New Tab
+    type: BOOLEAN
+    description: "Open the image page in a new tab when clicking a supporting image (Default: true)"
+
+  b_slot1Tags:
+    displayName: Slot 1 Tags
+    type: STRING
+    description: "Comma-separated tag names required for slot 1 matches (Default: empty)"
+
+  c_slot1Label:
+    displayName: Slot 1 Label
+    type: STRING
+    description: "Custom label for slot 1 (Default: tag names)"
+
+  d_slot2Tags:
+    displayName: Slot 2 Tags
+    type: STRING
+    description: "Comma-separated tag names required for slot 2 matches (Default: empty)"
+
+  e_slot2Label:
+    displayName: Slot 2 Label
+    type: STRING
+    description: "Custom label for slot 2 (Default: tag names)"
+
+  f_slot3Tags:
+    displayName: Slot 3 Tags
+    type: STRING
+    description: "Comma-separated tag names required for slot 3 matches (Default: empty)"
+
+  g_slot3Label:
+    displayName: Slot 3 Label
+    type: STRING
+    description: "Custom label for slot 3 (Default: tag names)"
+
+  h_slot4Tags:
+    displayName: Slot 4 Tags
+    type: STRING
+    description: "Comma-separated tag names required for slot 4 matches (Default: empty)"
+
+  i_slot4Label:
+    displayName: Slot 4 Label
+    type: STRING
+    description: "Custom label for slot 4 (Default: tag names)"
+
+  j_slot5Tags:
+    displayName: Slot 5 Tags
+    type: STRING
+    description: "Comma-separated tag names required for slot 5 matches (Default: empty)"
+
+  k_slot5Label:
+    displayName: Slot 5 Label
+    type: STRING
+    description: "Custom label for slot 5 (Default: tag names)"
+
+  l_slot6Tags:
+    displayName: Slot 6 Tags
+    type: STRING
+    description: "Comma-separated tag names required for slot 6 matches (Default: empty)"
+
+  m_slot6Label:
+    displayName: Slot 6 Label
+    type: STRING
+    description: "Custom label for slot 6 (Default: tag names)"
+
+ui:
+  javascript:
+    - PerformerTagBasedSupportingImages.js
+  css:
+    - PerformerTagBasedSupportingImages.css
