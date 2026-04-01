@@ -19,6 +19,11 @@ settings:
     type: BOOLEAN
     description: "Repeat slots for infinite scrolling behavior (Default: true)"
 
+  a_defaultPanelState:
+    displayName: Panel State Behavior
+    type: STRING
+    description: "expanded, collapsed, or remember last state (Default: remember; falls back to expanded if no saved state exists)"
+
   a_slotInfoPosition:
     displayName: Slot Info Position
     type: STRING
