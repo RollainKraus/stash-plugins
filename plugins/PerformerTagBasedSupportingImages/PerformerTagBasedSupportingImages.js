@@ -13,8 +13,10 @@
   const PANEL_MIN_HEIGHT = 220;
   const PANEL_BASE_WIDTH = 300;
   const PANEL_MAX_WIDTH = Math.round(PANEL_BASE_WIDTH * 1.5);
+  const PANEL_COLLAPSED_WIDTH = 58;
   const CROP_STORAGE_KEY = "ptbsi-slot-crops-v1";
   const SLOT_ASPECT_STORAGE_KEY = "ptbsi-slot-aspect-modes-v1";
+  const COLLAPSED_STORAGE_KEY = "ptbsi-panel-collapsed-v1";
   const SLOT_ASPECT_MODES = ["tall", "portrait", "square", "landscape"];
   const LOOP_REPEAT_COUNT = 3;
   const LAYOUT_REFRESH_DELAYS = [0, 80, 180, 320];
@@ -41,6 +43,7 @@
     observedElements: new Set(),
     cropStore: loadCropStore(),
     slotAspectStore: loadSlotAspectStore(),
+    isCollapsed: false,
     cropEditor: null,
   };
 
@@ -120,6 +123,50 @@
     } catch (err) {
       void err;
     }
+  }
+
+  function getPanelStateBehavior(cfg) {
+    const value = String(cfg?.a_defaultPanelState || "").trim().toLowerCase();
+    if (value === "expanded" || value === "always-expanded") {
+      return "expanded";
+    }
+    if (value === "collapsed" || value === "always-collapsed") {
+      return "collapsed";
+    }
+    return "remember";
+  }
+
+  function loadCollapsedState(cfg) {
+    const behavior = getPanelStateBehavior(cfg);
+    if (behavior === "expanded") return false;
+    if (behavior === "collapsed") return true;
+    try {
+      const raw = window.localStorage.getItem(COLLAPSED_STORAGE_KEY);
+      if (raw === null) return false;
+      return raw === "true";
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function saveCollapsedState() {
+    try {
+      window.localStorage.setItem(
+        COLLAPSED_STORAGE_KEY,
+        state.isCollapsed ? "true" : "false"
+      );
+    } catch (err) {
+      void err;
+    }
+  }
+
+  function setCollapsedState(nextValue) {
+    state.isCollapsed = !!nextValue;
+    saveCollapsedState();
+    if (state.isCollapsed) {
+      clearOverlayOffsets();
+    }
+    scheduleLayoutRefresh();
   }
 
   function normalizeSlotAspectMode(value) {
@@ -456,34 +503,53 @@
     const clampedPanelHeight = Math.max(0, Math.round(panelHeight));
     const hostRect = host.getBoundingClientRect();
     const hostWidth = Math.max(
-      260,
+      state.isCollapsed ? PANEL_COLLAPSED_WIDTH : 260,
       Math.round(hostRect.width || host.clientWidth || 0)
     );
 
-    host.style.height = Number.isFinite(availableHeight)
-      ? `${clampedHostHeight}px`
-      : "";
-    host.style.minHeight = Number.isFinite(availableHeight)
-      ? `${clampedHostHeight}px`
-      : "";
-    host.style.maxHeight = Number.isFinite(availableHeight)
-      ? `${clampedHostHeight}px`
-      : "";
+    if (state.isCollapsed) {
+      host.style.height = "auto";
+      host.style.minHeight = "0";
+      host.style.maxHeight = "none";
+    } else {
+      host.style.height = Number.isFinite(availableHeight)
+        ? `${clampedHostHeight}px`
+        : "";
+      host.style.minHeight = Number.isFinite(availableHeight)
+        ? `${clampedHostHeight}px`
+        : "";
+      host.style.maxHeight = Number.isFinite(availableHeight)
+        ? `${clampedHostHeight}px`
+        : "";
+    }
     host.style.visibility = "";
 
-    panel.style.height = Number.isFinite(availableHeight)
-      ? "100%"
-      : `${clampedPanelHeight}px`;
-    panel.style.minHeight = Number.isFinite(availableHeight)
-      ? `${clampedHostHeight}px`
-      : `${clampedPanelHeight}px`;
-    panel.style.maxHeight = Number.isFinite(availableHeight)
-      ? `${clampedHostHeight}px`
-      : `${clampedPanelHeight}px`;
+    if (state.isCollapsed) {
+      panel.style.height = "auto";
+      panel.style.minHeight = "0";
+      panel.style.maxHeight = "none";
+    } else {
+      panel.style.height = Number.isFinite(availableHeight)
+        ? "100%"
+        : `${clampedPanelHeight}px`;
+      panel.style.minHeight = Number.isFinite(availableHeight)
+        ? `${clampedHostHeight}px`
+        : `${clampedPanelHeight}px`;
+      panel.style.maxHeight = Number.isFinite(availableHeight)
+        ? `${clampedHostHeight}px`
+        : `${clampedPanelHeight}px`;
+    }
     panel.style.width = hostWidth > 0 ? `${hostWidth}px` : "";
+    panel.classList.toggle("is-collapsed", !!state.isCollapsed);
+    host.classList.toggle(
+      "performer-tag-based-supporting-images__host--collapsed",
+      !!state.isCollapsed
+    );
 
     const shouldHideForBoundary =
-      Number.isFinite(availableHeight) && clampedHostHeight < 120;
+      !state.isCollapsed &&
+      Number.isFinite(availableHeight) &&
+      clampedHostHeight < 120;
     panel.classList.toggle("is-hidden", shouldHideForBoundary);
     panel.classList.toggle(
       "is-content-hovered",
@@ -532,7 +598,7 @@
     const overlayRight = rightCandidates.length ? Math.max(...rightCandidates) : null;
     const widthScale = getPanelWidthScale(state.config || {});
     const overlayWidth = Math.max(
-      PANEL_BASE_WIDTH,
+      state.isCollapsed ? PANEL_COLLAPSED_WIDTH : PANEL_BASE_WIDTH,
       Math.min(
         PANEL_MAX_WIDTH,
         Math.round((PANEL_BASE_WIDTH * widthScale) / 100)
@@ -549,7 +615,11 @@
     host.style.left = Number.isFinite(overlayLeft) ? `${overlayLeft}px` : "";
     host.style.width = `${overlayWidth}px`;
     host.style.zIndex = "20";
-    applyOverlayOffsets(window.innerWidth > 900 ? overlayLeft : null);
+    if (state.isCollapsed) {
+      clearOverlayOffsets();
+    } else {
+      applyOverlayOffsets(window.innerWidth > 900 ? overlayLeft : null);
+    }
 
     const hostHeight = Math.max(
       0,
@@ -774,6 +844,7 @@
       console.error("[PerformerTagBasedSupportingImages] config load failed", err);
       state.config = {};
     }
+    state.isCollapsed = loadCollapsedState(state.config);
     return state.config;
   }
 
@@ -1600,6 +1671,23 @@
     updateContentHoverBinding();
   }
 
+  function createCollapseToggleButton() {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className =
+      "performer-tag-based-supporting-images__panel-toggle";
+    button.setAttribute("data-ptbsi-panel-toggle", "true");
+    button.setAttribute(
+      "aria-label",
+      state.isCollapsed ? "Show supporting images panel" : "Hide supporting images panel"
+    );
+    button.title = state.isCollapsed
+      ? "Show supporting images panel"
+      : "Hide supporting images panel";
+    button.textContent = state.isCollapsed ? "▴" : "▾";
+    return button;
+  }
+
   function createEmptyState(message) {
     const empty = document.createElement("div");
     empty.className = "performer-tag-based-supporting-images__empty";
@@ -1926,6 +2014,10 @@
     panel.id = PANEL_ID;
     panel.className = "performer-tag-based-supporting-images";
     applyPanelVariables(panel, cfg);
+    if (state.isCollapsed) {
+      panel.classList.add("is-collapsed");
+    }
+    panel.appendChild(createCollapseToggleButton());
     const slotsWrap = document.createElement("div");
     slotsWrap.className = "performer-tag-based-supporting-images__slots";
 
@@ -2233,6 +2325,14 @@
 
   function attachPanelEvents(panel) {
     panel.addEventListener("click", (event) => {
+      const panelToggle = event.target.closest("[data-ptbsi-panel-toggle]");
+      if (panelToggle) {
+        event.preventDefault();
+        event.stopPropagation();
+        setCollapsedState(!state.isCollapsed);
+        return;
+      }
+
       const tagLink = event.target.closest("[data-ptbsi-tag-filter-href]");
       if (tagLink) {
         const href = tagLink.getAttribute("data-ptbsi-tag-filter-href");
