@@ -4,6 +4,7 @@
 - [Performer Tags Overhaul](#Performer-Tags-Overhaul)
 - [Performer Tag Based Supporting Images](#Performer-Tag-Based-Supporting-Images)
 - [Tag Based Browser](#Tag-Based-Browser)
+- [Simple Image Crop](#Simple-Image-Crop)
 
 ## Installation
 
@@ -194,6 +195,23 @@ This recreates the content browser functionality of scenes, images, galleries, s
   <img src="/plugins/TagBasedBrowser/images/TagBasedBrowserSettingsPreview.png" alt="TagBasedBrowser settings" width="600">
 </p>
 
+# Simple Image Crop
+
+Adds a button to crop images from the edit image tab.
+
+- Crop images with freeform or snap mode with a handful of preset aspect ratios
+- Cropped images display as cropped from other pages/tabs
+- Badge overlay to show that an image has a custom crop applied (toggleable and adjustable opacity)
+
+<h2>Preview</h2>
+<p>
+  <img src="/plugins/SimpleImageCrop/images/SimpleImageCropPreview.gif" alt="SimpleImageCrop preview" width="600">
+</p>
+
+<h2>Settings Preview</h2>
+<p>
+  <img src="/plugins/SimpleImageCrop/images/SimpleImageCropSettingsPreview.png" alt="SimpleImageCrop settings" width="600">
+</p>
 
 Made with AI
 
