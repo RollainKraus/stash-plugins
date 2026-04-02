@@ -39,6 +39,11 @@ settings:
     type: BOOLEAN
     description: Show selected parent tags even when those tags also have child tags
 
+  groupSubgroupsAndLeafTags:
+    displayName: Group Subgroups And Leaf Tags
+    type: STRING
+    description: top, bottom, or disable. Subgroups on top. Subgroups on bottom. Disable uses normal sort/tag name ordering
+
 ui:
   javascript:
     - DetailsTagsOverhaul.js
