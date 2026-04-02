@@ -130,6 +130,15 @@
     return getConfigBoolean(cfg.showParentTagsAsSelectable, true);
   }
 
+  function getSubgroupLeafGroupingMode(cfg) {
+    const value = String(cfg.groupSubgroupsAndLeafTags || "disable")
+      .trim()
+      .toLowerCase();
+    if (value === "top") return "top";
+    if (value === "bottom") return "bottom";
+    return "disable";
+  }
+
   function applyPanelVariables(panel, cfg) {
     const imageSize = getImageSize(cfg);
     const stackedImageSize = Math.max(24, imageSize);
@@ -273,6 +282,28 @@
       const bKey = (b.sort_name || b.name || "").toLowerCase();
       return aKey.localeCompare(bKey, undefined, { sensitivity: "base" });
     });
+  }
+
+  function sortGroupItems(items, cfg) {
+    const groupingMode = getSubgroupLeafGroupingMode(cfg);
+    if (groupingMode === "disable") {
+      sortItemsBySortNameThenName(items);
+      return;
+    }
+
+    const subgroups = items.filter((item) => item.type === "subgroup");
+    const leafTags = items.filter((item) => item.type === "leaf");
+
+    sortItemsBySortNameThenName(subgroups);
+    sortItemsBySortNameThenName(leafTags);
+
+    items.length = 0;
+    if (groupingMode === "top") {
+      items.push(...subgroups, ...leafTags);
+      return;
+    }
+
+    items.push(...leafTags, ...subgroups);
   }
 
   function buildNestedGroupsSelectedOnly(tags, selectedTagIds, cfg) {
@@ -461,7 +492,7 @@
     });
 
     for (const group of prunedGroups) {
-      sortItemsBySortNameThenName(group.items);
+      sortGroupItems(group.items, cfg);
 
       for (const item of group.items) {
         if (item.type === "subgroup" && Array.isArray(item.children)) {
@@ -560,6 +591,27 @@
     return btn;
   }
 
+  function bindHeaderToggle(header, toggleArea, section, cfg) {
+    if (!shouldShowCollapseButtons(cfg)) return;
+
+    const toggleSection = () => {
+      section.classList.toggle("is-open");
+    };
+
+    if (!shouldLinkGroupHeaders(cfg)) {
+      toggleArea.style.cursor = "pointer";
+      toggleArea.addEventListener("click", toggleSection);
+      return;
+    }
+
+    header.classList.add("details-tags-overhaul__header--click-toggle");
+    header.addEventListener("click", (event) => {
+      if (event.target.closest("a")) return;
+      if (event.target.closest("button")) return;
+      toggleSection();
+    });
+  }
+
   function createSubgroupSection(subgroup, cfg) {
     const section = document.createElement("section");
     section.className = "details-tags-overhaul__subgroup";
@@ -607,12 +659,7 @@
       header.classList.add("details-tags-overhaul__subgroup-header--static");
     }
 
-    if (!shouldLinkGroupHeaders(cfg) && shouldShowCollapseButtons(cfg)) {
-      left.style.cursor = "pointer";
-      left.addEventListener("click", () => {
-        section.classList.toggle("is-open");
-      });
-    }
+    bindHeaderToggle(header, left, section, cfg);
 
     section.appendChild(header);
     section.appendChild(body);
@@ -676,12 +723,7 @@
       header.classList.add("details-tags-overhaul__header--static");
     }
 
-    if (!shouldLinkGroupHeaders(cfg) && shouldShowCollapseButtons(cfg)) {
-      left.style.cursor = "pointer";
-      left.addEventListener("click", () => {
-        section.classList.toggle("is-open");
-      });
-    }
+    bindHeaderToggle(header, left, section, cfg);
 
     section.appendChild(header);
     section.appendChild(body);
