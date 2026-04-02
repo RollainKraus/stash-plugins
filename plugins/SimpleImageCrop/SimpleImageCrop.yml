@@ -1,0 +1,21 @@
+name: Simple Image Crop
+description: Simple display-only crop tool for images
+version: 0.1.0
+url: https://github.com/RollainKraus/stash-plugins
+
+settings:
+  showCropIcon:
+    displayName: Show Crop Icon
+    type: BOOLEAN
+    description: Show or hide the crop indicator badge on cropped images. default ON
+
+  cropIconOpacity:
+    displayName: Crop Icon Opacity
+    type: STRING
+    description: Opacity of the crop indicator badge from 0 to 1. default 0.5
+
+ui:
+  javascript:
+    - SimpleImageCrop.js
+  css:
+    - SimpleImageCrop.css
