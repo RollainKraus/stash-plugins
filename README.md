@@ -3,6 +3,7 @@
 - [Details Tags Overhaul](#Details-Tags-Overhaul)
 - [Performer Tags Overhaul](#Performer-Tags-Overhaul)
 - [Performer Tag Based Supporting Images](#Performer-Tag-Based-Supporting-Images)
+- [Tag Based Browser](#Tag-Based-Browser)
 
 ## Installation
 
@@ -147,6 +148,51 @@ Intended to work alongside PerformerTagsOverhaul, but works as its own standalon
 <h2>Settings Preview</h2>
 <p>
   <img src="/plugins/PerformerTagBasedSupportingImages/images/PerformerTagBasedSupportingImagesSettingsPreview.png" alt="DetailsTagsOverhaul settings" width="600">
+</p>
+
+# Tag Based Browser
+
+**ALPHA - EXPERIMENTAL
+Shouldn't break anything, but several known issues and UI/UX pain points + missing planned features
+- Initial startup takes a long time to load, might require reloading plugins/refreshing/restarting a few times
+
+Adds a new stash page that uses a tag based content browser filter
+This recreates the content browser functionality of scenes, images, galleries, studios and performers in a self contained tag-based browser
+
+- New Tag Browser page for filtering through scenes, images, galleries, studios and performers with tags
+- Options for including child tags, single or multi select with 'any' and 'all' behavior
+- Clicking on content opens the content page
+- Shows approximate count of all content with selected tags
+
+**Known Issues
+
+- Refreshing Tag Browser returns 404
+- Approximate aggregate content counter is wildly inaccurate 
+- UI scales/adjust poorly
+- Missing information and sort rules normally displayed via stash (scene description, O-count, resolution, etc)
+- Initial startup takes a long time to load, might require reloading plugins/refreshing/restarting a few times
+(Recreating stash's browsing functionality is not ideal but I couldn't think of another way to unify different categories under one browser menu, also I didn't want to risk breaking anything)
+(This plugin in particular is certified 100% AI slop. If the idea sticks it would be nice for an actual programmer to try something like this)
+
+**Planned Features
+
+- Tag Selection Presets: this is redundant since you can do the same with stash's own content browsers but it feels like a natural feature in the context of this plugin
+- Add missing metadata displays and sort rules
+- UI customization
+
+<h2>Preview</h2>
+<p>
+  <img src="/plugins/TagBasedBrowser/images/TagBasedBrowserPreview.gif" alt="TagBasedBrowser preview" width="600">
+</p>
+
+<h2>UI Preview</h2>
+<p>
+  <img src="/plugins/TagBasedBrowser/images/TagBasedBrowserUIPreview.png" alt="TagBasedBrowser search" width="600">
+</p>
+
+<h2>Settings Preview</h2>
+<p>
+  <img src="/plugins/TagBasedBrowser/images/TagBasedBrowserSettingsPreview.png" alt="TagBasedBrowser settings" width="600">
 </p>
 
 
