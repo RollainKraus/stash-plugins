@@ -171,8 +171,7 @@ This recreates the content browser functionality of scenes, images, galleries, s
 - UI scales/adjust poorly
 - Missing information and sort rules normally displayed via stash (scene description, O-count, resolution, etc)
 - Initial startup takes a long time to load, might require reloading plugins/refreshing/restarting a few times
-(Recreating stash's browsing functionality is not ideal but I couldn't think of another way to unify different categories under one browser menu, also I didn't want to risk breaking anything)
-(This plugin in particular is certified 100% AI slop. If the idea sticks it would be nice for an actual programmer to try something like this)
+(Recreating stash's browsing functionality is not ideal but I couldn't think of another way to unify different categories under one browser menu, also I didn't want to risk breaking anything. This plugin in particular is certified 100% AI slop. If the idea sticks it would be nice for an actual programmer to try something like this)
 
 **Planned Features
 
