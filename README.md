@@ -153,11 +153,11 @@ Intended to work alongside PerformerTagsOverhaul, but works as its own standalon
 # Tag Based Browser
 
 **ALPHA - EXPERIMENTAL
-Shouldn't break anything, but several known issues and UI/UX pain points + missing planned features
-- Initial startup takes a long time to load, might require reloading plugins/refreshing/restarting a few times
+Shouldn't break anything, but several known issues and UI/UX pain points + missing planned features.
+- Initial startup takes a long time to load, might require reloading plugins/refreshing/restarting a few times.
 
-Adds a new stash page that uses a tag based content browser filter
-This recreates the content browser functionality of scenes, images, galleries, studios and performers in a self contained tag-based browser
+Adds a new stash page that uses a tag based content browser filter.
+This recreates the content browser functionality of scenes, images, galleries, studios and performers in a self contained tag-based browser.
 
 - New Tag Browser page for filtering through scenes, images, galleries, studios and performers with tags
 - Options for including child tags, single or multi select with 'any' and 'all' behavior
