@@ -1,0 +1,20 @@
+name: Tag Based Browser
+description: Hierarchical tag-based browser with split-view content browsing
+version: 0.1.0
+url: https://github.com/RollainKraus/stash-plugins
+
+settings:
+  a_showDetailedTreeCounts:
+    displayName: Show Detailed Group Counts
+    type: BOOLEAN
+    description: "Show approx content count of scene, image, gallery, and performer (Default: false)"
+  b_treeExpansionBehavior:
+    displayName: Tree Expansion Behavior
+    type: STRING
+    description: "expand_all, collapse_all, or remember (Default: remember)"
+
+ui:
+  javascript:
+    - TagBasedBrowser.js
+  css:
+    - TagBasedBrowser.css
