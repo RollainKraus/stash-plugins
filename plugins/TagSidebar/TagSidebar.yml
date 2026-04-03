@@ -1,0 +1,20 @@
+name: Tag Sidebar
+description: Hierarchical tag sidebar for content browser pages
+version: 0.1.0
+url: https://github.com/RollainKraus/stash-plugins
+
+settings:
+  a_stickyTagFilters:
+    displayName: Sticky Tag Filters
+    type: BOOLEAN
+    description: "Reapply selected tag filters when navigating between supported content pages (Default: false)"
+  b_sidebarWidth:
+    displayName: Sidebar Width
+    type: STRING
+    description: "Width of the tag sidebar in pixels. Push behavior follows the rendered sidebar width automatically (Default: 360)"
+
+ui:
+  javascript:
+    - TagSidebar.js
+  css:
+    - TagSidebar.css
