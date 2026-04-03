@@ -5,6 +5,7 @@
 - [Performer Tag Based Supporting Images](#Performer-Tag-Based-Supporting-Images)
 - [Tag Based Browser](#Tag-Based-Browser)
 - [Simple Image Crop](#Simple-Image-Crop)
+- [Tag Sidebar](#Tag-Sidebar)
 
 ## Installation
 
@@ -33,6 +34,17 @@ The edit tab now has Tag Groups organized by your parent-child tags and supports
 - Size of image displays and the color of the border highlight can be customized
 - Setting to allow tags with multiple parents to exist under each parent, useful if a tag is relevant to different groups
 
+<h2>How To</h2>
+
+To create the headers/groups you will need to set up your tags with parent-child relationships:
+
+- parent >> tag
+- parent >> subgroup >> tag
+
+Use Sort Name to rearrange how the groups, subgroups and tags are ordered in the hierarchy
+
+Without parents, tags automatically go in ‘Ungrouped’
+
 <h2>Preview</h2>
 <p>
   <img src="/plugins/EditTagsOverhaul/images/EditTagsOverhaulPreview.gif" alt="EditTagsOverhaul preview" width="600">
@@ -57,6 +69,16 @@ The details tab now has Tag Groups organized by your parent-child tags and suppo
 - Tag buttons can use text, image, or text and image
 - Size of image displays can be customized
 
+<h2>How To</h2>
+
+To create the headers/groups you will need to set up your tags with parent-child relationships:
+
+- parent >> tag
+- parent >> subgroup >> tag
+
+Use Sort Name to rearrange how the groups, subgroups and tags are ordered in the hierarchy
+
+Without parents, tags automatically go in ‘Ungrouped’
 <h2>Preview</h2>
 <p>
   <img src="/plugins/DetailsTagsOverhaul/images/DetailsTagsOverhaulPreview.gif" alt="DetailsTagsOverhaul preview" width="600">
@@ -88,6 +110,17 @@ Display Mode makes performer tags much more legible and organized, useful if you
   - Border highlight color
   - Font size/color 
   - Background fill/transparency
+
+<h2>How To</h2>
+
+To create the headers/groups you will need to set up your tags with parent-child relationships:
+
+- parent >> tag
+- parent >> subgroup >> tag
+
+Use Sort Name to rearrange how the groups, subgroups and tags are ordered in the hierarchy
+
+Without parents, tags automatically go in ‘Ungrouped’
 
 <h2>Preview</h2>
 <p>
@@ -211,6 +244,35 @@ Adds a button to crop images from the edit image tab.
 <h2>Settings Preview</h2>
 <p>
   <img src="/plugins/SimpleImageCrop/images/SimpleImageCropSettingsPreview.png" alt="SimpleImageCrop settings" width="600">
+</p>
+
+# Tag Sidebar
+
+Adds an additional sidebar to content pages. This is a hierarchical tag menu to make sorting through long lists of tags easier for applying filters based on your parent-child tag relationships
+
+- Standalone tag sidebar that stays open across content pages
+- Can be set to 'sticky' mode so tag selection(s) persist when switching between content pages (scenes, images, etc)
+- Supports multi select with any and all filtering and supports including or excluding sub tag content
+
+<h2>How To</h2>
+
+To create the headers/groups you will need to set up your tags with parent-child relationships:
+
+- parent >> tag
+- parent >> subgroup >> tag
+
+Use Sort Name to rearrange how the groups, subgroups and tags are ordered in the hierarchy
+
+Without parents, tags automatically go in ‘Ungrouped’
+
+<h2>Preview</h2>
+<p>
+  <img src="/plugins/TagSidebar/images/TagSidebarPreview.gif" alt="TagSidebar preview" width="600">
+</p>
+
+<h2>Settings Preview</h2>
+<p>
+  <img src="/plugins/TagSidebar/images/TagSidebarSettingsPreview.png" alt="TagSidebar settings" width="600">
 </p>
 
 Made with AI
