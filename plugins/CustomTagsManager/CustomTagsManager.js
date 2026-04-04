@@ -11,11 +11,25 @@
   const TOOLBAR_ID = "tag-manager-toolbar";
   const ROOT_DROP_ID = "__root__";
   const EXPANDED_STORAGE_KEY = "custom-tags-manager-expanded-v1";
+  const HOVER_PREVIEW_ID = "custom-tags-manager-hover-preview";
+  const TAG_DETAIL_PANEL_ID = "custom-tags-manager-tag-detail-panel";
   const DEFAULT_CONFIG = {
     treeExpansionBehavior: "remember",
   };
   const RETRY_DELAYS = [0, 180, 420, 900];
   const SEARCH_LIMIT = 50;
+  const SUPPLEMENTAL_IMAGE_FIELDS = [
+    {
+      key: "ctm_supplemental_image_1",
+      draftKey: "supplemental_image_1_id",
+      label: "Supplemental Image 1",
+    },
+    {
+      key: "ctm_supplemental_image_2",
+      draftKey: "supplemental_image_2_id",
+      label: "Supplemental Image 2",
+    },
+  ];
   const CONTENT_FILTER_PATHS = {
     scenes: "/scenes",
     images: "/images",
@@ -30,6 +44,9 @@
       configPromise: null,
       tags: null,
       tagsPromise: null,
+      tagLookupMap: null,
+      supplementalImages: new Map(),
+      supplementalImagePromises: new Map(),
     });
 
   const state = {
@@ -80,6 +97,8 @@
     draggingTagId: "",
     dragOverTagId: "",
     dragOverMode: "",
+    hoverTagId: "",
+    hoverAnchorRect: null,
   };
 
   function loadSet(key) {
@@ -209,6 +228,7 @@
             aliases
             sort_name
             description
+            custom_fields
             image_path
             scene_count
             studio_count
@@ -227,11 +247,13 @@
     `)
       .then((data) => {
         cache.tags = data?.findTags?.tags || [];
+        cache.tagLookupMap = createTagMap(cache.tags);
         return cache.tags;
       })
       .catch((err) => {
         console.error("[CustomTagsManager] tag load failed", err);
         cache.tags = [];
+        cache.tagLookupMap = new Map();
         return cache.tags;
       })
       .finally(() => {
@@ -243,6 +265,391 @@
   function invalidateTags() {
     cache.tags = null;
     cache.tagsPromise = null;
+    cache.tagLookupMap = null;
+  }
+
+  function getAvailableTagLookupMap() {
+    if (state.tagMap instanceof Map && state.tagMap.size) return state.tagMap;
+    if (cache.tagLookupMap instanceof Map) return cache.tagLookupMap;
+    if (Array.isArray(cache.tags)) {
+      cache.tagLookupMap = createTagMap(cache.tags);
+      return cache.tagLookupMap;
+    }
+    return new Map();
+  }
+
+  function normalizeSupplementalImageId(value) {
+    return String(value ?? "")
+      .trim()
+      .replace(/[^\d]/g, "");
+  }
+
+  function getSupplementalImageValue(customFields, key) {
+    return normalizeSupplementalImageId(customFields?.[key]);
+  }
+
+  function getSupplementalImagePath(imageRecord) {
+    return String(imageRecord?.paths?.thumbnail || imageRecord?.paths?.image || "").trim();
+  }
+
+  function getSupplementalImageIdsFromDraft(draft) {
+    if (!draft) return [];
+    return SUPPLEMENTAL_IMAGE_FIELDS.map((field) => normalizeSupplementalImageId(draft?.[field.draftKey]))
+      .filter(Boolean);
+  }
+
+  function getVisibleSupplementalImageIds() {
+    return Array.from(
+      new Set(
+        [
+          ...getSupplementalImageIdsFromDraft(state.draft),
+          ...getSupplementalImageIdsFromDraft(state.splitOriginalDraft),
+          ...getSupplementalImageIdsFromDraft(state.splitNewDraft),
+        ].filter(Boolean)
+      )
+    );
+  }
+
+  function buildSupplementalFieldsPartial(draft, currentRecord = null) {
+    const partial = {};
+    let changed = false;
+    SUPPLEMENTAL_IMAGE_FIELDS.forEach((field) => {
+      const nextValue = normalizeSupplementalImageId(draft?.[field.draftKey]);
+      const currentValue = normalizeSupplementalImageId(currentRecord?.[field.draftKey]);
+      if (nextValue !== currentValue) {
+        partial[field.key] = nextValue;
+        changed = true;
+      }
+    });
+    return changed ? partial : null;
+  }
+
+  function ensureSupplementalImagesLoaded(imageIds = []) {
+    const normalizedIds = Array.from(
+      new Set(
+        Array.from(imageIds || [])
+          .map(normalizeSupplementalImageId)
+          .filter(Boolean)
+      )
+    );
+    const missingIds = normalizedIds.filter(
+      (imageId) => !cache.supplementalImages.has(imageId)
+    );
+    if (!missingIds.length) return Promise.resolve(false);
+
+    const requestKey = missingIds.slice().sort().join(",");
+    if (cache.supplementalImagePromises.has(requestKey)) {
+      return cache.supplementalImagePromises.get(requestKey);
+    }
+
+    const request = gqlRequest(
+      `
+        query CustomTagsManagerSupplementalImages($image_ids: [Int!]) {
+          findImages(filter: { per_page: -1 }, image_ids: $image_ids) {
+            images {
+              id
+              paths {
+                thumbnail
+                image
+              }
+            }
+          }
+        }
+      `,
+      {
+        image_ids: missingIds
+          .map((imageId) => Number.parseInt(imageId, 10))
+          .filter((value) => Number.isFinite(value)),
+      }
+    )
+      .then((data) => {
+        const foundMap = new Map(
+          Array.from(data?.findImages?.images || []).map((image) => [String(image.id), image])
+        );
+        missingIds.forEach((imageId) => {
+          cache.supplementalImages.set(imageId, foundMap.get(imageId) || null);
+        });
+        return true;
+      })
+      .catch((err) => {
+        console.error("[CustomTagsManager] supplemental image lookup failed", err);
+        missingIds.forEach((imageId) => {
+          cache.supplementalImages.set(imageId, null);
+        });
+        return true;
+      })
+      .finally(() => {
+        cache.supplementalImagePromises.delete(requestKey);
+      });
+
+    cache.supplementalImagePromises.set(requestKey, request);
+    return request;
+  }
+
+  function syncSupplementalImagePreviews() {
+    const imageIds = getVisibleSupplementalImageIds();
+    if (!imageIds.length) return;
+    ensureSupplementalImagesLoaded(imageIds).then((didLoad) => {
+      if (didLoad) render();
+    });
+  }
+
+  function getHoverPreviewHost() {
+    let host = document.getElementById(HOVER_PREVIEW_ID);
+    if (host) return host;
+    host = document.createElement("div");
+    host.id = HOVER_PREVIEW_ID;
+    host.className = "tag-manager-hover-preview";
+    host.setAttribute("aria-hidden", "true");
+    document.body.appendChild(host);
+    return host;
+  }
+
+  function extractDescriptionPreview(text) {
+    return String(text || "").trim().replace(/\s+/g, " ");
+  }
+
+  function getHoverPreviewImages(record) {
+    const seen = new Set();
+    const images = [];
+    const pushImage = (src, label) => {
+      const value = String(src || "").trim();
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      images.push({ src: value, label: String(label || "Tag image") });
+    };
+
+    pushImage(record?.image_path, record?.name || "Primary image");
+    SUPPLEMENTAL_IMAGE_FIELDS.forEach((field, index) => {
+      const imageId = normalizeSupplementalImageId(record?.[field.draftKey]);
+      if (!imageId) return;
+      const preview = getSupplementalImagePath(cache.supplementalImages.get(imageId));
+      pushImage(preview, field.label || `Supplemental image ${index + 1}`);
+    });
+
+    return images;
+  }
+
+  function renderHoverPreview(record) {
+    const images = getHoverPreviewImages(record);
+    const description = extractDescriptionPreview(record?.description || "");
+
+    return `
+      <div class="tag-manager-hover-preview__card">
+        <div class="tag-manager-hover-preview__title">${escapeHtml(record?.name || "Tag")}</div>
+        <div class="tag-manager-hover-preview__image-row">
+          ${
+            images.length
+              ? images
+                  .map(
+                    (image) => `
+                      <div class="tag-manager-hover-preview__image-frame">
+                        <img src="${escapeHtml(image.src)}" alt="${escapeHtml(image.label)}" />
+                      </div>
+                    `
+                  )
+                  .join("")
+              : `<div class="tag-manager-hover-preview__image-empty">No tag image</div>`
+          }
+        </div>
+        ${
+          description
+            ? `<div class="tag-manager-hover-preview__description">${escapeHtml(description)}</div>`
+            : ""
+        }
+      </div>
+    `;
+  }
+
+  function renderNativeTagDetailSupplementalPanel(record) {
+    const images = getHoverPreviewImages(record).slice(1, 3);
+    if (!images.length) return "";
+
+    return `
+      <aside id="${TAG_DETAIL_PANEL_ID}" class="custom-tags-manager-tag-detail-panel">
+        <div class="custom-tags-manager-tag-detail-panel__header">Supplemental Images</div>
+        <div class="custom-tags-manager-tag-detail-panel__grid">
+          ${images
+            .map(
+              (image, index) => `
+                <div class="custom-tags-manager-tag-detail-panel__slot">
+                  <img src="${escapeHtml(image.src)}" alt="${escapeHtml(
+                    image.label || `Supplemental image ${index + 1}`
+                  )}" />
+                </div>
+              `
+            )
+            .join("")}
+        </div>
+      </aside>
+    `;
+  }
+
+  function removeNativeTagDetailSupplementalPanel() {
+    document
+      .querySelectorAll(".custom-tags-manager-tag-detail-layout")
+      .forEach((element) => element.classList.remove("custom-tags-manager-tag-detail-layout"));
+    const panel = getTagDetailPanel();
+    if (panel) panel.remove();
+  }
+
+  async function syncNativeTagDetailSupplementalPanel() {
+    if (!isTagDetailPage()) {
+      removeNativeTagDetailSupplementalPanel();
+      return true;
+    }
+
+    const detailHeader =
+      document.querySelector("div.detail-header") ||
+      document.querySelector(".tag-details .detail-header") ||
+      document.querySelector(".detail-header");
+    if (!(detailHeader instanceof HTMLElement)) {
+      removeNativeTagDetailSupplementalPanel();
+      return false;
+    }
+
+    const tagId = getTagDetailIdFromPath();
+    if (!tagId) {
+      removeNativeTagDetailSupplementalPanel();
+      return true;
+    }
+
+    const record = await ensureHoverTagRecord(tagId);
+    const markup = renderNativeTagDetailSupplementalPanel(record);
+    if (!markup) {
+      removeNativeTagDetailSupplementalPanel();
+      return true;
+    }
+
+    detailHeader.classList.add("custom-tags-manager-tag-detail-layout");
+
+    let panel = getTagDetailPanel();
+    if (!panel) {
+      detailHeader.insertAdjacentHTML("beforeend", markup);
+      panel = getTagDetailPanel();
+    } else if (panel.parentElement !== detailHeader) {
+      panel.remove();
+      detailHeader.insertAdjacentHTML("beforeend", markup);
+      panel = getTagDetailPanel();
+    } else {
+      panel.outerHTML = markup;
+      panel = getTagDetailPanel();
+    }
+
+    return !!panel;
+  }
+
+  function positionHoverPreview(anchorRect) {
+    const host = getHoverPreviewHost();
+    if (!(host instanceof HTMLElement) || !anchorRect) return;
+    const previewWidth = Math.min(540, Math.max(320, Math.floor(window.innerWidth * 0.32)));
+    host.style.maxWidth = `${previewWidth}px`;
+
+    const margin = 14;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const rect = host.getBoundingClientRect();
+    let left = anchorRect.right + 12;
+    let top = anchorRect.top;
+
+    if (left + rect.width + margin > viewportWidth) {
+      left = Math.max(margin, anchorRect.left - rect.width - 12);
+    }
+    if (top + rect.height + margin > viewportHeight) {
+      top = Math.max(margin, viewportHeight - rect.height - margin);
+    }
+    if (top < margin) top = margin;
+
+    host.style.left = `${Math.round(left)}px`;
+    host.style.top = `${Math.round(top)}px`;
+  }
+
+  function hideHoverPreview() {
+    const host = document.getElementById(HOVER_PREVIEW_ID);
+    if (host) {
+      host.classList.remove("is-visible", "is-loading");
+      host.setAttribute("aria-hidden", "true");
+      host.innerHTML = "";
+    }
+    state.hoverTagId = "";
+    state.hoverAnchorRect = null;
+  }
+
+  function showHoverPreviewLoading(anchorRect) {
+    const host = getHoverPreviewHost();
+    host.innerHTML = `<div class="tag-manager-hover-preview__card tag-manager-hover-preview__card--loading">Loading tag preview...</div>`;
+    host.classList.add("is-visible", "is-loading");
+    host.setAttribute("aria-hidden", "false");
+    positionHoverPreview(anchorRect);
+  }
+
+  function getTagRecordById(tagId) {
+    return getAvailableTagLookupMap().get(String(tagId)) || null;
+  }
+
+  async function ensureHoverTagRecord(tagId) {
+    let record = getTagRecordById(tagId);
+    if (!record) {
+      await loadTags();
+      record = getTagRecordById(tagId);
+    }
+    if (!record) return null;
+    const imageIds = getSupplementalImageIdsFromDraft(record);
+    if (imageIds.length) {
+      await ensureSupplementalImagesLoaded(imageIds);
+    }
+    return getTagRecordById(tagId) || record;
+  }
+
+  function parseTagIdFromHref(href) {
+    try {
+      const url = new URL(String(href || ""), window.location.origin);
+      const match = String(url.pathname || "").match(/^\/tags\/([^/?#]+)/);
+      return match?.[1] ? String(match[1]) : "";
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function findHoverTagTarget(start) {
+    if (!(start instanceof Element)) return null;
+    const anchor = start.closest('a[href*="/tags/"]');
+    if (!(anchor instanceof HTMLAnchorElement)) return null;
+    const tagId = parseTagIdFromHref(anchor.href);
+    if (!tagId) return null;
+    return { anchor, tagId };
+  }
+
+  function handleGlobalTagHover(event) {
+    const targetInfo = findHoverTagTarget(event.target);
+    if (!targetInfo) return;
+    const { anchor, tagId } = targetInfo;
+    if (state.hoverTagId === tagId) return;
+
+    const anchorRect = anchor.getBoundingClientRect();
+    state.hoverTagId = tagId;
+    state.hoverAnchorRect = anchorRect;
+    showHoverPreviewLoading(anchorRect);
+
+    ensureHoverTagRecord(tagId).then((record) => {
+      if (!record || state.hoverTagId !== tagId) return;
+      const host = getHoverPreviewHost();
+      host.innerHTML = renderHoverPreview(record);
+      host.classList.add("is-visible");
+      host.classList.remove("is-loading");
+      host.setAttribute("aria-hidden", "false");
+      positionHoverPreview(state.hoverAnchorRect || anchorRect);
+    });
+  }
+
+  function handleGlobalTagHoverOut(event) {
+    const activeTagId = String(state.hoverTagId || "");
+    if (!activeTagId) return;
+    const currentTarget = findHoverTagTarget(event.target);
+    if (!currentTarget || currentTarget.tagId !== activeTagId) return;
+    const related = event.relatedTarget;
+    if (related instanceof Element && currentTarget.anchor.contains(related)) return;
+    hideHoverPreview();
   }
 
   function getCountValue(record, key) {
@@ -270,7 +677,16 @@
         sort_key: tag.sort_name || tag.name || "",
         aliases: normalizeAliasList(tag.aliases || []),
         description: tag.description || "",
+        custom_fields: tag.custom_fields || {},
         image_path: tag.image_path || "",
+        supplemental_image_1_id: getSupplementalImageValue(
+          tag.custom_fields || {},
+          SUPPLEMENTAL_IMAGE_FIELDS[0].key
+        ),
+        supplemental_image_2_id: getSupplementalImageValue(
+          tag.custom_fields || {},
+          SUPPLEMENTAL_IMAGE_FIELDS[1].key
+        ),
         scene_count: getCountValue(tag, "scene_count"),
         studio_count: getCountValue(tag, "studio_count"),
         image_count: getCountValue(tag, "image_count"),
@@ -567,6 +983,15 @@
     return String(window.location.pathname || "").replace(/\/+$/, "") === "/tags";
   }
 
+  function getTagDetailIdFromPath(pathname = window.location.pathname) {
+    const match = String(pathname || "").match(/^\/tags\/([^/?#]+)/);
+    return match?.[1] ? String(match[1]) : "";
+  }
+
+  function isTagDetailPage() {
+    return !!getTagDetailIdFromPath();
+  }
+
   function getTagsToolbar() {
     return document.querySelector(".filtered-list-toolbar");
   }
@@ -581,6 +1006,10 @@
 
   function getToolbarMount() {
     return document.getElementById(TOOLBAR_ID);
+  }
+
+  function getTagDetailPanel() {
+    return document.getElementById(TAG_DETAIL_PANEL_ID);
   }
 
   function shouldAutoOpenManagerFromQuery() {
@@ -1413,6 +1842,57 @@
     `;
   }
 
+  function renderSupplementalImageField(field, draft) {
+    const imageId = normalizeSupplementalImageId(draft?.[field.draftKey]);
+    const imageRecord = imageId ? cache.supplementalImages.get(imageId) : null;
+    const previewPath = getSupplementalImagePath(imageRecord);
+    const isMissing = !!imageId && cache.supplementalImages.has(imageId) && !imageRecord;
+
+    return `
+      <div class="tag-manager__supplemental-slot" data-preview-slot="${escapeHtml(field.draftKey)}">
+        <div class="tag-manager__supplemental-preview">
+          ${
+            previewPath
+              ? `<img src="${escapeHtml(previewPath)}" alt="${escapeHtml(field.label)}" />`
+              : `<div class="tag-manager__supplemental-empty">${
+                  isMissing ? "Image not found" : "No supplemental image"
+                }</div>`
+          }
+        </div>
+        <div class="tag-manager__field-group">
+          <label class="tag-manager__field-label" for="tag-manager-${escapeHtml(field.draftKey)}">${escapeHtml(
+            field.label
+          )}</label>
+          <div class="tag-manager__supplemental-input-row">
+            <input
+              id="tag-manager-${escapeHtml(field.draftKey)}"
+              class="tag-manager__input"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              data-field="draft-${escapeHtml(field.draftKey)}"
+              value="${escapeHtml(imageId)}"
+              placeholder="Stash image ID"
+              ${state.isSaving ? "disabled" : ""}
+            />
+            <button
+              type="button"
+              class="btn btn-secondary tag-manager__supplemental-clear"
+              data-action="clear-supplemental-image"
+              data-supplemental-slot="${escapeHtml(field.draftKey)}"
+              ${imageId && !state.isSaving ? "" : "disabled"}
+            >Clear</button>
+          </div>
+          ${
+            isMissing
+              ? `<div class="tag-manager__field-note">This image id could not be resolved. Save is still allowed.</div>`
+              : ""
+          }
+        </div>
+      </div>
+    `;
+  }
+
   function renderMergeInspector() {
     const destinationRecord = state.mergeDestinationId
       ? state.tagMap.get(String(state.mergeDestinationId))
@@ -1543,6 +2023,8 @@
           sort_name: record.sort_name || "",
           description: record.description || "",
           image_path: record.image_path || "",
+          supplemental_image_1_id: normalizeSupplementalImageId(record.supplemental_image_1_id),
+          supplemental_image_2_id: normalizeSupplementalImageId(record.supplemental_image_2_id),
         }
       : null;
   }
@@ -1555,6 +2037,8 @@
       sort_name: "",
       description: "",
       image_path: "",
+      supplemental_image_1_id: "",
+      supplemental_image_2_id: "",
     };
   }
 
@@ -2206,7 +2690,9 @@
         !!normalizeAliasList(state.draft?.aliases || []).length ||
         !!String(state.draft?.sort_name || "").trim() ||
         !!String(state.draft?.description || "").trim() ||
-        !!String(state.draft?.image_path || "").trim()
+        !!String(state.draft?.image_path || "").trim() ||
+        !!normalizeSupplementalImageId(state.draft?.supplemental_image_1_id) ||
+        !!normalizeSupplementalImageId(state.draft?.supplemental_image_2_id)
       );
     }
     if (!state.draft?.id || !state.selectedTagId) return false;
@@ -2218,7 +2704,11 @@
         normalizeAliasList(record.aliases || []).join("\n") ||
       String(state.draft.sort_name || "") !== String(record.sort_name || "") ||
       String(state.draft.description || "") !== String(record.description || "") ||
-      String(state.draft.image_path || "") !== String(record.image_path || "")
+      String(state.draft.image_path || "") !== String(record.image_path || "") ||
+      normalizeSupplementalImageId(state.draft.supplemental_image_1_id) !==
+        normalizeSupplementalImageId(record.supplemental_image_1_id) ||
+      normalizeSupplementalImageId(state.draft.supplemental_image_2_id) !==
+        normalizeSupplementalImageId(record.supplemental_image_2_id)
     );
   }
 
@@ -2292,13 +2782,19 @@
       <div class="tag-manager__inspector-grid">
         <div class="tag-manager__inspector-main">
           <div class="tag-manager__editor-card tag-manager__editor-card--primary">
-            ${
-              previewImagePath
-                ? `<div class="tag-manager__image-preview">
-                    <img src="${escapeHtml(previewImagePath)}" alt="${escapeHtml(state.draft.name || "Tag preview")}" />
-                  </div>`
-                : ""
-            }
+            <div class="tag-manager__image-preview-grid">
+              ${renderSupplementalImageField(SUPPLEMENTAL_IMAGE_FIELDS[0], state.draft)}
+              <div class="tag-manager__image-preview tag-manager__image-preview--main">
+                ${
+                  previewImagePath
+                    ? `<img src="${escapeHtml(previewImagePath)}" alt="${escapeHtml(
+                        state.draft.name || "Tag preview"
+                      )}" />`
+                    : `<div class="tag-manager__supplemental-empty tag-manager__supplemental-empty--main">No main tag image</div>`
+                }
+              </div>
+              ${renderSupplementalImageField(SUPPLEMENTAL_IMAGE_FIELDS[1], state.draft)}
+            </div>
             <input class="tag-manager__file-input" id="tag-manager-image-file" type="file" accept="image/*" data-field="image-file" />
             <div class="tag-manager__field-grid">
               <div class="tag-manager__field-group">
@@ -2756,6 +3252,79 @@
     childPanel.style.maxHeight = `${targetChildrenHeight}px`;
   }
 
+  function classifyPreviewAspect(width, height) {
+    const safeWidth = Number(width) || 0;
+    const safeHeight = Number(height) || 0;
+    if (!(safeWidth > 0) || !(safeHeight > 0)) return "";
+    const ratio = safeWidth / safeHeight;
+    if (ratio >= 1.85) return "wide";
+    if (ratio >= 1.18) return "landscape";
+    if (ratio <= 0.56) return "tall";
+    if (ratio <= 0.84) return "portrait";
+    return "square";
+  }
+
+  function syncEditorImagePreviewLayout() {
+    const host = getHost();
+    if (!(host instanceof HTMLElement)) return;
+    const grids = Array.from(host.querySelectorAll(".tag-manager__image-preview-grid"));
+    let didChange = false;
+
+    grids.forEach((grid) => {
+      if (!(grid instanceof HTMLElement)) return;
+      const mainImage = grid.querySelector(".tag-manager__image-preview--main img");
+      const nextMainAspect =
+        mainImage instanceof HTMLImageElement && mainImage.complete && mainImage.naturalWidth && mainImage.naturalHeight
+          ? classifyPreviewAspect(mainImage.naturalWidth, mainImage.naturalHeight)
+          : "";
+      if ((grid.dataset.mainAspect || "") !== nextMainAspect) {
+        grid.dataset.mainAspect = nextMainAspect;
+        didChange = true;
+      }
+
+      if (mainImage instanceof HTMLImageElement && !mainImage.complete) {
+        mainImage.addEventListener(
+          "load",
+          () => {
+            syncEditorImagePreviewLayout();
+          },
+          { once: true }
+        );
+      }
+
+      grid.querySelectorAll(".tag-manager__supplemental-slot").forEach((slot) => {
+        if (!(slot instanceof HTMLElement)) return;
+        const slotImage = slot.querySelector(".tag-manager__supplemental-preview img");
+        const nextSlotAspect =
+          slotImage instanceof HTMLImageElement &&
+          slotImage.complete &&
+          slotImage.naturalWidth &&
+          slotImage.naturalHeight
+            ? classifyPreviewAspect(slotImage.naturalWidth, slotImage.naturalHeight)
+            : "";
+        if ((slot.dataset.imageAspect || "") !== nextSlotAspect) {
+          slot.dataset.imageAspect = nextSlotAspect;
+          didChange = true;
+        }
+        if (slotImage instanceof HTMLImageElement && !slotImage.complete) {
+          slotImage.addEventListener(
+            "load",
+            () => {
+              syncEditorImagePreviewLayout();
+            },
+            { once: true }
+          );
+        }
+      });
+    });
+
+    if (didChange) {
+      window.requestAnimationFrame(() => {
+        syncMeasuredPanelHeights();
+      });
+    }
+  }
+
   function render() {
     if (!isManagerRoute()) {
       const host = getHost();
@@ -2825,6 +3394,8 @@
       });
     }
     applyTreeDragIndicators();
+    syncEditorImagePreviewLayout();
+    syncSupplementalImagePreviews();
   }
 
   function clearTreeDragIndicators(host = getHost()) {
@@ -2976,6 +3547,21 @@
     if (field === "alias-input") {
       state.aliasInput = target.value || "";
       syncControlStates();
+      return;
+    }
+    if (
+      (field === "draft-supplemental_image_1_id" || field === "draft-supplemental_image_2_id") &&
+      state.draft
+    ) {
+      const nextValue = normalizeSupplementalImageId(target.value);
+      state.draft[field.replace(/^draft-/, "")] = nextValue;
+      render();
+      const nextInput = getHost()?.querySelector(`[data-field="${field}"]`);
+      if (nextInput instanceof HTMLInputElement) {
+        nextInput.focus();
+        nextInput.setSelectionRange(nextInput.value.length, nextInput.value.length);
+      }
+      syncSupplementalImagePreviews();
       return;
     }
     if (field === "split-original-name" && state.splitOriginalDraft) state.splitOriginalDraft.name = target.value;
@@ -3485,6 +4071,16 @@
       render();
       return;
     }
+    if (action === "clear-supplemental-image") {
+      event.preventDefault();
+      if (!state.draft) return;
+      const slot = String(trigger.getAttribute("data-supplemental-slot") || "");
+      if (!slot) return;
+      state.draft[slot] = "";
+      setStatus("info", "Supplemental image cleared. Save Changes to persist.");
+      render();
+      return;
+    }
     if (action === "remove-all-parents") {
       event.preventDefault();
       removeAllParentsFromSelectedTag();
@@ -3764,6 +4360,24 @@
     return input;
   }
 
+  async function saveSupplementalImageFields(tagId, draft, currentRecord = null) {
+    const partial = buildSupplementalFieldsPartial(draft, currentRecord);
+    if (!partial) return;
+    await gqlRequest(
+      `
+        mutation CustomTagsManagerSaveSupplementalImages($id: ID!, $fields: Map) {
+          tagUpdate(input: { id: $id, custom_fields: { partial: $fields } }) {
+            id
+          }
+        }
+      `,
+      {
+        id: String(tagId),
+        fields: partial,
+      }
+    );
+  }
+
   async function reparentBatchSelectedTags() {
     if (state.isSaving) return;
     const selectedIds = (state.batchSelectedTagIds || []).map(String).filter(Boolean);
@@ -3833,6 +4447,7 @@
     try {
       const currentRecord = state.tagMap.get(String(state.selectedTagId));
       const input = buildTagUpdateInput(state.selectedTagId, state.draft, currentRecord);
+      let supplementalSaveError = null;
 
       await gqlRequest(
         `
@@ -3845,10 +4460,21 @@
         { input }
       );
 
+      try {
+        await saveSupplementalImageFields(state.selectedTagId, state.draft, currentRecord);
+      } catch (err) {
+        supplementalSaveError = err;
+      }
+
       invalidateTags();
       await refreshData();
       updateSelectedDraftFromRecord(state.tagMap.get(String(state.selectedTagId)) || null);
-      setStatus("success", "Tag updated.");
+      setStatus(
+        supplementalSaveError ? "info" : "success",
+        supplementalSaveError
+          ? "Tag updated, but supplemental images could not be saved."
+          : "Tag updated."
+      );
       render();
     } catch (err) {
       console.error("[CustomTagsManager] save failed", err);
@@ -3871,6 +4497,7 @@
 
     try {
       const createInput = buildTagCreateInput(state.draft);
+      let supplementalSaveError = null;
       const data = await gqlRequest(
         `
           mutation CustomTagsManagerCreateStandaloneTag($input: TagCreateInput!) {
@@ -3885,10 +4512,21 @@
       const newId = String(data?.tagCreate?.id || "");
       if (!newId) throw new Error("Tag was created without an id.");
 
+      try {
+        await saveSupplementalImageFields(newId, state.draft, null);
+      } catch (err) {
+        supplementalSaveError = err;
+      }
+
       invalidateTags();
       await refreshData();
       setSelectedTag(newId);
-      setStatus("success", "Tag created.");
+      setStatus(
+        supplementalSaveError ? "info" : "success",
+        supplementalSaveError
+          ? "Tag created, but supplemental images could not be saved."
+          : "Tag created."
+      );
       render();
     } catch (err) {
       console.error("[CustomTagsManager] create standalone failed", err);
@@ -3920,6 +4558,7 @@
     try {
       const currentRecord = state.tagMap.get(String(state.selectedTagId));
       if (!currentRecord) throw new Error("Selected tag could not be found.");
+      let supplementalSaveError = null;
 
       await gqlRequest(
         `
@@ -3931,6 +4570,12 @@
         `,
         { input: buildTagUpdateInput(state.selectedTagId, originalDraft, currentRecord) }
       );
+
+      try {
+        await saveSupplementalImageFields(state.selectedTagId, originalDraft, currentRecord);
+      } catch (err) {
+        supplementalSaveError = err;
+      }
 
       const createData = await gqlRequest(
         `
@@ -3946,6 +4591,12 @@
       const newId = String(createData?.tagCreate?.id || "");
       if (!newId) throw new Error("Split tag was created without an id.");
 
+      try {
+        await saveSupplementalImageFields(newId, nextDraft, null);
+      } catch (err) {
+        supplementalSaveError = supplementalSaveError || err;
+      }
+
       invalidateTags();
       await refreshDataWithRetry(() => {
         const originalRecord = state.tagMap.get(String(state.selectedTagId));
@@ -3955,7 +4606,12 @@
 
       resetSplitState();
       setSelectedTag(newId);
-      setStatus("success", "Tag split. New tag created as a root tag.");
+      setStatus(
+        supplementalSaveError ? "info" : "success",
+        supplementalSaveError
+          ? "Tag split, but supplemental images could not be saved."
+          : "Tag split. New tag created as a root tag."
+      );
     } catch (err) {
       console.error("[CustomTagsManager] split failed", err);
       setStatus("error", err?.message || "Failed to split tag.");
@@ -4349,6 +5005,7 @@
     return Promise.all([loadConfig(), loadTags()]).then(([config, tags]) => {
       cache.config = config;
       const hierarchy = buildHierarchy(tags);
+      cache.tagLookupMap = hierarchy.tagMap;
       state.groups = hierarchy.groups;
       state.ungroupedLeaves = hierarchy.ungroupedLeaves;
       state.rootIds = hierarchy.rootIds;
@@ -4417,8 +5074,17 @@
     if (!isManagerRoute()) {
       const host = getHost();
       if (host) host.remove();
-      return Promise.resolve();
+      if (!isTagDetailPage()) {
+        removeNativeTagDetailSupplementalPanel();
+        return Promise.resolve();
+      }
+      return syncNativeTagDetailSupplementalPanel().then((ready) => {
+        if (!ready) {
+          throw createRetryableRefreshError("Tag detail header not ready");
+        }
+      });
     }
+    removeNativeTagDetailSupplementalPanel();
     return refreshData().then(() => {
       render();
     });
@@ -4447,6 +5113,7 @@
 
   function scheduleRefresh() {
     state.refreshGeneration += 1;
+    hideHoverPreview();
     clearRefreshTimeouts();
     queueRefreshAttempt(state.refreshGeneration, 0);
   }
@@ -4459,9 +5126,19 @@
       eventApi.addEventListener("stash:location", scheduleRefresh);
     }
     window.addEventListener("popstate", scheduleRefresh);
+    document.addEventListener("mouseover", handleGlobalTagHover, true);
+    document.addEventListener("mouseout", handleGlobalTagHoverOut, true);
     window.addEventListener("resize", () => {
+      hideHoverPreview();
       if (isManagerRoute()) syncMeasuredPanelHeights();
     });
+    window.addEventListener(
+      "scroll",
+      () => {
+        hideHoverPreview();
+      },
+      true
+    );
   }
 
   function init() {
