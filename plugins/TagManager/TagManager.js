@@ -43,7 +43,13 @@
     tagMap: new Map(),
     searchIndex: [],
     selectedTagId: null,
+    batchSelectedTagIds: [],
     draft: null,
+    splitMode: false,
+    splitOriginalDraft: null,
+    splitNewDraft: null,
+    splitOriginalAliasInput: "",
+    splitNewAliasInput: "",
     searchText: "",
     utilityFilter: "all",
     parentCreateName: "",
@@ -51,6 +57,8 @@
     siblingCreateName: "",
     reparentQuery: "",
     reparentTargetId: "",
+    batchReparentQuery: "",
+    batchReparentTargetId: "",
     attachChildQuery: "",
     attachChildTargetIds: [],
     attachSiblingQuery: "",
@@ -61,6 +69,7 @@
     mergeSourceId: "",
     imagePickerOpen: false,
     imagePickerMode: "",
+    imagePickerTarget: "main",
     imageUrlDraft: "",
     pendingDeleteConfirm: false,
     mergePanelOpen: false,
@@ -644,6 +653,20 @@
     state.attachSiblingTargetId = "";
   }
 
+  function clearBatchSelection() {
+    state.batchSelectedTagIds = [];
+    state.batchReparentQuery = "";
+    state.batchReparentTargetId = "";
+  }
+
+  function resetSplitState() {
+    state.splitMode = false;
+    state.splitOriginalDraft = null;
+    state.splitNewDraft = null;
+    state.splitOriginalAliasInput = "";
+    state.splitNewAliasInput = "";
+  }
+
   function expandAncestors(ids) {
     let changed = false;
     (ids || []).map(String).forEach((id) => {
@@ -661,6 +684,8 @@
       state.treeScrollTop = treePanel.scrollTop;
     }
     const id = tagId ? String(tagId) : null;
+    clearBatchSelection();
+    resetSplitState();
     state.selectedTagId = id && state.tagMap.has(id) ? id : null;
     const record = state.selectedTagId ? state.tagMap.get(state.selectedTagId) : null;
     state.draft = record
@@ -679,6 +704,7 @@
     state.aliasInput = "";
     state.imagePickerOpen = false;
     state.imagePickerMode = "";
+    state.imagePickerTarget = "main";
     state.imageUrlDraft = "";
     state.pendingDeleteConfirm = false;
     setStatus("", "");
@@ -694,6 +720,8 @@
       state.treeScrollTop = treePanel.scrollTop;
     }
     state.selectedTagId = null;
+    clearBatchSelection();
+    resetSplitState();
     state.draft = {
       id: null,
       name: "",
@@ -711,6 +739,7 @@
     state.mergeSourceId = "";
     state.imagePickerOpen = false;
     state.imagePickerMode = "";
+    state.imagePickerTarget = "main";
     state.imageUrlDraft = "";
     state.pendingDeleteConfirm = false;
     state.mergePanelOpen = false;
@@ -870,6 +899,63 @@
 
   function canTagHaveChildren(tagId, tagMap = state.tagMap) {
     return getMaxParentDepth(tagId, tagMap) < 2;
+  }
+
+  function getBatchSelectionType(tagOrId, tagMap = state.tagMap) {
+    const record =
+      typeof tagOrId === "object" && tagOrId ? tagOrId : tagMap.get(String(tagOrId || ""));
+    if (!record || (record.childIds || []).length) return "";
+    return `depth-${getMaxParentDepth(record.id, tagMap)}`;
+  }
+
+  function isBatchSelectionEligible(tagId, anchorId = "", tagMap = state.tagMap) {
+    const record = tagMap.get(String(tagId || ""));
+    if (!record || (record.childIds || []).length) return false;
+    const candidateType = getBatchSelectionType(record, tagMap);
+    if (!candidateType) return false;
+    if (!anchorId) return true;
+    return candidateType === getBatchSelectionType(String(anchorId || ""), tagMap);
+  }
+
+  function getBatchSelectionSummaryLabel(tagIds = state.batchSelectedTagIds, tagMap = state.tagMap) {
+    const selectedIds = (tagIds || []).map(String).filter(Boolean);
+    const anchorId = selectedIds[0] || "";
+    const depth = anchorId ? getMaxParentDepth(anchorId, tagMap) : -1;
+    if (depth <= 0) return "Unparented tags";
+    if (depth === 1) return "Leaf tags under a parent group";
+    return "Leaf tags under a subgroup";
+  }
+
+  function hasBatchSelection() {
+    return Array.isArray(state.batchSelectedTagIds) && state.batchSelectedTagIds.length > 0;
+  }
+
+  function shouldShowBatchToggle(tagId) {
+    const id = String(tagId || "");
+    if (!id || state.isSaving) return false;
+    const selectedIds = (state.batchSelectedTagIds || []).map(String);
+    if (selectedIds.includes(id)) return true;
+    return isBatchSelectionEligible(id, selectedIds[0] || "");
+  }
+
+  function renderBatchToggle(tagId, label) {
+    if (!shouldShowBatchToggle(tagId)) return "";
+    const checked = (state.batchSelectedTagIds || []).map(String).includes(String(tagId));
+    const icon =
+      renderFontAwesomeIconMarkup(checked ? "faSquareCheck" : "faSquare", {
+        className: "tag-manager__batch-toggle-icon",
+        title: checked ? `Deselect ${label || "tag"}` : `Select ${label || "tag"}`,
+      }) || `<span class="tag-manager__batch-toggle-fallback">${checked ? "☑" : "☐"}</span>`;
+    return `
+      <button
+        type="button"
+        class="tag-manager__batch-toggle ${checked ? "is-checked" : ""}"
+        data-action="toggle-batch-select"
+        data-tag-id="${escapeHtml(tagId)}"
+        aria-pressed="${checked ? "true" : "false"}"
+        title="${checked ? "Remove from batch selection" : "Add to batch selection"}"
+      >${icon}</button>
+    `;
   }
 
   function canTagGainInsertedParent(tagId, tagMap = state.tagMap) {
@@ -1043,17 +1129,18 @@
       .join("");
   }
 
-  function renderImagePicker() {
+  function renderImagePicker(target = "main") {
     if (!state.imagePickerOpen) return "";
+    if (String(state.imagePickerTarget || "main") !== String(target || "main")) return "";
 
-    const currentImage = String(state.draft?.image_path || "").trim();
+    const currentImage = String(getDraftImageByTarget(target) || "").trim();
     return `
       <div class="tag-manager__image-picker">
         <div class="tag-manager__image-picker-row">
-          <button type="button" class="btn btn-secondary tag-manager__picker-button" data-action="open-image-url-picker">From URL</button>
-          <button type="button" class="btn btn-secondary tag-manager__picker-button" data-action="open-image-file-picker">From File</button>
-          <button type="button" class="btn btn-secondary tag-manager__picker-button" data-action="read-image-clipboard">From Clipboard</button>
-          <button type="button" class="btn btn-secondary tag-manager__picker-button" data-action="close-image-picker">Close</button>
+          <button type="button" class="btn btn-secondary tag-manager__picker-button" data-action="open-image-url-picker" data-image-target="${escapeHtml(target)}">From URL</button>
+          <button type="button" class="btn btn-secondary tag-manager__picker-button" data-action="open-image-file-picker" data-image-target="${escapeHtml(target)}">From File</button>
+          <button type="button" class="btn btn-secondary tag-manager__picker-button" data-action="read-image-clipboard" data-image-target="${escapeHtml(target)}">From Clipboard</button>
+          <button type="button" class="btn btn-secondary tag-manager__picker-button" data-action="close-image-picker" data-image-target="${escapeHtml(target)}">Close</button>
         </div>
         ${
           state.imagePickerMode === "url"
@@ -1062,10 +1149,10 @@
                   state.imageUrlDraft || currentImage
                 )}" placeholder="Paste an image URL" />
                 <div class="tag-manager__button-row">
-                  <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="apply-image-url" ${
+                  <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="apply-image-url" data-image-target="${escapeHtml(target)}" ${
                     String(state.imageUrlDraft || "").trim() && !state.isSaving ? "" : "disabled"
                   }>Use URL</button>
-                  <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="cancel-image-url">Cancel</button>
+                  <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="cancel-image-url" data-image-target="${escapeHtml(target)}">Cancel</button>
                 </div>
               </div>`
             : ""
@@ -1336,6 +1423,189 @@
       .slice(0, 40);
   }
 
+  function createDraftFromRecord(record) {
+    return record
+      ? {
+          id: record.id,
+          name: record.name || "",
+          aliases: normalizeAliasList(record.aliases || []),
+          sort_name: record.sort_name || "",
+          description: record.description || "",
+          image_path: record.image_path || "",
+        }
+      : null;
+  }
+
+  function createBlankDraft() {
+    return {
+      id: null,
+      name: "",
+      aliases: [],
+      sort_name: "",
+      description: "",
+      image_path: "",
+    };
+  }
+
+  function getDraftImageByTarget(target = "main") {
+    if (target === "split-new") return String(state.splitNewDraft?.image_path || "");
+    if (target === "split-original") return String(state.splitOriginalDraft?.image_path || "");
+    return String(state.draft?.image_path || "");
+  }
+
+  function setDraftImageByTarget(target = "main", value = "") {
+    if (target === "split-new" && state.splitNewDraft) {
+      state.splitNewDraft.image_path = String(value || "");
+      return;
+    }
+    if (target === "split-original" && state.splitOriginalDraft) {
+      state.splitOriginalDraft.image_path = String(value || "");
+      return;
+    }
+    if (state.draft) {
+      state.draft.image_path = String(value || "");
+    }
+  }
+
+  function getSplitOccupiedIdentityMap(excludeOriginalId = state.selectedTagId) {
+    const occupied = new Map();
+    state.tagMap.forEach((record) => {
+      if (String(record.id) === String(excludeOriginalId || "")) return;
+      const terms = [String(record.name || "").trim(), ...normalizeAliasList(record.aliases || [])];
+      terms.forEach((term) => {
+        const normalized = String(term || "").trim().toLowerCase();
+        if (!normalized || occupied.has(normalized)) return;
+        occupied.set(normalized, record.name || record.id);
+      });
+    });
+    return occupied;
+  }
+
+  function getSplitValidationMessage() {
+    if (!state.splitMode) return "";
+    const original = state.splitOriginalDraft;
+    const nextDraft = state.splitNewDraft;
+    if (!original || !nextDraft) return "Split mode is not ready.";
+
+    const originalName = String(original.name || "").trim();
+    const nextName = String(nextDraft.name || "").trim();
+    if (!originalName) return "Original tag name is required.";
+    if (!nextName) return "New tag name is required.";
+
+    const occupied = getSplitOccupiedIdentityMap(state.selectedTagId);
+    const seen = new Map();
+    const entries = [
+      { side: "original", type: "name", value: originalName },
+      { side: "new", type: "name", value: nextName },
+      ...normalizeAliasList(original.aliases || []).map((value) => ({ side: "original", type: "alias", value })),
+      ...normalizeAliasList(nextDraft.aliases || []).map((value) => ({ side: "new", type: "alias", value })),
+    ];
+
+    for (const entry of entries) {
+      const normalized = String(entry.value || "").trim().toLowerCase();
+      if (!normalized) continue;
+      if (seen.has(normalized)) {
+        return "Split names and aliases must all be unique.";
+      }
+      seen.set(normalized, entry);
+      if (occupied.has(normalized)) {
+        return `“${entry.value}” already exists on another tag or alias.`;
+      }
+    }
+
+    return "";
+  }
+
+  function getSplitAliasAddReason(side) {
+    if (!state.splitMode) return "Split mode is not active.";
+    const targetSide = side === "new" ? "new" : "original";
+    const inputValue = String(
+      targetSide === "new" ? state.splitNewAliasInput : state.splitOriginalAliasInput
+    ).trim();
+    if (!inputValue) return "Enter an alias.";
+
+    const original = state.splitOriginalDraft || createBlankDraft();
+    const nextDraft = state.splitNewDraft || createBlankDraft();
+    const currentName = String(
+      targetSide === "new" ? nextDraft.name || "" : original.name || ""
+    ).trim();
+    if (inputValue.toLowerCase() === currentName.toLowerCase()) {
+      return "Alias cannot match the tag name.";
+    }
+
+    const occupied = getSplitOccupiedIdentityMap(state.selectedTagId);
+    const compareTerms = [
+      String(original.name || "").trim(),
+      String(nextDraft.name || "").trim(),
+      ...normalizeAliasList(original.aliases || []),
+      ...normalizeAliasList(nextDraft.aliases || []),
+    ]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean);
+    if (compareTerms.includes(inputValue.toLowerCase())) {
+      return "Alias already exists in this split.";
+    }
+    if (occupied.has(inputValue.toLowerCase())) {
+      return "Alias already exists on another tag.";
+    }
+    return "";
+  }
+
+  function renderSplitAliasList(side, aliases) {
+    const targetSide = side === "new" ? "new" : "original";
+    const moveAction = targetSide === "new" ? "move-split-alias-to-original" : "move-split-alias-to-new";
+    const moveLabel = targetSide === "new" ? "Move to original tag" : "Move to new tag";
+    if (!aliases.length) {
+      return `<span class="tag-manager__meta-empty">No aliases</span>`;
+    }
+    return aliases
+      .map(
+        (alias, index) => `<div class="tag-manager__split-alias-row">
+          <span class="tag-manager__split-alias-text">${escapeHtml(alias)}</span>
+          <div class="tag-manager__split-alias-actions">
+            <button type="button" class="btn btn-secondary tag-manager__split-alias-button" data-action="${moveAction}" data-alias-index="${index}" ${
+              state.isSaving ? "disabled" : ""
+            }>${targetSide === "new" ? "&larr;" : "&rarr;"}</button>
+            <button type="button" class="btn btn-secondary tag-manager__split-alias-button" data-action="remove-split-alias" data-split-side="${escapeHtml(
+              targetSide
+            )}" data-alias-index="${index}" ${state.isSaving ? "disabled" : ""}>Remove</button>
+          </div>
+        </div>`
+      )
+      .join("");
+  }
+
+  function renderSplitAliasesCard(side, draft) {
+    const targetSide = side === "new" ? "new" : "original";
+    const aliases = normalizeAliasList(draft?.aliases || []);
+    const aliasInput = targetSide === "new" ? state.splitNewAliasInput : state.splitOriginalAliasInput;
+    const addReason = getSplitAliasAddReason(targetSide);
+    return `
+      <div class="tag-manager__meta-card tag-manager__split-meta-card">
+        <div class="tag-manager__meta-header">
+          <div class="tag-manager__meta-label">Aliases</div>
+          <div class="tag-manager__meta-value">${formatCount(aliases.length)}</div>
+        </div>
+        <div class="tag-manager__alias-editor">
+          <div class="tag-manager__alias-input-row">
+            <input class="tag-manager__input" type="text" data-field="split-${targetSide}-alias-input" value="${escapeHtml(
+              aliasInput
+            )}" placeholder="Add an alias" ${state.isSaving ? "disabled" : ""} />
+            <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="add-split-alias" data-split-side="${escapeHtml(
+              targetSide
+            )}" ${!addReason && !state.isSaving ? "" : "disabled"}>Add Alias</button>
+          </div>
+          ${aliasInput && addReason ? `<div class="tag-manager__field-note">${escapeHtml(addReason)}</div>` : ""}
+          <div class="tag-manager__alias-panel-scroll">
+            <div class="tag-manager__split-alias-list">
+              ${renderSplitAliasList(targetSide, aliases)}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderAttachPicker(query, selectedId, options, actionName) {
     const selected = selectedId ? state.tagMap.get(String(selectedId)) : null;
     const showResults =
@@ -1467,8 +1737,9 @@
   }
   function renderTreeLeaf(node, extraClass = "") {
     const selected = state.selectedTagId === String(node.id);
+    const batchSelected = (state.batchSelectedTagIds || []).map(String).includes(String(node.id));
     return `
-      <div class="tag-manager__tree-item ${selected ? "is-selected" : ""} ${extraClass}" ${getTreeRowDropAttributes(
+      <div class="tag-manager__tree-item ${selected ? "is-selected" : ""} ${batchSelected ? "is-batch-selected" : ""} ${extraClass}" ${getTreeRowDropAttributes(
         node.id
       )} data-action="select-tag" data-tag-id="${escapeHtml(node.id)}" role="button" tabindex="0">
         <div class="tag-manager__row-left">
@@ -1477,7 +1748,8 @@
             <span class="tag-manager__tree-item-name">${escapeHtml(node.name)}</span>
           </span>
         </div>
-        <div class="tag-manager__row-actions">
+        <div class="tag-manager__row-actions ${batchSelected ? "is-batch-selected" : ""}">
+          ${renderBatchToggle(node.id, node.name || "tag")}
           ${renderTreeDragHandle(node.id, node.name || "tag")}
         </div>
       </div>
@@ -1616,6 +1888,206 @@
     return !!state.draft && !state.selectedTagId;
   }
 
+  function getBatchReparentBlockReason(targetTagId, sourceIds = state.batchSelectedTagIds, tagMap = state.tagMap) {
+    const selectedIds = (sourceIds || []).map(String).filter(Boolean);
+    if (!selectedIds.length) return "Select one or more tags first.";
+    const records = selectedIds.map((id) => tagMap.get(id)).filter(Boolean);
+    if (records.length !== selectedIds.length) return "Selected tag could not be found.";
+    if (records.some((record) => (record.childIds || []).length)) {
+      return "Only tags without child tags can be batch reparented.";
+    }
+    const typeSet = new Set(records.map((record) => getBatchSelectionType(record, tagMap)).filter(Boolean));
+    if (typeSet.size > 1) {
+      return "Batch selection requires tags from the same hierarchy level.";
+    }
+    if (!String(targetTagId || "").trim()) return "";
+    return selectedIds.map((id) => getParentRelationshipBlockReason(id, targetTagId, "reparent", tagMap)).find(Boolean) || "";
+  }
+
+  function renderBatchInspector() {
+    const selectedIds = (state.batchSelectedTagIds || []).map(String).filter((id) => state.tagMap.has(String(id)));
+    const selectedRecords = selectedIds.map((id) => state.tagMap.get(String(id))).filter(Boolean);
+    const batchOptions = getTagPickerOptions(state.batchReparentQuery, selectedIds);
+    const batchReason = state.batchReparentTargetId
+      ? getBatchReparentBlockReason(state.batchReparentTargetId, selectedIds)
+      : "";
+    const targetRecord = state.batchReparentTargetId
+      ? state.tagMap.get(String(state.batchReparentTargetId))
+      : null;
+    const status =
+      state.status.text &&
+      `<div class="tag-manager__status tag-manager__status--${escapeHtml(
+        state.status.type || "info"
+      )}">${escapeHtml(state.status.text)}</div>`;
+
+    return `
+      ${status || ""}
+      <div class="tag-manager__batch-card">
+        <div class="tag-manager__batch-card-header">
+          <div>
+            <h3 class="tag-manager__inspector-title">${formatCount(selectedRecords.length)} tags selected</h3>
+            <p class="tag-manager__helper">Batch reparent is limited to tags without child tags. All selected tags will move under the same parent.</p>
+          </div>
+          <button type="button" class="btn btn-secondary" data-action="clear-batch-selection" ${
+            state.isSaving ? "disabled" : ""
+          }>Clear Selection</button>
+        </div>
+        <div class="tag-manager__meta-card">
+          <div class="tag-manager__meta-header">
+            <div class="tag-manager__meta-label">Selected Tags</div>
+            <div class="tag-manager__meta-value">${escapeHtml(getBatchSelectionSummaryLabel(selectedIds))}</div>
+          </div>
+          <div class="tag-manager__attach-picked">
+            <span class="tag-manager__attach-picked-label">Queued ${formatCount(selectedRecords.length)}</span>
+            ${selectedRecords
+              .map(
+                (record) => `<button type="button" class="tag-manager__chip" data-action="select-tag" data-tag-id="${escapeHtml(
+                  record.id
+                )}">${escapeHtml(record.name)}</button>
+                <button type="button" class="tag-manager__attach-clear" data-action="remove-batch-selected-tag" data-tag-id="${escapeHtml(
+                  record.id
+                )}">Remove</button>`
+              )
+              .join("")}
+          </div>
+        </div>
+        <div class="tag-manager__editor-card">
+          <div class="tag-manager__section-title">Reparent Selected Tags</div>
+          <div class="tag-manager__field-group">
+            <label class="tag-manager__field-label" for="tag-manager-batch-reparent-query">New Parent Tag</label>
+            <input id="tag-manager-batch-reparent-query" class="tag-manager__input" type="search" data-field="batch-reparent-query" value="${escapeHtml(
+              state.batchReparentQuery
+            )}" placeholder="Search for the new parent tag" ${state.isSaving ? "disabled" : ""} />
+            ${renderAttachPicker(state.batchReparentQuery, state.batchReparentTargetId, batchOptions, "batch-reparent")}
+            ${
+              targetRecord && !batchReason
+                ? `<div class="tag-manager__field-note">Selected parent: ${escapeHtml(targetRecord.name)}</div>`
+                : batchReason
+                ? `<div class="tag-manager__field-note">${escapeHtml(batchReason)}</div>`
+                : ""
+            }
+            <button type="button" class="btn btn-primary tag-manager__action-button" data-action="reparent-selected-tags" ${
+              selectedRecords.length && state.batchReparentTargetId && !batchReason && !state.isSaving ? "" : "disabled"
+            }>Reparent Selected Tags</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderSplitEditorColumn(side, title, draft, options = {}) {
+    const targetSide = side === "new" ? "new" : "original";
+    const canEditImage = !!options.canEditImage;
+    const previewImagePath = String(draft?.image_path || "").trim();
+    return `
+      <div class="tag-manager__editor-card tag-manager__split-card">
+        <div class="tag-manager__meta-header">
+          <div class="tag-manager__section-title">${escapeHtml(title)}</div>
+          ${
+            targetSide === "original" && state.selectedTagId
+              ? `<span class="tag-manager__id-chip">ID ${escapeHtml(state.selectedTagId)}</span>`
+              : targetSide === "new"
+              ? `<span class="tag-manager__id-chip">New Root Tag</span>`
+              : ""
+          }
+        </div>
+        ${
+          previewImagePath
+            ? `<div class="tag-manager__image-preview">
+                <img src="${escapeHtml(previewImagePath)}" alt="${escapeHtml(draft?.name || title)}" />
+              </div>`
+            : canEditImage
+            ? `<div class="tag-manager__split-image-empty">No image selected</div>`
+            : ""
+        }
+        ${
+          canEditImage
+            ? `<input class="tag-manager__file-input" id="tag-manager-image-file-${escapeHtml(targetSide)}" type="file" accept="image/*" data-field="image-file" data-image-target="split-${escapeHtml(
+                targetSide
+              )}" />
+              <div class="tag-manager__button-row">
+                <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="toggle-image-picker" data-image-target="split-${escapeHtml(
+                  targetSide
+                )}" ${state.isSaving ? "disabled" : ""}>Set Image</button>
+                <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="clear-image" data-image-target="split-${escapeHtml(
+                  targetSide
+                )}" ${previewImagePath && !state.isSaving ? "" : "disabled"}>Clear Image</button>
+              </div>
+              ${renderImagePicker(`split-${targetSide}`)}`
+            : `<div class="tag-manager__field-note">Original tag keeps its current image.</div>`
+        }
+        <div class="tag-manager__field-grid">
+          <div class="tag-manager__field-group">
+            <label class="tag-manager__field-label" for="tag-manager-split-${escapeHtml(targetSide)}-name">Name</label>
+            <input id="tag-manager-split-${escapeHtml(targetSide)}-name" class="tag-manager__input" type="text" data-field="split-${escapeHtml(
+              targetSide
+            )}-name" value="${escapeHtml(draft?.name || "")}" ${state.isSaving ? "disabled" : ""} />
+          </div>
+          <div class="tag-manager__field-group">
+            <label class="tag-manager__field-label" for="tag-manager-split-${escapeHtml(targetSide)}-sort-name">Sort Name</label>
+            <input id="tag-manager-split-${escapeHtml(targetSide)}-sort-name" class="tag-manager__input" type="text" data-field="split-${escapeHtml(
+              targetSide
+            )}-sort_name" value="${escapeHtml(draft?.sort_name || "")}" placeholder="Falls back to name when empty" ${
+              state.isSaving ? "disabled" : ""
+            } />
+          </div>
+        </div>
+        <div class="tag-manager__field-group">
+          <label class="tag-manager__field-label" for="tag-manager-split-${escapeHtml(targetSide)}-description">Description</label>
+          <textarea id="tag-manager-split-${escapeHtml(targetSide)}-description" class="tag-manager__textarea" data-field="split-${escapeHtml(
+            targetSide
+          )}-description" rows="6" ${state.isSaving ? "disabled" : ""}>${escapeHtml(draft?.description || "")}</textarea>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderSplitInspector() {
+    const originalDraft = state.splitOriginalDraft;
+    const newDraft = state.splitNewDraft;
+    const splitMessage = getSplitValidationMessage();
+    const status =
+      state.status.text &&
+      `<div class="tag-manager__status tag-manager__status--${escapeHtml(
+        state.status.type || "info"
+      )}">${escapeHtml(state.status.text)}</div>`;
+    if (!originalDraft || !newDraft) {
+      return `
+        ${status || ""}
+        <div class="tag-manager__empty-state">
+          <h3 class="tag-manager__inspector-title">Split Tag</h3>
+          <p class="tag-manager__helper">Split mode is not ready.</p>
+        </div>
+      `;
+    }
+    return `
+      ${status || ""}
+      <div class="tag-manager__split-workspace">
+        <div class="tag-manager__split-header">
+          <div>
+            <h3 class="tag-manager__inspector-title">Split Tag</h3>
+            <p class="tag-manager__helper">Create a new root tag from this existing one. Aliases can be redistributed between both sides before saving.</p>
+          </div>
+          <div class="tag-manager__button-row">
+            <button type="button" class="btn btn-primary tag-manager__action-button" data-action="confirm-split-tag" ${
+              !splitMessage && !state.isSaving ? "" : "disabled"
+            }>Create Split Tag</button>
+            <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="cancel-split-tag" ${
+              state.isSaving ? "disabled" : ""
+            }>Cancel Split</button>
+          </div>
+        </div>
+        ${splitMessage ? `<div class="tag-manager__field-note">${escapeHtml(splitMessage)}</div>` : ""}
+        <div class="tag-manager__split-grid">
+          ${renderSplitEditorColumn("original", "Original Tag", originalDraft, { canEditImage: false })}
+          ${renderSplitEditorColumn("new", "New Split Tag", newDraft, { canEditImage: true })}
+          ${renderSplitAliasesCard("original", originalDraft)}
+          ${renderSplitAliasesCard("new", newDraft)}
+        </div>
+      </div>
+    `;
+  }
+
   function isDraftDirty() {
     if (isNewDraftMode()) {
       return (
@@ -1640,6 +2112,13 @@
   }
 
   function renderInspector() {
+    if (hasBatchSelection()) {
+      return renderBatchInspector();
+    }
+    if (state.splitMode) {
+      return renderSplitInspector();
+    }
+
     const record = state.selectedTagId ? state.tagMap.get(state.selectedTagId) : null;
     const creatingNew = isNewDraftMode();
     const dirty = isDraftDirty();
@@ -1746,6 +2225,13 @@
               <button type="button" class="btn btn-secondary" data-action="clear-image" ${
                 previewImagePath && !state.isSaving ? "" : "disabled"
               }>Clear Image</button>
+              ${
+                creatingNew
+                  ? ""
+                  : `<button type="button" class="btn btn-secondary" data-action="start-split-tag" ${
+                      state.isSaving || dirty ? "disabled" : ""
+                    }>Split Tag</button>`
+              }
               ${
                 creatingNew
                   ? ""
@@ -1926,6 +2412,10 @@
   function syncControlStates() {
     const host = getHost();
     if (!host) return;
+    const batchReason = state.batchReparentTargetId
+      ? getBatchReparentBlockReason(state.batchReparentTargetId)
+      : "";
+    const splitReason = state.splitMode ? getSplitValidationMessage() : "";
     const selectedRecord = state.selectedTagId ? state.tagMap.get(String(state.selectedTagId)) : null;
     const childActionsAllowed = selectedRecord ? canTagHaveChildren(selectedRecord.id) : false;
     const createParentAllowed = selectedRecord ? canTagGainInsertedParent(selectedRecord.id) : false;
@@ -1965,7 +2455,8 @@
       button.disabled = state.isSaving;
     });
     host.querySelectorAll('[data-action="clear-image"]').forEach((button) => {
-      button.disabled = !String(state.draft?.image_path || "").trim() || state.isSaving;
+      const target = String(button.getAttribute("data-image-target") || "main");
+      button.disabled = !String(getDraftImageByTarget(target) || "").trim() || state.isSaving;
     });
     host.querySelectorAll('[data-action="remove-all-parents"]').forEach((button) => {
       button.disabled = !(selectedRecord?.parentIds || []).length || state.isSaving;
@@ -2023,9 +2514,25 @@
     host.querySelectorAll('[data-action="toggle-merge-panel"]').forEach((button) => {
       button.disabled = state.isSaving || isDraftDirty();
     });
+    host.querySelectorAll('[data-action="start-split-tag"]').forEach((button) => {
+      button.disabled = state.isSaving || isDraftDirty() || !selectedRecord || hasBatchSelection();
+    });
+    host.querySelectorAll('[data-action="cancel-split-tag"]').forEach((button) => {
+      button.disabled = state.isSaving;
+    });
+    host.querySelectorAll('[data-action="confirm-split-tag"]').forEach((button) => {
+      button.disabled = !state.splitMode || !!splitReason || state.isSaving;
+    });
     host.querySelectorAll('[data-action="confirm-merge-tag"]').forEach((button) => {
       button.disabled =
         !selectedRecord || !state.mergeSourceId || !!mergeReason || state.isSaving || isDraftDirty();
+    });
+    host.querySelectorAll('[data-action="clear-batch-selection"]').forEach((button) => {
+      button.disabled = state.isSaving;
+    });
+    host.querySelectorAll('[data-action="reparent-selected-tags"]').forEach((button) => {
+      button.disabled =
+        !hasBatchSelection() || !state.batchReparentTargetId || !!batchReason || state.isSaving;
     });
     host.querySelectorAll('[data-action="cancel-merge-tag"]').forEach((button) => {
       button.disabled = state.isSaving;
@@ -2038,6 +2545,10 @@
     });
     host.querySelectorAll('[data-action="remove-alias"]').forEach((button) => {
       button.disabled = state.isSaving;
+    });
+    host.querySelectorAll('[data-action="add-split-alias"]').forEach((button) => {
+      const side = String(button.getAttribute("data-split-side") || "original");
+      button.disabled = !!getSplitAliasAddReason(side) || state.isSaving;
     });
   }
 
@@ -2299,6 +2810,7 @@
     }
     if (
       field === "reparent-query" ||
+      field === "batch-reparent-query" ||
       field === "attach-child-query" ||
       field === "attach-sibling-query" ||
       field === "merge-query"
@@ -2306,6 +2818,10 @@
       if (field === "reparent-query") {
         state.reparentQuery = target.value || "";
         state.reparentTargetId = "";
+      }
+      if (field === "batch-reparent-query") {
+        state.batchReparentQuery = target.value || "";
+        state.batchReparentTargetId = "";
       }
       if (field === "attach-child-query") {
         state.attachChildQuery = target.value || "";
@@ -2332,11 +2848,27 @@
       syncControlStates();
       return;
     }
+    if (field === "split-original-alias-input") {
+      state.splitOriginalAliasInput = target.value || "";
+      syncControlStates();
+      return;
+    }
+    if (field === "split-new-alias-input") {
+      state.splitNewAliasInput = target.value || "";
+      syncControlStates();
+      return;
+    }
     if (field === "alias-input") {
       state.aliasInput = target.value || "";
       syncControlStates();
       return;
     }
+    if (field === "split-original-name" && state.splitOriginalDraft) state.splitOriginalDraft.name = target.value;
+    if (field === "split-original-sort_name" && state.splitOriginalDraft) state.splitOriginalDraft.sort_name = target.value;
+    if (field === "split-original-description" && state.splitOriginalDraft) state.splitOriginalDraft.description = target.value;
+    if (field === "split-new-name" && state.splitNewDraft) state.splitNewDraft.name = target.value;
+    if (field === "split-new-sort_name" && state.splitNewDraft) state.splitNewDraft.sort_name = target.value;
+    if (field === "split-new-description" && state.splitNewDraft) state.splitNewDraft.description = target.value;
     if (field === "draft-name" && state.draft) state.draft.name = target.value;
     if (field === "draft-sort_name" && state.draft) state.draft.sort_name = target.value;
     if (field === "draft-description" && state.draft) state.draft.description = target.value;
@@ -2492,16 +3024,21 @@
     const target = event.target;
     if (!(target instanceof HTMLInputElement)) return;
     const field = target.getAttribute("data-field") || "";
-    if (field !== "image-file" || !state.draft) return;
+    if (field !== "image-file") return;
+    const imageTarget = String(target.getAttribute("data-image-target") || state.imagePickerTarget || "main");
+    if (imageTarget === "main" && !state.draft) return;
+    if (imageTarget === "split-new" && !state.splitNewDraft) return;
+    if (imageTarget === "split-original" && !state.splitOriginalDraft) return;
 
     const file = target.files?.[0];
     if (!file) return;
 
     try {
       const dataUrl = await blobToDataUrl(file);
-      state.draft.image_path = dataUrl;
+      setDraftImageByTarget(imageTarget, dataUrl);
       state.imagePickerOpen = false;
       state.imagePickerMode = "";
+      state.imagePickerTarget = "main";
       state.imageUrlDraft = "";
       setStatus("info", "Image loaded from file. Save Changes to persist.");
       render();
@@ -2514,8 +3051,11 @@
     }
   }
 
-  async function readImageFromClipboard() {
-    if (!state.draft || state.isSaving) return;
+  async function readImageFromClipboard(target = "main") {
+    if (state.isSaving) return;
+    if (target === "main" && !state.draft) return;
+    if (target === "split-new" && !state.splitNewDraft) return;
+    if (target === "split-original" && !state.splitOriginalDraft) return;
     if (!navigator.clipboard?.read) {
       setStatus("error", "Clipboard image reading is not available in this browser.");
       render();
@@ -2529,9 +3069,10 @@
         if (!imageType) continue;
         const blob = await item.getType(imageType);
         const dataUrl = await blobToDataUrl(blob);
-        state.draft.image_path = dataUrl;
+        setDraftImageByTarget(target, dataUrl);
         state.imagePickerOpen = false;
         state.imagePickerMode = "";
+        state.imagePickerTarget = "main";
         state.imageUrlDraft = "";
         setStatus("info", "Image loaded from clipboard. Save Changes to persist.");
         render();
@@ -2552,9 +3093,48 @@
     if (!trigger) return;
     const action = trigger.getAttribute("data-action");
     const tagId = trigger.getAttribute("data-tag-id");
+    const imageTarget = String(trigger.getAttribute("data-image-target") || "main");
 
     if (action === "drag-handle") {
       event.preventDefault();
+      return;
+    }
+
+    if (action === "toggle-batch-select" && tagId) {
+      event.preventDefault();
+      if (state.isSaving) return;
+      if (isDraftDirty() && !hasBatchSelection()) {
+        setStatus("error", "Save or reset current changes before batch reparenting.");
+        render();
+        return;
+      }
+      const treePanel = getHost()?.querySelector(".tag-manager__tree-panel-scroll");
+      if (treePanel instanceof HTMLElement) {
+        state.treeScrollTop = treePanel.scrollTop;
+      }
+      const targetId = String(tagId);
+      const selectedIds = new Set((state.batchSelectedTagIds || []).map(String));
+      if (selectedIds.has(targetId)) {
+        selectedIds.delete(targetId);
+      } else {
+        const anchorId = Array.from(selectedIds)[0] || "";
+        if (!isBatchSelectionEligible(targetId, anchorId)) {
+          return;
+        }
+        selectedIds.add(targetId);
+      }
+      state.batchSelectedTagIds = Array.from(selectedIds);
+      if (!state.batchSelectedTagIds.length) {
+        state.batchReparentQuery = "";
+        state.batchReparentTargetId = "";
+      } else if (
+        state.batchReparentTargetId &&
+        getBatchReparentBlockReason(state.batchReparentTargetId, state.batchSelectedTagIds)
+      ) {
+        state.batchReparentQuery = "";
+        state.batchReparentTargetId = "";
+      }
+      render();
       return;
     }
 
@@ -2598,6 +3178,10 @@
         state.reparentTargetId = String(tagId);
         state.reparentQuery = targetRecord.name || "";
       }
+      if (slot === "batch-reparent") {
+        state.batchReparentTargetId = String(tagId);
+        state.batchReparentQuery = targetRecord.name || "";
+      }
       if (slot === "attach-child") {
         const nextIds = Array.from(
           new Set([...(state.attachChildTargetIds || []).map(String), String(tagId)])
@@ -2626,6 +3210,10 @@
       if (slot === "reparent") {
         state.reparentTargetId = "";
         state.reparentQuery = "";
+      }
+      if (slot === "batch-reparent") {
+        state.batchReparentTargetId = "";
+        state.batchReparentQuery = "";
       }
       if (slot === "attach-child") {
         const removeId = String(trigger.getAttribute("data-tag-id") || "");
@@ -2660,6 +3248,60 @@
       startNewTagDraft();
       return;
     }
+    if (action === "start-split-tag") {
+      event.preventDefault();
+      if (!state.selectedTagId || !state.draft || state.isSaving) return;
+      if (isDraftDirty()) {
+        setStatus("error", "Save or reset current changes before splitting this tag.");
+        render();
+        return;
+      }
+      const currentRecord = state.tagMap.get(String(state.selectedTagId));
+      if (!currentRecord) return;
+      state.splitMode = true;
+      state.splitOriginalDraft = createDraftFromRecord(currentRecord);
+      state.splitNewDraft = createBlankDraft();
+      state.splitOriginalAliasInput = "";
+      state.splitNewAliasInput = "";
+      state.imagePickerOpen = false;
+      state.imagePickerMode = "";
+      state.imagePickerTarget = "main";
+      state.imageUrlDraft = "";
+      state.pendingDeleteConfirm = false;
+      state.mergePanelOpen = false;
+      setStatus("", "");
+      render();
+      return;
+    }
+    if (action === "cancel-split-tag") {
+      event.preventDefault();
+      resetSplitState();
+      setStatus("", "");
+      render();
+      return;
+    }
+    if (action === "clear-batch-selection") {
+      event.preventDefault();
+      clearBatchSelection();
+      render();
+      return;
+    }
+    if (action === "remove-batch-selected-tag" && tagId) {
+      event.preventDefault();
+      state.batchSelectedTagIds = (state.batchSelectedTagIds || []).filter((id) => String(id) !== String(tagId));
+      if (!state.batchSelectedTagIds.length) {
+        state.batchReparentQuery = "";
+        state.batchReparentTargetId = "";
+      } else if (
+        state.batchReparentTargetId &&
+        getBatchReparentBlockReason(state.batchReparentTargetId, state.batchSelectedTagIds)
+      ) {
+        state.batchReparentQuery = "";
+        state.batchReparentTargetId = "";
+      }
+      render();
+      return;
+    }
     if (action === "reset-draft") {
       event.preventDefault();
       if (isNewDraftMode()) startNewTagDraft();
@@ -2670,6 +3312,7 @@
       event.preventDefault();
       state.imagePickerOpen = !state.imagePickerOpen;
       state.imagePickerMode = "";
+      state.imagePickerTarget = imageTarget;
       state.imageUrlDraft = "";
       render();
       return;
@@ -2678,6 +3321,7 @@
       event.preventDefault();
       state.imagePickerOpen = false;
       state.imagePickerMode = "";
+      state.imagePickerTarget = "main";
       state.imageUrlDraft = "";
       render();
       return;
@@ -2686,7 +3330,8 @@
       event.preventDefault();
       state.imagePickerOpen = true;
       state.imagePickerMode = "url";
-      state.imageUrlDraft = String(state.draft?.image_path || "");
+      state.imagePickerTarget = imageTarget;
+      state.imageUrlDraft = String(getDraftImageByTarget(imageTarget) || "");
       render();
       const nextInput = getHost()?.querySelector('[data-field="image-url-draft"]');
       if (nextInput instanceof HTMLInputElement) {
@@ -2697,16 +3342,18 @@
     }
     if (action === "open-image-file-picker") {
       event.preventDefault();
-      const fileInput = getHost()?.querySelector('[data-field="image-file"]');
+      const fileInput = Array.from(getHost()?.querySelectorAll('[data-field="image-file"]') || []).find(
+        (input) => input instanceof HTMLInputElement && String(input.getAttribute("data-image-target") || "main") === imageTarget
+      );
       if (fileInput instanceof HTMLInputElement) fileInput.click();
       return;
     }
     if (action === "apply-image-url") {
       event.preventDefault();
-      if (!state.draft) return;
-      state.draft.image_path = String(state.imageUrlDraft || "").trim();
+      setDraftImageByTarget(imageTarget, String(state.imageUrlDraft || "").trim());
       state.imagePickerOpen = false;
       state.imagePickerMode = "";
+      state.imagePickerTarget = "main";
       state.imageUrlDraft = "";
       setStatus("info", "Image URL applied. Save Changes to persist.");
       render();
@@ -2714,10 +3361,10 @@
     }
     if (action === "clear-image") {
       event.preventDefault();
-      if (!state.draft) return;
-      state.draft.image_path = "";
+      setDraftImageByTarget(imageTarget, "");
       state.imagePickerOpen = false;
       state.imagePickerMode = "";
+      state.imagePickerTarget = "main";
       state.imageUrlDraft = "";
       setStatus("info", "Image cleared. Save Changes to persist.");
       render();
@@ -2730,7 +3377,7 @@
     }
     if (action === "read-image-clipboard") {
       event.preventDefault();
-      readImageFromClipboard();
+      readImageFromClipboard(imageTarget);
       return;
     }
     if (action === "prompt-delete-tag") {
@@ -2801,6 +3448,72 @@
       if (nextInput instanceof HTMLInputElement) nextInput.focus();
       return;
     }
+    if (action === "add-split-alias") {
+      event.preventDefault();
+      const side = String(trigger.getAttribute("data-split-side") || "original");
+      const reason = getSplitAliasAddReason(side);
+      if (reason) {
+        setStatus("error", reason);
+        render();
+        return;
+      }
+      const value = String(side === "new" ? state.splitNewAliasInput : state.splitOriginalAliasInput).trim();
+      if (side === "new" && state.splitNewDraft) {
+        state.splitNewDraft.aliases = normalizeAliasList([...(state.splitNewDraft.aliases || []), value]);
+        state.splitNewAliasInput = "";
+      } else if (state.splitOriginalDraft) {
+        state.splitOriginalDraft.aliases = normalizeAliasList([...(state.splitOriginalDraft.aliases || []), value]);
+        state.splitOriginalAliasInput = "";
+      }
+      setStatus("info", "Alias added to split draft.");
+      render();
+      return;
+    }
+    if (action === "remove-split-alias") {
+      event.preventDefault();
+      const side = String(trigger.getAttribute("data-split-side") || "original");
+      const aliasIndex = Number(trigger.getAttribute("data-alias-index"));
+      if (!Number.isInteger(aliasIndex) || aliasIndex < 0) return;
+      if (side === "new" && state.splitNewDraft) {
+        const aliases = normalizeAliasList(state.splitNewDraft.aliases || []);
+        aliases.splice(aliasIndex, 1);
+        state.splitNewDraft.aliases = aliases;
+      } else if (state.splitOriginalDraft) {
+        const aliases = normalizeAliasList(state.splitOriginalDraft.aliases || []);
+        aliases.splice(aliasIndex, 1);
+        state.splitOriginalDraft.aliases = aliases;
+      }
+      setStatus("info", "Alias removed from split draft.");
+      render();
+      return;
+    }
+    if (action === "move-split-alias-to-new" || action === "move-split-alias-to-original") {
+      event.preventDefault();
+      const aliasIndex = Number(trigger.getAttribute("data-alias-index"));
+      if (!Number.isInteger(aliasIndex) || aliasIndex < 0 || !state.splitOriginalDraft || !state.splitNewDraft) return;
+      const sourceSide = action === "move-split-alias-to-new" ? "original" : "new";
+      const sourceDraft = sourceSide === "new" ? state.splitNewDraft : state.splitOriginalDraft;
+      const targetDraft = sourceSide === "new" ? state.splitOriginalDraft : state.splitNewDraft;
+      const aliases = normalizeAliasList(sourceDraft.aliases || []);
+      const [movedAlias] = aliases.splice(aliasIndex, 1);
+      if (!movedAlias) return;
+      const compareTerms = [
+        String(targetDraft.name || "").trim(),
+        ...normalizeAliasList(targetDraft.aliases || []),
+      ]
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter(Boolean);
+      if (compareTerms.includes(String(movedAlias || "").trim().toLowerCase())) {
+        setStatus("error", "That alias already exists on the destination side.");
+        render();
+        return;
+      }
+      sourceDraft.aliases = aliases;
+      targetDraft.aliases = normalizeAliasList([...(targetDraft.aliases || []), movedAlias]);
+      setStatus("info", "Alias moved.");
+      render();
+      return;
+    }
     if (action === "remove-alias") {
       event.preventDefault();
       if (!state.draft) return;
@@ -2816,6 +3529,16 @@
     if (action === "confirm-merge-tag") {
       event.preventDefault();
       mergeSelectedTag();
+      return;
+    }
+    if (action === "confirm-split-tag") {
+      event.preventDefault();
+      confirmSplitTag();
+      return;
+    }
+    if (action === "reparent-selected-tags") {
+      event.preventDefault();
+      reparentBatchSelectedTags();
       return;
     }
     if (action === "save-tag") {
@@ -2866,25 +3589,108 @@
 
   function updateSelectedDraftFromRecord(record) {
     state.selectedTagId = record?.id || null;
-    state.draft = record
-      ? {
-          id: record.id,
-          name: record.name || "",
-          aliases: normalizeAliasList(record.aliases || []),
-          sort_name: record.sort_name || "",
-          description: record.description || "",
-          image_path: record.image_path || "",
-        }
-      : null;
+    resetSplitState();
+    state.draft = createDraftFromRecord(record);
     resetRelationshipPickers();
     state.aliasInput = "";
     state.mergeQuery = "";
     state.mergeSourceId = "";
     state.imagePickerOpen = false;
     state.imagePickerMode = "";
+    state.imagePickerTarget = "main";
     state.imageUrlDraft = "";
     state.pendingDeleteConfirm = false;
     state.mergePanelOpen = false;
+  }
+
+  function buildTagUpdateInput(id, draft, currentRecord = null) {
+    const nextImage = String(draft?.image_path || "").trim();
+    const currentImage = String(currentRecord?.image_path || "").trim();
+    const input = {
+      id: String(id),
+      name: String(draft?.name || "").trim(),
+      aliases: normalizeAliasList(draft?.aliases || []),
+      sort_name: String(draft?.sort_name || "").trim(),
+      description: String(draft?.description || "").trim(),
+    };
+    if (nextImage !== currentImage) {
+      input.image = nextImage;
+    }
+    return input;
+  }
+
+  function buildTagCreateInput(draft) {
+    const input = {
+      name: String(draft?.name || "").trim(),
+      aliases: normalizeAliasList(draft?.aliases || []),
+      sort_name: String(draft?.sort_name || "").trim(),
+      description: String(draft?.description || "").trim(),
+    };
+    const createImage = String(draft?.image_path || "").trim();
+    if (createImage) {
+      input.image = createImage;
+    }
+    return input;
+  }
+
+  async function reparentBatchSelectedTags() {
+    if (state.isSaving) return;
+    const selectedIds = (state.batchSelectedTagIds || []).map(String).filter(Boolean);
+    const targetId = String(state.batchReparentTargetId || "").trim();
+    if (!selectedIds.length || !targetId) return;
+
+    const relationError = getBatchReparentBlockReason(targetId, selectedIds);
+    if (relationError) {
+      setStatus("error", relationError);
+      render();
+      return;
+    }
+
+    const targetRecord = state.tagMap.get(targetId);
+    const sourceRecords = selectedIds.map((id) => state.tagMap.get(id)).filter(Boolean);
+    if (!targetRecord || sourceRecords.length !== selectedIds.length) {
+      setStatus("error", "Selected tag could not be found.");
+      render();
+      return;
+    }
+
+    state.isSaving = true;
+    setStatus(
+      "info",
+      `Reparenting ${formatCount(sourceRecords.length)} selected tag${sourceRecords.length === 1 ? "" : "s"}...`
+    );
+    render();
+
+    try {
+      for (const sourceRecord of sourceRecords) {
+        await assignTagParents(sourceRecord.id, [targetRecord.id]);
+      }
+
+      state.expandedIds.add(String(targetRecord.id));
+      saveSet(EXPANDED_STORAGE_KEY, state.expandedIds);
+
+      invalidateTags();
+      await refreshDataWithRetry(() => {
+        return sourceRecords.every((sourceRecord) => {
+          const updatedSource = state.tagMap.get(String(sourceRecord.id));
+          return updatedSource?.parentIds?.join("|") === String(targetRecord.id);
+        });
+      });
+
+      clearBatchSelection();
+      setSelectedTag(targetRecord.id);
+      setStatus(
+        "success",
+        `${formatCount(sourceRecords.length)} tag${sourceRecords.length === 1 ? "" : "s"} reparented.`
+      );
+    } catch (err) {
+      console.error("[TagManager] batch reparent failed", err);
+      setStatus("error", err?.message || "Failed to reparent selected tags.");
+      render();
+    } finally {
+      state.isSaving = false;
+      syncControlStates();
+    }
   }
 
   async function saveSelectedTag() {
@@ -2895,18 +3701,7 @@
 
     try {
       const currentRecord = state.tagMap.get(String(state.selectedTagId));
-      const nextImage = String(state.draft.image_path || "").trim();
-      const currentImage = String(currentRecord?.image_path || "").trim();
-      const input = {
-        id: state.selectedTagId,
-        name: String(state.draft.name || "").trim(),
-        aliases: normalizeAliasList(state.draft.aliases || []),
-        sort_name: String(state.draft.sort_name || "").trim(),
-        description: String(state.draft.description || "").trim(),
-      };
-      if (nextImage !== currentImage) {
-        input.image = nextImage;
-      }
+      const input = buildTagUpdateInput(state.selectedTagId, state.draft, currentRecord);
 
       await gqlRequest(
         `
@@ -2944,16 +3739,7 @@
     render();
 
     try {
-      const createInput = {
-        name,
-        aliases: normalizeAliasList(state.draft.aliases || []),
-        sort_name: String(state.draft.sort_name || "").trim(),
-        description: String(state.draft.description || "").trim(),
-      };
-      const createImage = String(state.draft.image_path || "").trim();
-      if (createImage) {
-        createInput.image = createImage;
-      }
+      const createInput = buildTagCreateInput(state.draft);
       const data = await gqlRequest(
         `
           mutation TagManagerCreateStandaloneTag($input: TagCreateInput!) {
@@ -2976,6 +3762,72 @@
     } catch (err) {
       console.error("[TagManager] create standalone failed", err);
       setStatus("error", err?.message || "Failed to create tag.");
+      render();
+    } finally {
+      state.isSaving = false;
+      syncControlStates();
+    }
+  }
+
+  async function confirmSplitTag() {
+    if (state.isSaving || !state.selectedTagId || !state.splitMode) return;
+    const originalDraft = state.splitOriginalDraft;
+    const nextDraft = state.splitNewDraft;
+    if (!originalDraft || !nextDraft) return;
+
+    const validationMessage = getSplitValidationMessage();
+    if (validationMessage) {
+      setStatus("error", validationMessage);
+      render();
+      return;
+    }
+
+    state.isSaving = true;
+    setStatus("info", "Splitting tag...");
+    render();
+
+    try {
+      const currentRecord = state.tagMap.get(String(state.selectedTagId));
+      if (!currentRecord) throw new Error("Selected tag could not be found.");
+
+      await gqlRequest(
+        `
+          mutation TagManagerSaveSplitOriginal($input: TagUpdateInput!) {
+            tagUpdate(input: $input) {
+              id
+            }
+          }
+        `,
+        { input: buildTagUpdateInput(state.selectedTagId, originalDraft, currentRecord) }
+      );
+
+      const createData = await gqlRequest(
+        `
+          mutation TagManagerCreateSplitTag($input: TagCreateInput!) {
+            tagCreate(input: $input) {
+              id
+            }
+          }
+        `,
+        { input: buildTagCreateInput(nextDraft) }
+      );
+
+      const newId = String(createData?.tagCreate?.id || "");
+      if (!newId) throw new Error("Split tag was created without an id.");
+
+      invalidateTags();
+      await refreshDataWithRetry(() => {
+        const originalRecord = state.tagMap.get(String(state.selectedTagId));
+        const newRecord = state.tagMap.get(String(newId));
+        return !!originalRecord && !!newRecord;
+      });
+
+      resetSplitState();
+      setSelectedTag(newId);
+      setStatus("success", "Tag split. New tag created as a root tag.");
+    } catch (err) {
+      console.error("[TagManager] split failed", err);
+      setStatus("error", err?.message || "Failed to split tag.");
       render();
     } finally {
       state.isSaving = false;
@@ -3369,6 +4221,26 @@
       state.rootIds = hierarchy.rootIds;
       state.tagMap = hierarchy.tagMap;
       state.searchIndex = hierarchy.searchIndex;
+      state.batchSelectedTagIds = (state.batchSelectedTagIds || [])
+        .map(String)
+        .filter((id) => state.tagMap.has(id));
+      if (state.batchSelectedTagIds.length) {
+        const anchorId = state.batchSelectedTagIds[0];
+        state.batchSelectedTagIds = state.batchSelectedTagIds.filter((id) =>
+          isBatchSelectionEligible(id, anchorId, state.tagMap)
+        );
+      }
+      if (!state.batchSelectedTagIds.length) {
+        state.batchReparentQuery = "";
+        state.batchReparentTargetId = "";
+      } else if (
+        state.batchReparentTargetId &&
+        (!state.tagMap.has(String(state.batchReparentTargetId)) ||
+          getBatchReparentBlockReason(state.batchReparentTargetId, state.batchSelectedTagIds, state.tagMap))
+      ) {
+        state.batchReparentQuery = "";
+        state.batchReparentTargetId = "";
+      }
       if (config.treeExpansionBehavior !== "remember") {
         ensureTreeExpansionBehavior();
       }
