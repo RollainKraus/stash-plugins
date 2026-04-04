@@ -304,7 +304,11 @@ Adds a standalone page for creating and managing tags. This provides an easy way
 </p>
 
 <p>
-  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerBlankScreenPreview.png" alt="CustomTagsManager preview" width="600">
+  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerSupplementalImagesPreview.png" alt="CustomTagsManager preview" width="600">
+</p>
+
+<p>
+  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerHoverTagPreview.png" alt="CustomTagsManager preview" width="600">
 </p>
 
 <p>
