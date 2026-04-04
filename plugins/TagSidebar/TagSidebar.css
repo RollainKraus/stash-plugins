@@ -132,6 +132,10 @@
   align-items: center;
 }
 
+#tag-sidebar-host .tag-sidebar__toolbar--compact {
+  grid-template-columns: 1fr;
+}
+
 #tag-sidebar-host .tag-sidebar__segmented--inline {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -185,10 +189,16 @@
 }
 
 #tag-sidebar-host .tag-sidebar__search-results,
-#tag-sidebar-host .tag-sidebar__tree,
-#tag-sidebar-host .tag-sidebar__selected-list {
+#tag-sidebar-host .tag-sidebar__tree {
   display: grid;
   gap: 0.38rem;
+}
+
+#tag-sidebar-host .tag-sidebar__selected-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.42rem;
+  align-items: start;
 }
 
 #tag-sidebar-host .tag-sidebar__search-result {
@@ -211,7 +221,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  width: fit-content;
+  width: 100%;
   max-width: 100%;
   border: 1px solid rgba(131, 197, 255, 0.28);
   border-radius: 999px;
@@ -220,6 +230,24 @@
   padding: 0.34rem 0.62rem;
   font-size: 0.8rem;
   font-weight: 600;
+  justify-content: flex-start;
+}
+
+#tag-sidebar-host .tag-sidebar__chip--include {
+  border-color: rgba(131, 197, 255, 0.28);
+  background: rgba(131, 197, 255, 0.12);
+  color: #eff5ff;
+}
+
+#tag-sidebar-host .tag-sidebar__chip--exclude {
+  border-color: rgba(255, 148, 148, 0.28);
+  background: rgba(255, 110, 110, 0.12);
+  color: #fff1f1;
+}
+
+#tag-sidebar-host .tag-sidebar__chip-prefix {
+  font-weight: 800;
+  font-size: 0.82rem;
 }
 
 #tag-sidebar-host .tag-sidebar__chip-label {
@@ -249,7 +277,7 @@
 
 #tag-sidebar-host .tag-sidebar__row {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.34rem;
   min-height: 2rem;
@@ -257,8 +285,12 @@
   border-radius: 0.8rem;
 }
 
-#tag-sidebar-host .tag-sidebar__row.is-selected {
+#tag-sidebar-host .tag-sidebar__row.is-included {
   background: rgba(131, 197, 255, 0.16);
+}
+
+#tag-sidebar-host .tag-sidebar__row.is-excluded {
+  background: rgba(255, 110, 110, 0.12);
 }
 
 #tag-sidebar-host .tag-sidebar__action,
@@ -276,6 +308,16 @@
   height: 1.5rem;
   border-radius: 0.42rem;
   color: rgba(242, 246, 253, 0.9);
+}
+
+#tag-sidebar-host .tag-sidebar__action--include.is-active {
+  background: rgba(131, 197, 255, 0.2);
+  color: #f4f9ff;
+}
+
+#tag-sidebar-host .tag-sidebar__action--exclude.is-active {
+  background: rgba(255, 110, 110, 0.22);
+  color: #fff3f3;
 }
 
 #tag-sidebar-host .tag-sidebar__action:hover,
