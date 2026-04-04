@@ -280,13 +280,14 @@ Without parents, tags automatically go in ‘Ungrouped’
 
 Adds a standalone page for creating and managing tags. This provides an easy way to preview your current tag hierarchies and make edits/additions all in one place. 
 
-**This only supports tag hierarchies up to 3 layers deep. Any more layers and the hierarchies will break.
-*parent >> tag (leaf tag)
-*parent >> subgroup >> tag (leaf tag)
-
 - Standalone tag manager page that shows all your tags and their current hierarchies
 - Can create, edit, merge and delete tags within the same page 
 - Filters to help isolate incomplete tags or tags with multiple parents
+
+
+**This only supports tag hierarchies up to 3 layers deep. Any more layers and the hierarchies will break.
+- parent >> tag (leaf tag)
+- parent >> subgroup >> tag (leaf tag)
 
 
 <h2>Preview</h2>
