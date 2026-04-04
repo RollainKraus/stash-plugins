@@ -300,6 +300,10 @@ Adds a standalone page for creating and managing tags. This provides an easy way
 </p>
 
 <p>
+  <img src="/plugins/TagManager/images/TagManagerSplitTagPreview.png" alt="TagManager preview" width="600">
+</p>
+
+<p>
   <img src="/plugins/TagManager/images/TagManagerBlankScreenPreview.png" alt="TagManager preview" width="600">
 </p>
 
