@@ -67,6 +67,7 @@
     aliasesExpanded: true,
     mergeQuery: "",
     mergeSourceId: "",
+    mergeDestinationId: "",
     imagePickerOpen: false,
     imagePickerMode: "",
     imagePickerTarget: "main",
@@ -688,20 +689,15 @@
     resetSplitState();
     state.selectedTagId = id && state.tagMap.has(id) ? id : null;
     const record = state.selectedTagId ? state.tagMap.get(state.selectedTagId) : null;
-    state.draft = record
-      ? {
-          id: record.id,
-          name: record.name || "",
-          aliases: normalizeAliasList(record.aliases || []),
-          sort_name: record.sort_name || "",
-          description: record.description || "",
-          image_path: record.image_path || "",
-        }
-      : null;
+    state.draft = createDraftFromRecord(record);
     state.parentCreateName = "";
     state.childCreateName = "";
     state.siblingCreateName = "";
     state.aliasInput = "";
+    state.mergeQuery = "";
+    state.mergeSourceId = "";
+    state.mergeDestinationId = "";
+    state.mergePanelOpen = false;
     state.imagePickerOpen = false;
     state.imagePickerMode = "";
     state.imagePickerTarget = "main";
@@ -722,14 +718,7 @@
     state.selectedTagId = null;
     clearBatchSelection();
     resetSplitState();
-    state.draft = {
-      id: null,
-      name: "",
-      aliases: [],
-      sort_name: "",
-      description: "",
-      image_path: "",
-    };
+    state.draft = createBlankDraft();
     state.parentCreateName = "";
     state.childCreateName = "";
     state.siblingCreateName = "";
@@ -737,6 +726,7 @@
     state.aliasInput = "";
     state.mergeQuery = "";
     state.mergeSourceId = "";
+    state.mergeDestinationId = "";
     state.imagePickerOpen = false;
     state.imagePickerMode = "";
     state.imagePickerTarget = "main";
@@ -1335,35 +1325,129 @@
     `;
   }
 
-  function renderMergePanel(record, mergeOptions, mergeReason) {
-    if (!record || !state.mergePanelOpen) return "";
-    const mergeTarget = state.tagMap.get(String(state.mergeSourceId || ""));
-    const destinationRole = getTagHierarchyRole(record);
-    const roleLabel = getTagHierarchyRoleLabel(destinationRole);
+  function renderReadonlyAliasesCard(title, aliases) {
+    const normalized = normalizeAliasList(aliases || []);
     return `
-      <div class="tag-manager__merge-panel">
-        <div class="tag-manager__merge-title">Merge Tags</div>
-        <div class="tag-manager__merge-summary">
-          Current tag is the destination. Only ${escapeHtml(roleLabel)} can be merged here.
+      <div class="tag-manager__meta-card tag-manager__split-meta-card">
+        <div class="tag-manager__meta-header">
+          <div class="tag-manager__meta-label">${escapeHtml(title)}</div>
+          <div class="tag-manager__meta-value">${formatCount(normalized.length)}</div>
         </div>
-        <div class="tag-manager__field-group">
-          <label class="tag-manager__field-label" for="tag-manager-merge-query">Source Tag To Merge</label>
-          <input id="tag-manager-merge-query" class="tag-manager__input" type="search" data-field="merge-query" value="${escapeHtml(
-            state.mergeQuery
-          )}" placeholder="Search for a source tag" ${state.isSaving ? "disabled" : ""} />
-          ${renderAttachPicker(state.mergeQuery, state.mergeSourceId, mergeOptions, "merge")}
-          ${
-            mergeReason
-              ? `<div class="tag-manager__field-note">${escapeHtml(mergeReason)}</div>`
-              : mergeTarget
-              ? `<div class="tag-manager__merge-summary">
-                  Source tag <strong>${escapeHtml(mergeTarget.name)}</strong> will be merged into <strong>${escapeHtml(
-                    record.name
-                  )}</strong>. Stash will handle aliases, descriptions, image cleanup, and relationship reassignment natively.
-                </div>`
-              : ""
-          }
+        <div class="tag-manager__alias-panel-scroll">
+          <div class="tag-manager__alias-list">
+            ${
+              normalized.length
+                ? normalized
+                    .map(
+                      (alias) => `<div class="tag-manager__alias-chip">
+                        <span class="tag-manager__alias-chip-text">${escapeHtml(alias)}</span>
+                      </div>`
+                    )
+                    .join("")
+                : `<span class="tag-manager__meta-empty">No aliases</span>`
+            }
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderPreviewTagCard(title, draftLikeRecord, options = {}) {
+    const record = draftLikeRecord || {};
+    const previewImagePath = String(record.image_path || "").trim();
+    const showSearch = !!options.showSearch;
+    const searchOptions = options.searchOptions || [];
+    const searchValue = String(options.searchValue || "");
+    const selectedId = String(options.selectedId || "");
+    const searchActionName = String(options.searchActionName || "merge");
+    const emptyTitle = String(options.emptyTitle || "No source selected");
+    const emptyText = String(options.emptyText || "Search for a tag to preview it here.");
+    const idChipLabel = options.idLabel || (record.id ? `ID ${record.id}` : "");
+
+    return `
+      <div class="tag-manager__editor-card tag-manager__split-card">
+        <div class="tag-manager__meta-header">
+          <div class="tag-manager__section-title">${escapeHtml(title)}</div>
+          ${idChipLabel ? `<span class="tag-manager__id-chip">${escapeHtml(idChipLabel)}</span>` : ""}
+        </div>
+        ${
+          showSearch
+            ? `<div class="tag-manager__field-group">
+                <label class="tag-manager__field-label" for="tag-manager-merge-query">Source Tag To Merge</label>
+                <input id="tag-manager-merge-query" class="tag-manager__input" type="search" data-field="merge-query" value="${escapeHtml(
+                  searchValue
+                )}" placeholder="Search for a source tag" ${state.isSaving ? "disabled" : ""} />
+                ${renderAttachPicker(searchValue, selectedId, searchOptions, searchActionName)}
+              </div>`
+            : ""
+        }
+        ${
+          record.id
+            ? `${
+                previewImagePath
+                  ? `<div class="tag-manager__image-preview">
+                      <img src="${escapeHtml(previewImagePath)}" alt="${escapeHtml(record.name || title)}" />
+                    </div>`
+                  : `<div class="tag-manager__split-image-empty">No image set</div>`
+              }
+              <div class="tag-manager__field-grid">
+                <div class="tag-manager__field-group">
+                  <label class="tag-manager__field-label">Name</label>
+                  <div class="tag-manager__input tag-manager__input--readonly">${escapeHtml(record.name || "")}</div>
+                </div>
+                <div class="tag-manager__field-group">
+                  <label class="tag-manager__field-label">Sort Name</label>
+                  <div class="tag-manager__input tag-manager__input--readonly">${escapeHtml(record.sort_name || "")}</div>
+                </div>
+              </div>
+              <div class="tag-manager__field-group">
+                <label class="tag-manager__field-label">Description</label>
+                <div class="tag-manager__textarea tag-manager__textarea--readonly">${escapeHtml(record.description || "")}</div>
+              </div>`
+            : `<div class="tag-manager__empty-state tag-manager__merge-empty">
+                <h3 class="tag-manager__inspector-title">${escapeHtml(emptyTitle)}</h3>
+                <p class="tag-manager__helper">${escapeHtml(emptyText)}</p>
+              </div>`
+        }
+      </div>
+    `;
+  }
+
+  function renderMergeInspector() {
+    const destinationRecord = state.mergeDestinationId
+      ? state.tagMap.get(String(state.mergeDestinationId))
+      : state.selectedTagId
+      ? state.tagMap.get(String(state.selectedTagId))
+      : null;
+    const sourceRecord = state.mergeSourceId ? state.tagMap.get(String(state.mergeSourceId)) : null;
+    const mergeOptions = getTagPickerOptions(state.mergeQuery, [destinationRecord?.id]);
+    const mergeReason = isDraftDirty()
+      ? "Save or reset current changes before merging tags."
+      : destinationRecord && state.mergeSourceId
+      ? getMergeBlockReason(destinationRecord.id, state.mergeSourceId)
+      : "";
+    const destinationRole = destinationRecord ? getTagHierarchyRole(destinationRecord) : "";
+    const roleLabel = getTagHierarchyRoleLabel(destinationRole);
+    const status =
+      state.status.text &&
+      `<div class="tag-manager__status tag-manager__status--${escapeHtml(
+        state.status.type || "info"
+      )}">${escapeHtml(state.status.text)}</div>`;
+
+    return `
+      ${status || ""}
+      <div class="tag-manager__split-workspace">
+        <div class="tag-manager__split-header">
+          <div>
+            <h3 class="tag-manager__inspector-title">Merge Tags</h3>
+            <p class="tag-manager__helper">Current tag is the destination. Only ${escapeHtml(
+              roleLabel
+            )} can be merged here.</p>
+          </div>
           <div class="tag-manager__button-row">
+            <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="flip-merge-direction" ${
+              state.mergeSourceId && !state.isSaving ? "" : "disabled"
+            }>Flip</button>
             <button type="button" class="btn btn-danger tag-manager__action-button" data-action="confirm-merge-tag" ${
               state.mergeSourceId && !mergeReason && !state.isSaving ? "" : "disabled"
             }>Confirm Merge</button>
@@ -1371,6 +1455,33 @@
               state.isSaving ? "disabled" : ""
             }>Cancel</button>
           </div>
+        </div>
+        ${
+          mergeReason
+            ? `<div class="tag-manager__field-note">${escapeHtml(mergeReason)}</div>`
+            : sourceRecord
+            ? `<div class="tag-manager__field-note">Source tag <strong>${escapeHtml(
+                sourceRecord.name
+              )}</strong> will be merged into <strong>${escapeHtml(
+                destinationRecord?.name || ""
+              )}</strong>. Stash will handle aliases, descriptions, image cleanup, and relationship reassignment natively.</div>`
+            : ""
+        }
+        <div class="tag-manager__split-grid">
+          ${renderPreviewTagCard("Source Tag", sourceRecord, {
+            showSearch: true,
+            searchOptions: mergeOptions,
+            searchValue: state.mergeQuery,
+            selectedId: state.mergeSourceId,
+            searchActionName: "merge",
+            emptyTitle: "No source selected",
+            emptyText: "Search for a source tag to preview it here before merging.",
+          })}
+          ${renderPreviewTagCard("Destination Tag", destinationRecord, {
+            idLabel: destinationRecord ? `ID ${destinationRecord.id}` : "",
+          })}
+          ${renderReadonlyAliasesCard("Source Aliases", sourceRecord?.aliases || [])}
+          ${renderReadonlyAliasesCard("Destination Aliases", destinationRecord?.aliases || [])}
         </div>
       </div>
     `;
@@ -2120,6 +2231,9 @@
     }
 
     const record = state.selectedTagId ? state.tagMap.get(state.selectedTagId) : null;
+    if (state.mergePanelOpen && (record || state.mergeDestinationId)) {
+      return renderMergeInspector();
+    }
     const creatingNew = isNewDraftMode();
     const dirty = isDraftDirty();
     const childCount = Number(record?.childIds?.length || 0);
@@ -2134,7 +2248,6 @@
       ...(state.attachChildTargetIds || []),
     ]);
     const attachSiblingOptions = getTagPickerOptions(state.attachSiblingQuery, [record?.id]);
-    const mergeOptions = getTagPickerOptions(state.mergeQuery, [record?.id]);
     const parentDisabledMessage = "Current tag already occupies a full 3-level hierarchy.";
     const childDisabledMessage = "Current tag is already under 2 tag groups.";
     const siblingDisabledMessage = "Only available for subgroup and leaf tags under an existing parent group.";
@@ -2157,11 +2270,6 @@
       siblingActionsAllowed && record && state.attachSiblingTargetId
         ? getAttachSiblingBlockReason(record.id, state.attachSiblingTargetId)
         : "";
-    const mergeReason = dirty
-      ? "Save or reset current changes before merging tags."
-      : record && state.mergeSourceId
-      ? getMergeBlockReason(record.id, state.mergeSourceId)
-      : "";
     const previewImagePath = String(state.draft?.image_path || "").trim();
     const status =
       state.status.text &&
@@ -2263,7 +2371,6 @@
               ${creatingNew ? "" : `<span class="tag-manager__id-chip">ID ${escapeHtml(record.id)}</span>`}
             </div>
             ${renderImagePicker()}
-            ${!creatingNew ? renderMergePanel(record, mergeOptions, mergeReason) : ""}
             ${
               !creatingNew && state.pendingDeleteConfirm
                 ? `<div class="tag-manager__danger-note">
@@ -2417,13 +2524,18 @@
       : "";
     const splitReason = state.splitMode ? getSplitValidationMessage() : "";
     const selectedRecord = state.selectedTagId ? state.tagMap.get(String(state.selectedTagId)) : null;
+    const mergeDestinationRecord = state.mergeDestinationId
+      ? state.tagMap.get(String(state.mergeDestinationId))
+      : selectedRecord;
     const childActionsAllowed = selectedRecord ? canTagHaveChildren(selectedRecord.id) : false;
     const createParentAllowed = selectedRecord ? canTagGainInsertedParent(selectedRecord.id) : false;
     const addParentAllowed = createParentAllowed;
     const reparentActionsAllowed = !!selectedRecord;
     const siblingActionsAllowed = selectedRecord ? canTagHaveSiblings(selectedRecord.id) : false;
     const mergeReason =
-      selectedRecord && state.mergeSourceId ? getMergeBlockReason(selectedRecord.id, state.mergeSourceId) : "";
+      mergeDestinationRecord && state.mergeSourceId
+        ? getMergeBlockReason(mergeDestinationRecord.id, state.mergeSourceId)
+        : "";
     const reparentReason =
       reparentActionsAllowed && selectedRecord && state.reparentTargetId
         ? getParentRelationshipBlockReason(selectedRecord.id, state.reparentTargetId, "reparent")
@@ -2514,6 +2626,9 @@
     host.querySelectorAll('[data-action="toggle-merge-panel"]').forEach((button) => {
       button.disabled = state.isSaving || isDraftDirty();
     });
+    host.querySelectorAll('[data-action="flip-merge-direction"]').forEach((button) => {
+      button.disabled = !state.mergeSourceId || state.isSaving;
+    });
     host.querySelectorAll('[data-action="start-split-tag"]').forEach((button) => {
       button.disabled = state.isSaving || isDraftDirty() || !selectedRecord || hasBatchSelection();
     });
@@ -2525,7 +2640,7 @@
     });
     host.querySelectorAll('[data-action="confirm-merge-tag"]').forEach((button) => {
       button.disabled =
-        !selectedRecord || !state.mergeSourceId || !!mergeReason || state.isSaving || isDraftDirty();
+        !mergeDestinationRecord || !state.mergeSourceId || !!mergeReason || state.isSaving || isDraftDirty();
     });
     host.querySelectorAll('[data-action="clear-batch-selection"]').forEach((button) => {
       button.disabled = state.isSaving;
@@ -3403,9 +3518,11 @@
       state.mergePanelOpen = !state.mergePanelOpen;
       if (state.mergePanelOpen) {
         state.pendingDeleteConfirm = false;
+        state.mergeDestinationId = String(state.selectedTagId || "");
       } else {
         state.mergeQuery = "";
         state.mergeSourceId = "";
+        state.mergeDestinationId = "";
       }
       render();
       if (state.mergePanelOpen) {
@@ -3422,6 +3539,19 @@
       state.mergePanelOpen = false;
       state.mergeQuery = "";
       state.mergeSourceId = "";
+      state.mergeDestinationId = "";
+      render();
+      return;
+    }
+    if (action === "flip-merge-direction") {
+      event.preventDefault();
+      const currentDestinationId = String(state.mergeDestinationId || state.selectedTagId || "");
+      const currentSourceId = String(state.mergeSourceId || "");
+      if (!currentDestinationId || !currentSourceId) return;
+      state.mergeDestinationId = currentSourceId;
+      state.mergeSourceId = currentDestinationId;
+      const nextSourceRecord = state.tagMap.get(currentDestinationId);
+      state.mergeQuery = nextSourceRecord?.name || "";
       render();
       return;
     }
@@ -3595,6 +3725,7 @@
     state.aliasInput = "";
     state.mergeQuery = "";
     state.mergeSourceId = "";
+    state.mergeDestinationId = "";
     state.imagePickerOpen = false;
     state.imagePickerMode = "";
     state.imagePickerTarget = "main";
@@ -3873,8 +4004,9 @@
   }
 
   async function mergeSelectedTag() {
-    if (state.isSaving || !state.selectedTagId) return;
-    const destinationRecord = state.tagMap.get(String(state.selectedTagId));
+    if (state.isSaving) return;
+    const destinationId = String(state.mergeDestinationId || state.selectedTagId || "");
+    const destinationRecord = destinationId ? state.tagMap.get(destinationId) : null;
     const sourceId = String(state.mergeSourceId || "");
     if (!destinationRecord || !sourceId) return;
     if (isDraftDirty()) {
@@ -3920,6 +4052,7 @@
 
       state.mergeQuery = "";
       state.mergeSourceId = "";
+      state.mergeDestinationId = "";
       state.mergePanelOpen = false;
 
       invalidateTags();
