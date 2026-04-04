@@ -9,6 +9,7 @@
   const LAUNCH_QUERY_PARAM = "tagManagerOpen";
   const HOST_ID = "tag-manager-host";
   const TOOLBAR_ID = "tag-manager-toolbar";
+  const ROOT_DROP_ID = "__root__";
   const EXPANDED_STORAGE_KEY = "tag-manager-expanded-v1";
   const DEFAULT_CONFIG = {
     treeExpansionBehavior: "remember",
@@ -51,7 +52,7 @@
     reparentQuery: "",
     reparentTargetId: "",
     attachChildQuery: "",
-    attachChildTargetId: "",
+    attachChildTargetIds: [],
     attachSiblingQuery: "",
     attachSiblingTargetId: "",
     aliasInput: "",
@@ -66,6 +67,9 @@
     status: { type: "", text: "" },
     isSaving: false,
     treeScrollTop: 0,
+    draggingTagId: "",
+    dragOverTagId: "",
+    dragOverMode: "",
   };
 
   function loadSet(key) {
@@ -631,6 +635,15 @@
     state.status = { type: type || "", text: text || "" };
   }
 
+  function resetRelationshipPickers() {
+    state.reparentQuery = "";
+    state.reparentTargetId = "";
+    state.attachChildQuery = "";
+    state.attachChildTargetIds = [];
+    state.attachSiblingQuery = "";
+    state.attachSiblingTargetId = "";
+  }
+
   function expandAncestors(ids) {
     let changed = false;
     (ids || []).map(String).forEach((id) => {
@@ -692,12 +705,7 @@
     state.parentCreateName = "";
     state.childCreateName = "";
     state.siblingCreateName = "";
-    state.reparentQuery = "";
-    state.reparentTargetId = "";
-    state.attachChildQuery = "";
-    state.attachChildTargetId = "";
-    state.attachSiblingQuery = "";
-    state.attachSiblingTargetId = "";
+    resetRelationshipPickers();
     state.aliasInput = "";
     state.mergeQuery = "";
     state.mergeSourceId = "";
@@ -1373,17 +1381,104 @@
       }
     `;
   }
+
+  function renderAttachPickerMulti(query, selectedIds, options, actionName) {
+    const selectedRecords = (selectedIds || [])
+      .map((id) => state.tagMap.get(String(id)))
+      .filter(Boolean);
+    const selectedLower = new Set(
+      selectedRecords.map((record) => String(record.name || "").trim().toLowerCase()).filter(Boolean)
+    );
+    const showResults =
+      String(query || "").trim() && !selectedLower.has(String(query || "").trim().toLowerCase());
+
+    return `
+      ${
+        selectedRecords.length
+          ? `<div class="tag-manager__attach-picked">
+              <span class="tag-manager__attach-picked-label">Selected ${formatCount(selectedRecords.length)}</span>
+              ${selectedRecords
+                .map(
+                  (record) => `<button type="button" class="tag-manager__chip" data-action="select-tag" data-tag-id="${escapeHtml(
+                    record.id
+                  )}">${escapeHtml(record.name)}</button>
+                  <button type="button" class="tag-manager__attach-clear" data-action="clear-picked-target" data-target-slot="${escapeHtml(
+                    actionName
+                  )}" data-tag-id="${escapeHtml(record.id)}">Remove</button>`
+                )
+                .join("")}
+              <button type="button" class="tag-manager__attach-clear" data-action="clear-picked-target" data-target-slot="${escapeHtml(
+                actionName
+              )}">Clear All</button>
+            </div>`
+          : ""
+      }
+      ${
+        showResults
+          ? `<div class="tag-manager__attach-results">
+              ${options
+                .map((record) => {
+                  const parentPaths = getParentPaths(record.id, state.tagMap);
+                  const breadcrumb = parentPaths.length
+                    ? parentPaths[0]
+                        .map((id) => state.tagMap.get(String(id))?.name || "")
+                        .filter(Boolean)
+                        .join(" > ")
+                    : "Root";
+                  return `<button type="button" class="tag-manager__attach-result" data-action="pick-target-tag" data-target-slot="${escapeHtml(
+                    actionName
+                  )}" data-tag-id="${escapeHtml(record.id)}">
+                    <span class="tag-manager__attach-result-name">${escapeHtml(record.name)}</span>
+                    <span class="tag-manager__attach-result-meta">${escapeHtml(breadcrumb)}</span>
+                  </button>`;
+                })
+                .join("")}
+            </div>`
+          : ""
+      }
+    `;
+  }
+
+  function renderTreeDragHandle(tagId, label) {
+    const icon =
+      renderFontAwesomeIconMarkup("faGripLinesVertical", {
+        className: "tag-manager__drag-icon",
+        title: `Drag ${label || "tag"}`,
+      }) || '<span class="tag-manager__drag-fallback">::</span>';
+    return `
+      <button
+        type="button"
+        class="tag-manager__drag-handle ${state.isSaving ? "is-disabled" : ""}"
+        data-action="drag-handle"
+        data-drag-tag-id="${escapeHtml(tagId)}"
+        draggable="${state.isSaving ? "false" : "true"}"
+        aria-label="Drag ${escapeHtml(label || "tag")}"
+        title="Drag to move"
+        ${state.isSaving ? "disabled" : ""}
+      >${icon}</button>
+    `;
+  }
+
+  function getTreeRowDropAttributes(tagId) {
+    const id = String(tagId || "");
+    if (!id) return `data-tree-row-id=""`;
+    const canDropHere = canTagHaveChildren(id);
+    return `${canDropHere ? `data-drop-tag-id="${escapeHtml(id)}"` : ""} data-tree-row-id="${escapeHtml(id)}"`;
+  }
   function renderTreeLeaf(node, extraClass = "") {
     const selected = state.selectedTagId === String(node.id);
     return `
-      <div class="tag-manager__tree-item ${selected ? "is-selected" : ""} ${extraClass}" data-action="select-tag" data-tag-id="${escapeHtml(
+      <div class="tag-manager__tree-item ${selected ? "is-selected" : ""} ${extraClass}" ${getTreeRowDropAttributes(
         node.id
-      )}" role="button" tabindex="0">
+      )} data-action="select-tag" data-tag-id="${escapeHtml(node.id)}" role="button" tabindex="0">
         <div class="tag-manager__row-left">
           <span class="tag-manager__indent"></span>
           <span class="tag-manager__tree-item-main">
             <span class="tag-manager__tree-item-name">${escapeHtml(node.name)}</span>
           </span>
+        </div>
+        <div class="tag-manager__row-actions">
+          ${renderTreeDragHandle(node.id, node.name || "tag")}
         </div>
       </div>
     `;
@@ -1394,15 +1489,20 @@
     const selected = state.selectedTagId === String(node.id);
     return `
       <div class="tag-manager__subgroup ${expanded ? "is-expanded" : ""}" data-tag-id="${escapeHtml(node.id)}">
-        <div class="tag-manager__subgroup-header ${selected ? "is-selected" : ""}" data-action="select-toggle-group" data-tag-id="${escapeHtml(
+        <div class="tag-manager__subgroup-header ${selected ? "is-selected" : ""}" ${getTreeRowDropAttributes(
           node.id
-        )}" role="button" tabindex="0">
-          <button type="button" class="tag-manager__tree-toggle" data-action="toggle-expanded" data-tag-id="${escapeHtml(
-            node.id
-          )}" aria-label="${expanded ? "Collapse subgroup" : "Expand subgroup"}" aria-expanded="${expanded ? "true" : "false"}">${expanded ? "&#9662;" : "&#9656;"}</button>
-          <span class="tag-manager__subgroup-main">
-            <span class="tag-manager__tree-item-name">${escapeHtml(node.name || "")}</span>
-          </span>
+        )} data-action="select-toggle-group" data-tag-id="${escapeHtml(node.id)}" role="button" tabindex="0">
+          <div class="tag-manager__row-left">
+            <button type="button" class="tag-manager__tree-toggle" data-action="toggle-expanded" data-tag-id="${escapeHtml(
+              node.id
+            )}" aria-label="${expanded ? "Collapse subgroup" : "Expand subgroup"}" aria-expanded="${expanded ? "true" : "false"}">${expanded ? "&#9662;" : "&#9656;"}</button>
+            <span class="tag-manager__subgroup-main">
+              <span class="tag-manager__tree-item-name">${escapeHtml(node.name || "")}</span>
+            </span>
+          </div>
+          <div class="tag-manager__row-actions">
+            ${renderTreeDragHandle(node.id, node.name || "tag")}
+          </div>
         </div>
         ${
           expanded
@@ -1421,15 +1521,20 @@
     const selected = state.selectedTagId === groupId;
     return `
       <div class="tag-manager__group ${expanded ? "is-expanded" : ""}" data-tag-id="${escapeHtml(groupId)}">
-        <div class="tag-manager__group-header ${selected ? "is-selected" : ""}" data-action="select-toggle-group" data-tag-id="${escapeHtml(
+        <div class="tag-manager__group-header ${selected ? "is-selected" : ""}" ${getTreeRowDropAttributes(
           groupId
-        )}" role="button" tabindex="0">
-          <button type="button" class="tag-manager__tree-toggle" data-action="toggle-expanded" data-tag-id="${escapeHtml(
-            groupId
-          )}" aria-label="${expanded ? "Collapse group" : "Expand group"}" aria-expanded="${expanded ? "true" : "false"}">${expanded ? "&#9662;" : "&#9656;"}</button>
-          <span class="tag-manager__group-main">
-            <span class="tag-manager__tree-item-name">${escapeHtml(group.parent.name || "")}</span>
-          </span>
+        )} data-action="select-toggle-group" data-tag-id="${escapeHtml(groupId)}" role="button" tabindex="0">
+          <div class="tag-manager__row-left">
+            <button type="button" class="tag-manager__tree-toggle" data-action="toggle-expanded" data-tag-id="${escapeHtml(
+              groupId
+            )}" aria-label="${expanded ? "Collapse group" : "Expand group"}" aria-expanded="${expanded ? "true" : "false"}">${expanded ? "&#9662;" : "&#9656;"}</button>
+            <span class="tag-manager__group-main">
+              <span class="tag-manager__tree-item-name">${escapeHtml(group.parent.name || "")}</span>
+            </span>
+          </div>
+          <div class="tag-manager__row-actions">
+            ${renderTreeDragHandle(groupId, group.parent.name || "tag")}
+          </div>
         </div>
         ${
           expanded
@@ -1444,6 +1549,32 @@
     `;
   }
 
+  function renderRootSection(groups, leaves) {
+    const groupList = Array.isArray(groups) ? groups : [];
+    const leafList = Array.isArray(leaves) ? leaves : [];
+    const hasItems = groupList.length > 0 || leafList.length > 0;
+    return `
+      <div class="tag-manager__root-section">
+        <div class="tag-manager__root-header" data-drop-root="true" data-tree-row-id="${ROOT_DROP_ID}">
+          <div class="tag-manager__row-left">
+            <span class="tag-manager__root-badge">ROOT</span>
+            <span class="tag-manager__root-title">Unparented Tags</span>
+          </div>
+          <div class="tag-manager__root-meta">Drop here to remove all parents</div>
+        </div>
+        <div class="tag-manager__root-body">
+          ${
+            hasItems
+              ? `${groupList.map((group) => renderTreeGroup(group)).join("")}${leafList
+                  .map((leaf) => renderTreeLeaf(leaf))
+                  .join("")}`
+              : `<div class="tag-manager__root-empty">No unparented tags</div>`
+          }
+        </div>
+      </div>
+    `;
+  }
+
   function renderTree() {
     const filtered = getFilteredHierarchy();
     if (!state.groups.length && !state.ungroupedLeaves.length) {
@@ -1453,8 +1584,7 @@
       return `<div class="tag-manager__empty">No tags match this filter.</div>`;
     }
     return `
-      ${filtered.groups.map((group) => renderTreeGroup(group)).join("")}
-      ${filtered.ungroupedLeaves.map((leaf) => renderTreeLeaf(leaf)).join("")}
+      ${renderRootSection(filtered.groups, filtered.ungroupedLeaves)}
     `;
   }
 
@@ -1515,27 +1645,35 @@
     const dirty = isDraftDirty();
     const childCount = Number(record?.childIds?.length || 0);
     const childActionsAllowed = record ? canTagHaveChildren(record.id) : false;
-    const parentActionsAllowed = record ? canTagGainInsertedParent(record.id) : false;
+    const createParentAllowed = record ? canTagGainInsertedParent(record.id) : false;
+    const addParentAllowed = createParentAllowed;
+    const reparentActionsAllowed = !!record;
     const siblingActionsAllowed = record ? canTagHaveSiblings(record.id) : false;
     const reparentOptions = getTagPickerOptions(state.reparentQuery, [record?.id]);
-    const attachChildOptions = getTagPickerOptions(state.attachChildQuery, [record?.id]);
+    const attachChildOptions = getTagPickerOptions(state.attachChildQuery, [
+      record?.id,
+      ...(state.attachChildTargetIds || []),
+    ]);
     const attachSiblingOptions = getTagPickerOptions(state.attachSiblingQuery, [record?.id]);
     const mergeOptions = getTagPickerOptions(state.mergeQuery, [record?.id]);
     const parentDisabledMessage = "Current tag already occupies a full 3-level hierarchy.";
     const childDisabledMessage = "Current tag is already under 2 tag groups.";
     const siblingDisabledMessage = "Only available for subgroup and leaf tags under an existing parent group.";
     const reparentReason =
-      parentActionsAllowed && record && state.reparentTargetId
+      reparentActionsAllowed && record && state.reparentTargetId
         ? getParentRelationshipBlockReason(record.id, state.reparentTargetId, "reparent")
         : "";
     const addParentReason =
-      parentActionsAllowed && record && state.reparentTargetId
+      addParentAllowed && record && state.reparentTargetId
         ? getParentRelationshipBlockReason(record.id, state.reparentTargetId, "add-parent")
         : "";
-    const attachChildReason =
-      childActionsAllowed && record && state.attachChildTargetId
-        ? getAttachChildBlockReason(record.id, state.attachChildTargetId)
-        : "";
+    const attachChildReasons =
+      childActionsAllowed && record
+        ? state.attachChildTargetIds
+            .map((targetId) => getAttachChildBlockReason(record.id, targetId))
+            .filter(Boolean)
+        : [];
+    const attachChildReason = attachChildReasons[0] || "";
     const attachSiblingReason =
       siblingActionsAllowed && record && state.attachSiblingTargetId
         ? getAttachSiblingBlockReason(record.id, state.attachSiblingTargetId)
@@ -1611,6 +1749,13 @@
               ${
                 creatingNew
                   ? ""
+                  : `<button type="button" class="btn btn-secondary" data-action="remove-all-parents" ${
+                      record.parentIds?.length && !state.isSaving ? "" : "disabled"
+                    }>Remove All Parents</button>`
+              }
+              ${
+                creatingNew
+                  ? ""
                   : `<button type="button" class="btn btn-secondary" data-action="toggle-merge-panel" ${
                       state.isSaving || dirty ? "disabled" : ""
                     }>${state.mergePanelOpen ? "Close Merge" : "Merge Tag"}</button>`
@@ -1654,12 +1799,12 @@
               <div class="tag-manager__field-group">
                 <label class="tag-manager__field-label" for="tag-manager-parent-create">New Parent Tag</label>
                 <input id="tag-manager-parent-create" class="tag-manager__input" type="text" data-field="parent-create-name" value="${escapeHtml(
-                  parentActionsAllowed ? state.parentCreateName : parentDisabledMessage
-                )}" placeholder="${parentActionsAllowed ? `Create above ${escapeHtml(record.name)}` : ""}" ${
-                  parentActionsAllowed ? "" : "disabled"
+                  createParentAllowed ? state.parentCreateName : parentDisabledMessage
+                )}" placeholder="${createParentAllowed ? `Create above ${escapeHtml(record.name)}` : ""}" ${
+                  createParentAllowed ? "" : "disabled"
                 } />
                 <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="create-parent" ${
-                  parentActionsAllowed && state.parentCreateName.trim() && !state.isSaving ? "" : "disabled"
+                  createParentAllowed && state.parentCreateName.trim() && !state.isSaving ? "" : "disabled"
                 }>Create Parent</button>
               </div>
               <div class="tag-manager__field-group">
@@ -1691,20 +1836,20 @@
               <div class="tag-manager__field-group">
                 <label class="tag-manager__field-label" for="tag-manager-reparent-query">Reparent Current Tag</label>
                 <input id="tag-manager-reparent-query" class="tag-manager__input" type="search" data-field="reparent-query" value="${escapeHtml(
-                  parentActionsAllowed ? state.reparentQuery : parentDisabledMessage
-                )}" placeholder="${parentActionsAllowed ? "Search for the new parent tag" : ""}" ${
-                  parentActionsAllowed ? "" : "disabled"
+                  reparentActionsAllowed ? state.reparentQuery : parentDisabledMessage
+                )}" placeholder="${reparentActionsAllowed ? "Search for the new parent tag" : ""}" ${
+                  reparentActionsAllowed ? "" : "disabled"
                 } />
-                ${parentActionsAllowed ? renderAttachPicker(state.reparentQuery, state.reparentTargetId, reparentOptions, "reparent") : ""}
+                ${reparentActionsAllowed ? renderAttachPicker(state.reparentQuery, state.reparentTargetId, reparentOptions, "reparent") : ""}
                 <div class="tag-manager__button-row">
                   <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="reparent-current" ${
-                    parentActionsAllowed && state.reparentTargetId && !reparentReason && !state.isSaving ? "" : "disabled"
+                    reparentActionsAllowed && state.reparentTargetId && !reparentReason && !state.isSaving ? "" : "disabled"
                   }>Reparent</button>
                   <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="add-additional-parent" ${
-                    parentActionsAllowed && state.reparentTargetId && !addParentReason && !state.isSaving ? "" : "disabled"
+                    addParentAllowed && state.reparentTargetId && !addParentReason && !state.isSaving ? "" : "disabled"
                   }>Add Parent</button>
                 </div>
-                ${parentActionsAllowed && (reparentReason || addParentReason) ? `<div class="tag-manager__field-note">${escapeHtml(reparentReason || addParentReason)}</div>` : ""}
+                ${reparentActionsAllowed && (reparentReason || (addParentAllowed && addParentReason)) ? `<div class="tag-manager__field-note">${escapeHtml(reparentReason || addParentReason)}</div>` : ""}
               </div>
               <div class="tag-manager__field-group">
                 <label class="tag-manager__field-label" for="tag-manager-attach-child-query">Attach Existing Child</label>
@@ -1713,14 +1858,14 @@
                 )}" placeholder="${childActionsAllowed ? `Search for a tag to attach under ${escapeHtml(record.name)}` : ""}" ${
                   childActionsAllowed ? "" : "disabled"
                 } />
-                ${childActionsAllowed ? renderAttachPicker(
+                ${childActionsAllowed ? renderAttachPickerMulti(
                   state.attachChildQuery,
-                  state.attachChildTargetId,
+                  state.attachChildTargetIds,
                   attachChildOptions,
                   "attach-child"
                 ) : ""}
                 <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="attach-existing-child" ${
-                  childActionsAllowed && state.attachChildTargetId && !attachChildReason && !state.isSaving ? "" : "disabled"
+                  childActionsAllowed && state.attachChildTargetIds.length && !attachChildReason && !state.isSaving ? "" : "disabled"
                 }>Attach Child</button>
                 ${childActionsAllowed && attachChildReason ? `<div class="tag-manager__field-note">${escapeHtml(attachChildReason)}</div>` : ""}
               </div>
@@ -1783,22 +1928,26 @@
     if (!host) return;
     const selectedRecord = state.selectedTagId ? state.tagMap.get(String(state.selectedTagId)) : null;
     const childActionsAllowed = selectedRecord ? canTagHaveChildren(selectedRecord.id) : false;
-    const parentActionsAllowed = selectedRecord ? canTagGainInsertedParent(selectedRecord.id) : false;
+    const createParentAllowed = selectedRecord ? canTagGainInsertedParent(selectedRecord.id) : false;
+    const addParentAllowed = createParentAllowed;
+    const reparentActionsAllowed = !!selectedRecord;
     const siblingActionsAllowed = selectedRecord ? canTagHaveSiblings(selectedRecord.id) : false;
     const mergeReason =
       selectedRecord && state.mergeSourceId ? getMergeBlockReason(selectedRecord.id, state.mergeSourceId) : "";
     const reparentReason =
-      parentActionsAllowed && selectedRecord && state.reparentTargetId
+      reparentActionsAllowed && selectedRecord && state.reparentTargetId
         ? getParentRelationshipBlockReason(selectedRecord.id, state.reparentTargetId, "reparent")
         : "";
     const addParentReason =
-      parentActionsAllowed && selectedRecord && state.reparentTargetId
+      addParentAllowed && selectedRecord && state.reparentTargetId
         ? getParentRelationshipBlockReason(selectedRecord.id, state.reparentTargetId, "add-parent")
         : "";
-    const attachChildReason =
-      selectedRecord && state.attachChildTargetId
-        ? getAttachChildBlockReason(selectedRecord.id, state.attachChildTargetId)
-        : "";
+    const attachChildReasons = selectedRecord
+      ? state.attachChildTargetIds
+          .map((targetId) => getAttachChildBlockReason(selectedRecord.id, targetId))
+          .filter(Boolean)
+      : [];
+    const attachChildReason = attachChildReasons[0] || "";
     const attachSiblingReason =
       selectedRecord && state.attachSiblingTargetId
         ? getAttachSiblingBlockReason(selectedRecord.id, state.attachSiblingTargetId)
@@ -1817,6 +1966,9 @@
     });
     host.querySelectorAll('[data-action="clear-image"]').forEach((button) => {
       button.disabled = !String(state.draft?.image_path || "").trim() || state.isSaving;
+    });
+    host.querySelectorAll('[data-action="remove-all-parents"]').forEach((button) => {
+      button.disabled = !(selectedRecord?.parentIds || []).length || state.isSaving;
     });
     host.querySelectorAll('[data-action="apply-image-url"]').forEach((button) => {
       button.disabled = !String(state.imageUrlDraft || "").trim() || state.isSaving;
@@ -1846,7 +1998,7 @@
       button.disabled = state.isSaving;
     });
     host.querySelectorAll('[data-action="create-parent"]').forEach((button) => {
-      button.disabled = !parentActionsAllowed || !state.parentCreateName.trim() || state.isSaving;
+      button.disabled = !createParentAllowed || !state.parentCreateName.trim() || state.isSaving;
     });
     host.querySelectorAll('[data-action="create-child"]').forEach((button) => {
       button.disabled = !childActionsAllowed || !state.childCreateName.trim() || state.isSaving;
@@ -1855,13 +2007,14 @@
       button.disabled = !siblingActionsAllowed || !state.siblingCreateName.trim() || state.isSaving;
     });
     host.querySelectorAll('[data-action="reparent-current"]').forEach((button) => {
-      button.disabled = !parentActionsAllowed || !state.reparentTargetId || !!reparentReason || state.isSaving;
+      button.disabled = !reparentActionsAllowed || !state.reparentTargetId || !!reparentReason || state.isSaving;
     });
     host.querySelectorAll('[data-action="add-additional-parent"]').forEach((button) => {
-      button.disabled = !parentActionsAllowed || !state.reparentTargetId || !!addParentReason || state.isSaving;
+      button.disabled = !addParentAllowed || !state.reparentTargetId || !!addParentReason || state.isSaving;
     });
     host.querySelectorAll('[data-action="attach-existing-child"]').forEach((button) => {
-      button.disabled = !childActionsAllowed || !state.attachChildTargetId || !!attachChildReason || state.isSaving;
+      button.disabled =
+        !childActionsAllowed || !state.attachChildTargetIds.length || !!attachChildReason || state.isSaving;
     });
     host.querySelectorAll('[data-action="attach-existing-sibling"]').forEach((button) => {
       button.disabled =
@@ -1999,6 +2152,10 @@
       host.addEventListener("click", onHostClick);
       host.addEventListener("input", onHostInput);
       host.addEventListener("change", onHostChange);
+      host.addEventListener("dragstart", onHostDragStart);
+      host.addEventListener("dragover", onHostDragOver);
+      host.addEventListener("drop", onHostDrop);
+      host.addEventListener("dragend", onHostDragEnd);
     }
 
     root.innerHTML = "";
@@ -2041,6 +2198,76 @@
         state.treeScrollTop = nextTree.scrollTop;
       });
     }
+    applyTreeDragIndicators();
+  }
+
+  function clearTreeDragIndicators(host = getHost()) {
+    if (!(host instanceof HTMLElement)) return;
+    host
+      .querySelectorAll(
+        ".tag-manager__group-header.is-drag-source, .tag-manager__subgroup-header.is-drag-source, .tag-manager__tree-item.is-drag-source, .tag-manager__group-header.is-drop-target, .tag-manager__subgroup-header.is-drop-target, .tag-manager__tree-item.is-drop-target, .tag-manager__root-header.is-drop-target, .tag-manager__group-header.is-drop-invalid, .tag-manager__subgroup-header.is-drop-invalid, .tag-manager__tree-item.is-drop-invalid, .tag-manager__root-header.is-drop-invalid"
+      )
+      .forEach((element) => {
+        element.classList.remove("is-drag-source", "is-drop-target", "is-drop-invalid");
+      });
+  }
+
+  function findTreeRowElement(tagId, host = getHost()) {
+    if (!(host instanceof HTMLElement) || !tagId) return null;
+    const safeId =
+      window.CSS && typeof window.CSS.escape === "function"
+        ? window.CSS.escape(String(tagId))
+        : String(tagId).replace(/"/g, '\\"');
+    return host.querySelector(`[data-tree-row-id="${safeId}"]`);
+  }
+
+  function applyTreeDragIndicators() {
+    const host = getHost();
+    if (!(host instanceof HTMLElement)) return;
+    clearTreeDragIndicators(host);
+
+    if (state.draggingTagId) {
+      const sourceRow = findTreeRowElement(state.draggingTagId, host);
+      if (sourceRow) sourceRow.classList.add("is-drag-source");
+    }
+
+    if (state.dragOverTagId) {
+      const targetRow = findTreeRowElement(state.dragOverTagId, host);
+      if (targetRow) {
+        targetRow.classList.add(
+          state.dragOverMode === "invalid" ? "is-drop-invalid" : "is-drop-target"
+        );
+      }
+    }
+  }
+
+  function resetTreeDragState() {
+    state.draggingTagId = "";
+    state.dragOverTagId = "";
+    state.dragOverMode = "";
+    clearTreeDragIndicators();
+  }
+
+  function setTreeDragTarget(tagId, mode) {
+    const nextTagId = String(tagId || "");
+    const nextMode = nextTagId ? String(mode || "") : "";
+    if (state.dragOverTagId === nextTagId && state.dragOverMode === nextMode) return;
+    state.dragOverTagId = nextTagId;
+    state.dragOverMode = nextMode;
+    applyTreeDragIndicators();
+  }
+
+  function getDragDropBlockReason(sourceTagId, targetTagId) {
+    const sourceId = String(sourceTagId || "");
+    const targetId = String(targetTagId || "");
+    if (!sourceId || !targetId) return "Select a different tag.";
+    if (targetId === ROOT_DROP_ID) {
+      const sourceRecord = state.tagMap.get(sourceId);
+      if (!sourceRecord) return "Selected tag could not be found.";
+      if (!(sourceRecord.parentIds || []).length) return "Current tag already has no parents.";
+      return "";
+    }
+    return getParentRelationshipBlockReason(sourceId, targetId, "reparent");
   }
 
   function blobToDataUrl(blob) {
@@ -2082,7 +2309,6 @@
       }
       if (field === "attach-child-query") {
         state.attachChildQuery = target.value || "";
-        state.attachChildTargetId = "";
       }
       if (field === "attach-sibling-query") {
         state.attachSiblingQuery = target.value || "";
@@ -2118,6 +2344,148 @@
     if (field === "child-create-name") state.childCreateName = target.value;
     if (field === "sibling-create-name") state.siblingCreateName = target.value;
     syncControlStates();
+  }
+
+  function onHostDragStart(event) {
+    const handle = event.target instanceof Element ? event.target.closest("[data-drag-tag-id]") : null;
+    if (!(handle instanceof HTMLElement) || state.isSaving) return;
+    const sourceId = String(handle.getAttribute("data-drag-tag-id") || "");
+    if (!sourceId) return;
+    state.draggingTagId = sourceId;
+    state.dragOverTagId = "";
+    state.dragOverMode = "";
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", sourceId);
+    }
+    applyTreeDragIndicators();
+  }
+
+  function onHostDragOver(event) {
+    if (!state.draggingTagId) return;
+    const row = event.target instanceof Element ? event.target.closest("[data-drop-tag-id], [data-drop-root]") : null;
+    if (!(row instanceof HTMLElement)) {
+      setTreeDragTarget("", "");
+      return;
+    }
+    const targetId = row.hasAttribute("data-drop-root")
+      ? ROOT_DROP_ID
+      : String(row.getAttribute("data-drop-tag-id") || "");
+    if (!targetId) {
+      setTreeDragTarget("", "");
+      return;
+    }
+    const blockReason = getDragDropBlockReason(state.draggingTagId, targetId);
+    if (!blockReason) {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      setTreeDragTarget(targetId, "valid");
+      return;
+    }
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+    setTreeDragTarget(targetId, "invalid");
+  }
+
+  function onHostDragEnd() {
+    resetTreeDragState();
+  }
+
+  async function moveTagByDrag(sourceTagId, targetTagId) {
+    const sourceId = String(sourceTagId || "");
+    const targetId = String(targetTagId || "");
+    if (!sourceId || !targetId || state.isSaving) return;
+
+    const sourceRecord = state.tagMap.get(sourceId);
+    const targetRecord = targetId === ROOT_DROP_ID ? null : state.tagMap.get(targetId);
+    if (!sourceRecord || (targetId !== ROOT_DROP_ID && !targetRecord)) {
+      setStatus("error", "Selected tag could not be found.");
+      render();
+      return;
+    }
+
+    const relationError = getDragDropBlockReason(sourceId, targetId);
+    if (relationError) {
+      setStatus("error", relationError);
+      render();
+      return;
+    }
+
+    state.isSaving = true;
+    setStatus("info", "Moving tag...");
+    render();
+
+    try {
+      const newParentIds = targetId === ROOT_DROP_ID ? [] : [targetRecord.id];
+      await assignTagParents(sourceRecord.id, newParentIds);
+
+      invalidateTags();
+      await refreshDataWithRetry(() => {
+        const updatedSource = state.tagMap.get(String(sourceRecord.id));
+        return updatedSource?.parentIds?.join("|") === newParentIds.join("|");
+      });
+
+      setSelectedTag(sourceRecord.id);
+      setStatus("success", targetId === ROOT_DROP_ID ? "All parents removed." : "Tag moved.");
+    } catch (err) {
+      console.error("[TagManager] drag move failed", err);
+      setStatus("error", err?.message || "Failed to move tag.");
+      render();
+    } finally {
+      state.isSaving = false;
+      resetTreeDragState();
+      syncControlStates();
+    }
+  }
+
+  async function removeAllParentsFromSelectedTag() {
+    if (state.isSaving || !state.selectedTagId) return;
+    const sourceRecord = state.tagMap.get(String(state.selectedTagId));
+    if (!sourceRecord) return;
+    if (!(sourceRecord.parentIds || []).length) {
+      setStatus("error", "Current tag already has no parents.");
+      render();
+      return;
+    }
+
+    state.isSaving = true;
+    setStatus("info", "Removing all parents...");
+    render();
+
+    try {
+      await assignTagParents(sourceRecord.id, []);
+
+      invalidateTags();
+      await refreshDataWithRetry(() => {
+        const updatedSource = state.tagMap.get(String(sourceRecord.id));
+        return !updatedSource?.parentIds?.length;
+      });
+
+      setSelectedTag(sourceRecord.id);
+      setStatus("success", "All parents removed.");
+    } catch (err) {
+      console.error("[TagManager] remove parents failed", err);
+      setStatus("error", err?.message || "Failed to remove parents.");
+      render();
+    } finally {
+      state.isSaving = false;
+      syncControlStates();
+    }
+  }
+
+  function onHostDrop(event) {
+    if (!state.draggingTagId) return;
+    const sourceId = state.draggingTagId;
+    const row = event.target instanceof Element ? event.target.closest("[data-drop-tag-id], [data-drop-root]") : null;
+    const targetId =
+      row instanceof HTMLElement
+        ? row.hasAttribute("data-drop-root")
+          ? ROOT_DROP_ID
+          : String(row.getAttribute("data-drop-tag-id") || "")
+        : "";
+    event.preventDefault();
+    resetTreeDragState();
+    if (!targetId) return;
+    moveTagByDrag(sourceId, targetId);
   }
 
   async function onHostChange(event) {
@@ -2185,6 +2553,11 @@
     const action = trigger.getAttribute("data-action");
     const tagId = trigger.getAttribute("data-tag-id");
 
+    if (action === "drag-handle") {
+      event.preventDefault();
+      return;
+    }
+
     if (action === "toggle-expanded" && tagId) {
       event.preventDefault();
       toggleExpanded(tagId);
@@ -2226,8 +2599,11 @@
         state.reparentQuery = targetRecord.name || "";
       }
       if (slot === "attach-child") {
-        state.attachChildTargetId = String(tagId);
-        state.attachChildQuery = targetRecord.name || "";
+        const nextIds = Array.from(
+          new Set([...(state.attachChildTargetIds || []).map(String), String(tagId)])
+        );
+        state.attachChildTargetIds = nextIds;
+        state.attachChildQuery = "";
       }
       if (slot === "attach-sibling") {
         state.attachSiblingTargetId = String(tagId);
@@ -2238,6 +2614,10 @@
         state.mergeQuery = targetRecord.name || "";
       }
       render();
+      if (slot === "attach-child") {
+        const nextInput = getHost()?.querySelector('[data-field="attach-child-query"]');
+        if (nextInput instanceof HTMLInputElement) nextInput.focus();
+      }
       return;
     }
     if (action === "clear-picked-target") {
@@ -2248,8 +2628,11 @@
         state.reparentQuery = "";
       }
       if (slot === "attach-child") {
-        state.attachChildTargetId = "";
-        state.attachChildQuery = "";
+        const removeId = String(trigger.getAttribute("data-tag-id") || "");
+        state.attachChildTargetIds = removeId
+          ? (state.attachChildTargetIds || []).filter((id) => String(id) !== removeId)
+          : [];
+        if (!removeId) state.attachChildQuery = "";
       }
       if (slot === "attach-sibling") {
         state.attachSiblingTargetId = "";
@@ -2338,6 +2721,11 @@
       state.imageUrlDraft = "";
       setStatus("info", "Image cleared. Save Changes to persist.");
       render();
+      return;
+    }
+    if (action === "remove-all-parents") {
+      event.preventDefault();
+      removeAllParentsFromSelectedTag();
       return;
     }
     if (action === "read-image-clipboard") {
@@ -2488,12 +2876,7 @@
           image_path: record.image_path || "",
         }
       : null;
-    state.reparentQuery = "";
-    state.reparentTargetId = "";
-    state.attachChildQuery = "";
-    state.attachChildTargetId = "";
-    state.attachSiblingQuery = "";
-    state.attachSiblingTargetId = "";
+    resetRelationshipPickers();
     state.aliasInput = "";
     state.mergeQuery = "";
     state.mergeSourceId = "";
@@ -2843,7 +3226,7 @@
     if (state.isSaving || !state.selectedTagId) return;
     const sourceRecord = state.tagMap.get(String(state.selectedTagId));
     if (!sourceRecord) return;
-    if ((mode === "reparent" || mode === "add-parent") && !canTagGainInsertedParent(sourceRecord.id)) {
+    if (mode === "add-parent" && !canTagGainInsertedParent(sourceRecord.id)) {
       setStatus("error", "Current tag already occupies a full 3-level hierarchy.");
       render();
       return;
@@ -2859,31 +3242,36 @@
       return;
     }
 
-    const targetId =
+    const targetIds =
       mode === "reparent"
-        ? String(state.reparentTargetId || "")
+        ? [String(state.reparentTargetId || "")]
         : mode === "child"
-        ? String(state.attachChildTargetId || "")
-        : String(state.attachSiblingTargetId || "");
-    if (!targetId) return;
+        ? (state.attachChildTargetIds || []).map(String)
+        : [String(state.attachSiblingTargetId || "")];
+    const filteredTargetIds = targetIds.filter(Boolean);
+    if (!filteredTargetIds.length) return;
+
     const relationError =
       mode === "reparent" || mode === "add-parent"
-        ? getParentRelationshipBlockReason(sourceRecord.id, targetId, mode)
+        ? getParentRelationshipBlockReason(sourceRecord.id, filteredTargetIds[0], mode)
         : mode === "child"
-        ? getAttachChildBlockReason(sourceRecord.id, targetId)
-        : getAttachSiblingBlockReason(sourceRecord.id, targetId);
+        ? filteredTargetIds.map((targetId) => getAttachChildBlockReason(sourceRecord.id, targetId)).find(Boolean) || ""
+        : getAttachSiblingBlockReason(sourceRecord.id, filteredTargetIds[0]);
     if (relationError) {
       setStatus("error", relationError);
       render();
       return;
     }
 
-    const targetRecord = state.tagMap.get(targetId);
-    if (!targetRecord) {
+    const targetRecords = filteredTargetIds
+      .map((targetId) => state.tagMap.get(targetId))
+      .filter(Boolean);
+    if (targetRecords.length !== filteredTargetIds.length) {
       setStatus("error", "Selected tag could not be found.");
       render();
       return;
     }
+    const targetRecord = targetRecords[0];
 
     state.isSaving = true;
     setStatus(
@@ -2893,7 +3281,7 @@
         : mode === "add-parent"
         ? "Adding additional parent..."
         : mode === "child"
-        ? "Attaching existing child..."
+        ? `Attaching ${formatCount(targetRecords.length)} existing child tag${targetRecords.length === 1 ? "" : "s"}...`
         : "Adding existing sibling..."
     );
     render();
@@ -2907,8 +3295,10 @@
         newParentIds = Array.from(new Set([...(sourceRecord.parentIds || []), targetRecord.id])).map(String);
         await assignTagParents(sourceRecord.id, newParentIds);
       } else if (mode === "child") {
-        newParentIds = Array.from(new Set([...(targetRecord.parentIds || []), sourceRecord.id])).map(String);
-        await assignTagParents(targetRecord.id, newParentIds);
+        for (const childRecord of targetRecords) {
+          newParentIds = Array.from(new Set([...(childRecord.parentIds || []), sourceRecord.id])).map(String);
+          await assignTagParents(childRecord.id, newParentIds);
+        }
         state.expandedIds.add(String(sourceRecord.id));
         saveSet(EXPANDED_STORAGE_KEY, state.expandedIds);
       } else {
@@ -2924,18 +3314,25 @@
         await assignTagParents(targetRecord.id, newParentIds);
       }
 
-      state.reparentQuery = "";
-      state.reparentTargetId = "";
-      state.attachChildQuery = "";
-      state.attachChildTargetId = "";
-      state.attachSiblingQuery = "";
-      state.attachSiblingTargetId = "";
+      resetRelationshipPickers();
 
       invalidateTags();
       await refreshDataWithRetry(() => {
         if (mode === "reparent" || mode === "add-parent") {
           const updatedSource = state.tagMap.get(String(sourceRecord.id));
           return updatedSource?.parentIds?.join("|") === newParentIds.join("|");
+        }
+        if (mode === "child") {
+          return targetRecords.every((childRecord) => {
+            const updatedTarget = state.tagMap.get(String(childRecord.id));
+            const expectedParentIds = Array.from(
+              new Set([...(childRecord.parentIds || []), sourceRecord.id])
+            )
+              .map(String)
+              .sort();
+            const updatedParentIds = (updatedTarget?.parentIds || []).map(String).sort();
+            return updatedParentIds.join("|") === expectedParentIds.join("|");
+          });
         }
         const updatedTarget = state.tagMap.get(String(targetRecord.id));
         return updatedTarget?.parentIds?.join("|") === newParentIds.join("|");
@@ -2945,8 +3342,13 @@
         setSelectedTag(sourceRecord.id);
         setStatus("success", mode === "reparent" ? "Current tag reparented." : "Additional parent added.");
       } else {
-        setSelectedTag(targetRecord.id);
-        setStatus("success", mode === "child" ? "Existing child attached." : "Existing sibling added.");
+        setSelectedTag(mode === "child" ? sourceRecord.id : targetRecord.id);
+        setStatus(
+          "success",
+          mode === "child"
+            ? `${formatCount(targetRecords.length)} existing child tag${targetRecords.length === 1 ? "" : "s"} attached.`
+            : "Existing sibling added."
+        );
       }
     } catch (err) {
       console.error("[TagManager] attach existing failed", err);
