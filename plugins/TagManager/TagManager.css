@@ -128,6 +128,72 @@
   margin-bottom: 0.72rem;
 }
 
+#tag-manager-host .tag-manager__root-section {
+  display: block;
+  position: relative;
+  border: 1px dashed rgba(198, 214, 238, 0.24);
+  border-radius: 0.9rem;
+  background: linear-gradient(180deg, rgba(36, 42, 54, 0.5), rgba(24, 30, 39, 0.4));
+  overflow: hidden;
+  margin-bottom: 0.72rem;
+}
+
+#tag-manager-host .tag-manager__root-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  min-height: 2.5rem;
+  padding: 0.56rem 0.72rem;
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  border-radius: 0.9rem;
+}
+
+#tag-manager-host .tag-manager__root-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.6rem;
+  padding: 0.26rem 0.58rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(241, 246, 253, 0.9);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#tag-manager-host .tag-manager__root-title {
+  color: #f3f7fd;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+#tag-manager-host .tag-manager__root-meta,
+#tag-manager-host .tag-manager__root-empty {
+  color: rgba(222, 230, 244, 0.7);
+  font-size: 0.77rem;
+  font-weight: 600;
+}
+
+#tag-manager-host .tag-manager__root-body {
+  display: grid;
+  padding: 0.3rem;
+}
+
+#tag-manager-host .tag-manager__root-empty {
+  padding: 0.72rem 0.82rem 0.82rem;
+  border-radius: 0.72rem;
+}
+
+#tag-manager-host .tag-manager__root-body > .tag-manager__group:first-child,
+#tag-manager-host .tag-manager__root-body > .tag-manager__tree-item:first-child {
+  margin-top: 0;
+}
+
 #tag-manager-host .tag-manager__group:last-child {
   margin-bottom: 0;
 }
@@ -215,6 +281,7 @@
 #tag-manager-host .tag-manager__subgroup-main,
 #tag-manager-host .tag-manager__tree-item-main,
 #tag-manager-host .tag-manager__tree-toggle,
+#tag-manager-host .tag-manager__drag-handle,
 #tag-manager-host .tag-manager__chip,
 #tag-manager-host .tag-manager__search-result {
   border: 0;
@@ -269,6 +336,51 @@
   cursor: pointer;
 }
 
+#tag-manager-host .tag-manager__row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  flex: 0 0 auto;
+}
+
+#tag-manager-host .tag-manager__drag-handle {
+  width: 1.95rem;
+  min-width: 1.95rem;
+  height: 1.95rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(229, 237, 247, 0.58);
+  cursor: grab;
+  transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+#tag-manager-host .tag-manager__drag-handle:hover {
+  background: rgba(255, 255, 255, 0.065);
+  color: rgba(245, 249, 255, 0.9);
+}
+
+#tag-manager-host .tag-manager__drag-handle:active {
+  cursor: grabbing;
+  transform: scale(0.96);
+}
+
+#tag-manager-host .tag-manager__drag-handle.is-disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+#tag-manager-host .tag-manager__drag-icon {
+  width: 0.82rem;
+  height: 0.82rem;
+}
+
+#tag-manager-host .tag-manager__drag-fallback {
+  font-size: 0.9rem;
+  letter-spacing: 0.04em;
+}
+
 #tag-manager-host .tag-manager__tree-item-name {
   display: block;
   min-width: 0;
@@ -298,6 +410,28 @@
 
 #tag-manager-host .tag-manager__subgroup.is-expanded > .tag-manager__subgroup-header {
   border-radius: 0.72rem 0.72rem 0 0;
+}
+
+#tag-manager-host .tag-manager__group-header.is-drag-source,
+#tag-manager-host .tag-manager__subgroup-header.is-drag-source,
+#tag-manager-host .tag-manager__tree-item.is-drag-source {
+  opacity: 0.64;
+}
+
+#tag-manager-host .tag-manager__group-header.is-drop-target,
+#tag-manager-host .tag-manager__subgroup-header.is-drop-target,
+#tag-manager-host .tag-manager__tree-item.is-drop-target,
+#tag-manager-host .tag-manager__root-header.is-drop-target {
+  background: rgba(84, 214, 128, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(174, 245, 193, 0.48);
+}
+
+#tag-manager-host .tag-manager__group-header.is-drop-invalid,
+#tag-manager-host .tag-manager__subgroup-header.is-drop-invalid,
+#tag-manager-host .tag-manager__tree-item.is-drop-invalid,
+#tag-manager-host .tag-manager__root-header.is-drop-invalid {
+  background: rgba(255, 108, 108, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 174, 174, 0.34);
 }
 
 #tag-manager-host .tag-manager__group-body,
