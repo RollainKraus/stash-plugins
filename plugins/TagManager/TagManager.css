@@ -277,6 +277,23 @@
   pointer-events: none;
 }
 
+#tag-manager-host .tag-manager__group-header.is-batch-selected,
+#tag-manager-host .tag-manager__subgroup-header.is-batch-selected,
+#tag-manager-host .tag-manager__tree-item.is-batch-selected {
+  background: rgba(84, 214, 128, 0.12);
+}
+
+#tag-manager-host .tag-manager__group-header.is-batch-selected::before,
+#tag-manager-host .tag-manager__subgroup-header.is-batch-selected::before,
+#tag-manager-host .tag-manager__tree-item.is-batch-selected::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(174, 245, 193, 0.4);
+  pointer-events: none;
+}
+
 #tag-manager-host .tag-manager__group-main,
 #tag-manager-host .tag-manager__subgroup-main,
 #tag-manager-host .tag-manager__tree-item-main,
@@ -341,6 +358,49 @@
   align-items: center;
   gap: 0.28rem;
   flex: 0 0 auto;
+}
+
+#tag-manager-host .tag-manager__row-actions.is-batch-selected {
+  gap: 0.34rem;
+}
+
+#tag-manager-host .tag-manager__batch-toggle {
+  width: 1.95rem;
+  min-width: 1.95rem;
+  height: 1.95rem;
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: rgba(229, 237, 247, 0.58);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+#tag-manager-host .tag-manager__batch-toggle:hover {
+  background: rgba(255, 255, 255, 0.065);
+  color: rgba(245, 249, 255, 0.9);
+}
+
+#tag-manager-host .tag-manager__batch-toggle.is-checked {
+  color: rgba(132, 233, 171, 0.96);
+}
+
+#tag-manager-host .tag-manager__batch-toggle:active {
+  transform: scale(0.96);
+}
+
+#tag-manager-host .tag-manager__batch-toggle-icon {
+  width: 0.86rem;
+  height: 0.86rem;
+  display: block;
+}
+
+#tag-manager-host .tag-manager__batch-toggle-fallback {
+  font-size: 0.92rem;
+  line-height: 1;
 }
 
 #tag-manager-host .tag-manager__drag-handle {
@@ -512,6 +572,78 @@
   align-items: start;
 }
 
+#tag-manager-host .tag-manager__batch-card {
+  display: grid;
+  gap: 0.8rem;
+  align-content: start;
+}
+
+#tag-manager-host .tag-manager__batch-card-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+#tag-manager-host .tag-manager__split-workspace {
+  display: grid;
+  gap: 0.8rem;
+  align-content: start;
+}
+
+#tag-manager-host .tag-manager__split-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+#tag-manager-host .tag-manager__split-header .tag-manager__button-row {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
+
+#tag-manager-host .tag-manager__split-header .tag-manager__action-button {
+  min-width: 10rem;
+  white-space: nowrap;
+}
+
+#tag-manager-host .tag-manager__split-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: auto;
+  gap: 0.8rem;
+  align-items: stretch;
+}
+
+#tag-manager-host .tag-manager__split-grid > * {
+  min-width: 0;
+}
+
+#tag-manager-host .tag-manager__split-card {
+  align-content: start;
+  height: 100%;
+}
+
+#tag-manager-host .tag-manager__split-meta-card {
+  min-height: 0;
+  align-self: start;
+}
+
+#tag-manager-host .tag-manager__split-image-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 10rem;
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  color: rgba(228, 235, 247, 0.72);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
 #tag-manager-host .tag-manager__inspector-main,
 #tag-manager-host .tag-manager__inspector-side {
   display: grid;
@@ -573,6 +705,54 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.34rem;
+}
+
+#tag-manager-host .tag-manager__batch-card .tag-manager__attach-picked {
+  align-items: flex-start;
+}
+
+#tag-manager-host .tag-manager__split-alias-list {
+  display: grid;
+  gap: 0.42rem;
+}
+
+#tag-manager-host .tag-manager__split-alias-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  padding: 0.42rem 0.5rem;
+  border-radius: 0.76rem;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+#tag-manager-host .tag-manager__split-alias-text {
+  min-width: 0;
+  color: #eef4fd;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+#tag-manager-host .tag-manager__split-alias-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+}
+
+#tag-manager-host .tag-manager__split-alias-button {
+  min-width: 4.8rem;
+}
+
+#tag-manager-host .tag-manager__split-meta-card .tag-manager__alias-panel-scroll {
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
+}
+
+#tag-manager-host .tag-manager__split-meta-card .tag-manager__alias-editor {
+  min-height: auto;
 }
 
 #tag-manager-host .tag-manager__chip,
@@ -1122,7 +1302,8 @@
 
   #tag-manager-host .tag-manager__field-grid,
   #tag-manager-host .tag-manager__inline-form,
-  #tag-manager-host .tag-manager__editor-split {
+  #tag-manager-host .tag-manager__editor-split,
+  #tag-manager-host .tag-manager__split-grid {
     grid-template-columns: 1fr;
   }
 
