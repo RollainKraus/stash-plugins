@@ -4,7 +4,12 @@
   const PLUGIN_ID = "EditTagsOverhaul";
   const PANEL_ID = "kmv-edit-tags-overhaul";
   const STYLE_HIDE_ID = "kmv-edit-tags-overhaul-hide-original";
+  const HOVER_PREVIEW_ID = "edit-tags-overhaul-hover-preview";
   const ROUTE_RETRY_DELAYS = [0, 200, 600, 1200, 2000, 3500];
+  const SUPPLEMENTAL_IMAGE_KEYS = [
+    "ctm_supplemental_image_1",
+    "ctm_supplemental_image_2",
+  ];
 
   const ENTITY_CONFIG = {
     scene: {
@@ -94,7 +99,47 @@
     scheduledRouteToken: 0,
     currentSearchQuery: "",
     searchIndex: null,
+    tagMap: new Map(),
+    supplementalImages: new Map(),
+    supplementalImagePromises: new Map(),
+    hoverTagId: "",
+    hoverAnchorRect: null,
   };
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function normalizeSupplementalImageId(value) {
+    const digits = String(value ?? "").trim().replace(/[^\d]/g, "");
+    return digits || "";
+  }
+
+  function getSupplementalImageValue(customFields, key) {
+    return normalizeSupplementalImageId(customFields?.[key]);
+  }
+
+  function getSupplementalImageIdsForTag(tag) {
+    return SUPPLEMENTAL_IMAGE_KEYS.map((key) => getSupplementalImageValue(tag?.custom_fields || {}, key)).filter(Boolean);
+  }
+
+  function getSupplementalImagePath(imageRecord) {
+    return String(imageRecord?.paths?.thumbnail || imageRecord?.paths?.image || imageRecord?.thumbnail || imageRecord?.image_path || "").trim();
+  }
+
+  function extractDescriptionPreview(text) {
+    const lines = String(text || "")
+      .replace(/\r/g, "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    return lines.slice(0, 3).join("\n");
+  }
 
   async function loadConfig() {
     if (state.config) return state.config;
@@ -184,7 +229,9 @@
             id
             name
             sort_name
+            description
             image_path
+            custom_fields
             children {
               id
             }
@@ -204,6 +251,18 @@
     `);
 
     state.allTags = data?.findTags?.tags || [];
+    state.tagMap = new Map(
+      state.allTags.map((tag) => [
+        String(tag.id),
+        {
+          ...tag,
+          id: String(tag.id),
+          description: tag.description || "",
+          custom_fields: tag.custom_fields || {},
+          image_path: tag.image_path || "",
+        },
+      ])
+    );
     return state.allTags;
   }
 
@@ -262,7 +321,228 @@
   function cleanupPanel() {
     const el = document.getElementById(PANEL_ID);
     if (el) el.remove();
+    hideHoverPreview();
     state.injectedForEntityKey = null;
+  }
+
+  function getHoverPreviewHost() {
+    let host = document.getElementById(HOVER_PREVIEW_ID);
+    if (host) return host;
+    host = document.createElement("div");
+    host.id = HOVER_PREVIEW_ID;
+    host.className = "edit-tags-overhaul-hover-preview";
+    host.setAttribute("aria-hidden", "true");
+    document.body.appendChild(host);
+    return host;
+  }
+
+  function positionHoverPreview(anchorRect) {
+    const host = getHoverPreviewHost();
+    if (!(host instanceof HTMLElement) || !anchorRect) return;
+
+    const previewWidth = Math.min(540, Math.max(320, Math.floor(window.innerWidth * 0.32)));
+    host.style.maxWidth = `${previewWidth}px`;
+
+    const margin = 14;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const rect = host.getBoundingClientRect();
+    let left = anchorRect.right + 12;
+    let top = anchorRect.top;
+
+    if (left + rect.width + margin > viewportWidth) {
+      left = Math.max(margin, anchorRect.left - rect.width - 12);
+    }
+    if (top + rect.height + margin > viewportHeight) {
+      top = Math.max(margin, viewportHeight - rect.height - margin);
+    }
+    if (top < margin) top = margin;
+
+    host.style.left = `${Math.round(left)}px`;
+    host.style.top = `${Math.round(top)}px`;
+  }
+
+  function hideHoverPreview() {
+    const host = document.getElementById(HOVER_PREVIEW_ID);
+    if (host) {
+      host.classList.remove("is-visible", "is-loading");
+      host.setAttribute("aria-hidden", "true");
+      host.innerHTML = "";
+    }
+    state.hoverTagId = "";
+    state.hoverAnchorRect = null;
+  }
+
+  function showHoverPreviewLoading(anchorRect) {
+    const host = getHoverPreviewHost();
+    host.innerHTML =
+      '<div class="edit-tags-overhaul-hover-preview__card edit-tags-overhaul-hover-preview__card--loading">Loading tag preview...</div>';
+    host.classList.add("is-visible", "is-loading");
+    host.setAttribute("aria-hidden", "false");
+    positionHoverPreview(anchorRect);
+  }
+
+  async function ensureSupplementalImagesLoaded(imageIds = []) {
+    const ids = Array.from(
+      new Set(
+        (imageIds || [])
+          .map(normalizeSupplementalImageId)
+          .filter(Boolean)
+      )
+    );
+    if (!ids.length) return false;
+
+    const uncached = ids.filter((imageId) => !state.supplementalImages.has(imageId));
+    if (!uncached.length) return false;
+
+    const requestKey = uncached.slice().sort().join(",");
+    if (state.supplementalImagePromises.has(requestKey)) {
+      return state.supplementalImagePromises.get(requestKey);
+    }
+
+    const request = gql(
+      `
+        query EditTagsOverhaulSupplementalImages($image_ids: [Int!]) {
+          findImages(image_ids: $image_ids, filter: { per_page: -1 }) {
+            images {
+              id
+              paths {
+                thumbnail
+                image
+              }
+            }
+          }
+        }
+      `,
+      { image_ids: uncached.map((id) => Number(id)).filter(Number.isFinite) }
+    )
+      .then((data) => {
+        const foundMap = new Map(
+          (data?.findImages?.images || []).map((image) => [String(image.id), image])
+        );
+        uncached.forEach((imageId) => {
+          state.supplementalImages.set(imageId, foundMap.get(imageId) || null);
+        });
+        return true;
+      })
+      .catch((err) => {
+        console.error("[EditTagsOverhaul] supplemental image lookup failed", err);
+        uncached.forEach((imageId) => {
+          state.supplementalImages.set(imageId, null);
+        });
+        return false;
+      })
+      .finally(() => {
+        state.supplementalImagePromises.delete(requestKey);
+      });
+
+    state.supplementalImagePromises.set(requestKey, request);
+    return request;
+  }
+
+  function renderHoverPreview(tagRecord) {
+    const images = [];
+    const primaryImage = String(tagRecord?.image_path || "").trim();
+    if (primaryImage) {
+      images.push({ path: primaryImage, label: tagRecord?.name || "Tag image" });
+    }
+
+    getSupplementalImageIdsForTag(tagRecord).forEach((imageId, index) => {
+      const previewPath = getSupplementalImagePath(state.supplementalImages.get(imageId));
+      if (previewPath) {
+        images.push({
+          path: previewPath,
+          label: `Supplemental image ${index + 1}`,
+        });
+      }
+    });
+
+    const description = extractDescriptionPreview(tagRecord?.description || "");
+
+    return `
+      <div class="edit-tags-overhaul-hover-preview__card">
+        <div class="edit-tags-overhaul-hover-preview__title">${escapeHtml(tagRecord?.name || "Tag")}</div>
+        <div class="edit-tags-overhaul-hover-preview__image-row">
+          ${
+            images.length
+              ? images
+                  .map(
+                    (image) => `
+                      <div class="edit-tags-overhaul-hover-preview__image-frame">
+                        <img src="${escapeHtml(image.path)}" alt="${escapeHtml(image.label)}" />
+                      </div>
+                    `
+                  )
+                  .join("")
+              : '<div class="edit-tags-overhaul-hover-preview__image-empty">No tag image</div>'
+          }
+        </div>
+        ${
+          description
+            ? `<div class="edit-tags-overhaul-hover-preview__description">${escapeHtml(description)}</div>`
+            : ""
+        }
+      </div>
+    `;
+  }
+
+  function getTagRecordById(tagId) {
+    return state.tagMap.get(String(tagId)) || null;
+  }
+
+  async function ensureHoverTagRecord(tagId) {
+    let record = getTagRecordById(tagId);
+    if (!record) {
+      await fetchAllTags();
+      record = getTagRecordById(tagId);
+    }
+    if (!record) return null;
+    const imageIds = getSupplementalImageIdsForTag(record);
+    if (imageIds.length) {
+      await ensureSupplementalImagesLoaded(imageIds);
+    }
+    return getTagRecordById(tagId) || record;
+  }
+
+  function findHoverTagTarget(start) {
+    if (!(start instanceof Element)) return null;
+    const button = start.closest("[data-eto-tag-id]");
+    if (!(button instanceof HTMLElement)) return null;
+    const tagId = String(button.getAttribute("data-eto-tag-id") || "");
+    if (!tagId) return null;
+    return { anchor: button, tagId };
+  }
+
+  function handlePanelHoverIn(event) {
+    const targetInfo = findHoverTagTarget(event.target);
+    if (!targetInfo) return;
+    const { anchor, tagId } = targetInfo;
+    if (state.hoverTagId === tagId) return;
+
+    const anchorRect = anchor.getBoundingClientRect();
+    state.hoverTagId = tagId;
+    state.hoverAnchorRect = anchorRect;
+    showHoverPreviewLoading(anchorRect);
+
+    ensureHoverTagRecord(tagId).then((record) => {
+      if (!record || state.hoverTagId !== tagId) return;
+      const host = getHoverPreviewHost();
+      host.innerHTML = renderHoverPreview(record);
+      host.classList.add("is-visible");
+      host.classList.remove("is-loading");
+      host.setAttribute("aria-hidden", "false");
+      positionHoverPreview(state.hoverAnchorRect || anchorRect);
+    });
+  }
+
+  function handlePanelHoverOut(event) {
+    const activeTagId = String(state.hoverTagId || "");
+    if (!activeTagId) return;
+    const currentTarget = findHoverTagTarget(event.target);
+    if (!currentTarget || currentTarget.tagId !== activeTagId) return;
+    const related = event.relatedTarget;
+    if (related instanceof Element && currentTarget.anchor.contains(related)) return;
+    hideHoverPreview();
   }
 
   async function fetchEntityTagIds(entityType, entityId) {
@@ -1145,6 +1425,9 @@
   }
 
   function attachPanelEventDelegation(panel) {
+    panel.addEventListener("mouseover", handlePanelHoverIn);
+    panel.addEventListener("mouseout", handlePanelHoverOut);
+
     panel.addEventListener("click", (event) => {
       const parentToggleBtn = event.target.closest("[data-eto-parent-toggle-id]");
       if (parentToggleBtn) {
@@ -1361,6 +1644,7 @@
     const path = window.location.pathname + window.location.search;
     if (path === state.lastPath) return false;
     state.lastPath = path;
+    hideHoverPreview();
 
     if (!isSupportedEntityPage()) {
       cleanupPanel();
@@ -1440,6 +1724,8 @@
   function init() {
     installHistoryHooks();
     installTabClickHook();
+    window.addEventListener("scroll", hideHoverPreview, true);
+    window.addEventListener("resize", hideHoverPreview);
     handleRouteChange();
     scheduleRouteInjects();
   }
