@@ -1,0 +1,1299 @@
+#tag-manager-toolbar {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.5rem;
+}
+
+#tag-manager-toolbar .tag-manager-toolbar__button {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+#tag-manager-host.tag-manager {
+  margin-top: 0.75rem;
+  margin-bottom: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1rem;
+  background: linear-gradient(180deg, rgba(15, 19, 27, 0.96), rgba(12, 16, 22, 0.96));
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.26);
+  overflow: hidden;
+}
+
+#tag-manager-host .tag-manager__layout {
+  display: grid;
+  grid-template-columns: minmax(210px, 23vw) minmax(0, 1fr);
+  min-height: 70vh;
+  gap: 0;
+  align-items: stretch;
+}
+
+#tag-manager-host .tag-manager__sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  min-width: 0;
+  padding: 1rem;
+  min-height: 0;
+  align-self: start;
+}
+
+#tag-manager-host .tag-manager__inspector {
+  min-width: 0;
+  padding: 1rem 1.1rem 1.1rem;
+  display: grid;
+  align-content: start;
+  gap: 0.95rem;
+}
+
+#tag-manager-host .tag-manager__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem 0.8rem;
+  margin-top: 0.32rem;
+  color: rgba(225, 232, 245, 0.72);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+#tag-manager-host .tag-manager__summary--sidebar {
+  margin-top: 0;
+  padding: 0 0.1rem 0.1rem;
+  justify-content: flex-start;
+}
+
+#tag-manager-host .tag-manager__filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+#tag-manager-host .tag-manager__filter-chip {
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(235, 241, 249, 0.84);
+  padding: 0.32rem 0.68rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#tag-manager-host .tag-manager__filter-chip.is-active {
+  background: rgba(131, 197, 255, 0.18);
+  color: #f3f8ff;
+  box-shadow: inset 0 0 0 1px rgba(238, 246, 255, 0.58);
+}
+
+#tag-manager-host .tag-manager__filter-chip--new {
+  margin-left: auto;
+  background: rgba(84, 214, 128, 0.16);
+  color: #f0fff4;
+  box-shadow: inset 0 0 0 1px rgba(174, 245, 193, 0.34);
+}
+
+#tag-manager-host .tag-manager__search,
+#tag-manager-host .tag-manager__tree-wrap,
+#tag-manager-host .tag-manager__editor-card,
+#tag-manager-host .tag-manager__meta-card,
+#tag-manager-host .tag-manager__empty-state {
+  min-width: 0;
+}
+
+#tag-manager-host .tag-manager__tree-wrap {
+  display: block;
+  flex: 0 0 auto;
+  min-height: 0;
+  max-height: min(70vh, 48rem);
+  overflow: hidden;
+  padding: 0.85rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+#tag-manager-host .tag-manager__tree-panel-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 0.18rem;
+}
+
+#tag-manager-host .tag-manager__group {
+  display: block;
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+  margin-bottom: 0.72rem;
+}
+
+#tag-manager-host .tag-manager__root-section {
+  display: block;
+  position: relative;
+  border: 1px dashed rgba(198, 214, 238, 0.24);
+  border-radius: 0.9rem;
+  background: linear-gradient(180deg, rgba(36, 42, 54, 0.5), rgba(24, 30, 39, 0.4));
+  overflow: hidden;
+  margin-bottom: 0.72rem;
+}
+
+#tag-manager-host .tag-manager__root-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  min-height: 2.5rem;
+  padding: 0.56rem 0.72rem;
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  border-radius: 0.9rem;
+}
+
+#tag-manager-host .tag-manager__root-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.6rem;
+  padding: 0.26rem 0.58rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(241, 246, 253, 0.9);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#tag-manager-host .tag-manager__root-title {
+  color: #f3f7fd;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+#tag-manager-host .tag-manager__root-meta,
+#tag-manager-host .tag-manager__root-empty {
+  color: rgba(222, 230, 244, 0.7);
+  font-size: 0.77rem;
+  font-weight: 600;
+}
+
+#tag-manager-host .tag-manager__root-body {
+  display: grid;
+  padding: 0.3rem;
+}
+
+#tag-manager-host .tag-manager__root-empty {
+  padding: 0.72rem 0.82rem 0.82rem;
+  border-radius: 0.72rem;
+}
+
+#tag-manager-host .tag-manager__root-body > .tag-manager__group:first-child,
+#tag-manager-host .tag-manager__root-body > .tag-manager__tree-item:first-child {
+  margin-top: 0;
+}
+
+#tag-manager-host .tag-manager__group:last-child {
+  margin-bottom: 0;
+}
+
+#tag-manager-host .tag-manager__group-header,
+#tag-manager-host .tag-manager__subgroup-header,
+#tag-manager-host .tag-manager__tree-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.08rem;
+  padding: 0.4rem 0.45rem;
+  cursor: pointer;
+  width: 100%;
+  line-height: 1.2;
+}
+
+#tag-manager-host .tag-manager__row-left {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex: 1 1 auto;
+  overflow: visible;
+}
+
+#tag-manager-host .tag-manager__group-header,
+#tag-manager-host .tag-manager__subgroup-header {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+#tag-manager-host .tag-manager__group-header {
+  min-height: 2.65rem;
+  padding: 0.55rem 0.7rem;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  border-radius: 0.9rem;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+#tag-manager-host .tag-manager__subgroup-header {
+  margin: 0.3rem 0.3rem 0;
+  border-radius: 0.72rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+#tag-manager-host .tag-manager__tree-item {
+  position: relative;
+  width: 100%;
+  border-top: 1px solid rgba(255, 255, 255, 0.035);
+  padding-left: 0.75rem;
+  border-radius: 0.72rem;
+  font-size: 0.88rem;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+#tag-manager-host .tag-manager__group-header.is-selected,
+#tag-manager-host .tag-manager__subgroup-header.is-selected,
+#tag-manager-host .tag-manager__tree-item.is-selected {
+  position: relative;
+  background: rgba(131, 197, 255, 0.16);
+  box-shadow: none;
+}
+
+#tag-manager-host .tag-manager__group-header.is-selected::after,
+#tag-manager-host .tag-manager__subgroup-header.is-selected::after,
+#tag-manager-host .tag-manager__tree-item.is-selected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(238, 246, 255, 0.9);
+  pointer-events: none;
+}
+
+#tag-manager-host .tag-manager__group-header.is-batch-selected,
+#tag-manager-host .tag-manager__subgroup-header.is-batch-selected,
+#tag-manager-host .tag-manager__tree-item.is-batch-selected {
+  background: rgba(84, 214, 128, 0.12);
+}
+
+#tag-manager-host .tag-manager__group-header.is-batch-selected::before,
+#tag-manager-host .tag-manager__subgroup-header.is-batch-selected::before,
+#tag-manager-host .tag-manager__tree-item.is-batch-selected::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(174, 245, 193, 0.4);
+  pointer-events: none;
+}
+
+#tag-manager-host .tag-manager__group-main,
+#tag-manager-host .tag-manager__subgroup-main,
+#tag-manager-host .tag-manager__tree-item-main,
+#tag-manager-host .tag-manager__tree-toggle,
+#tag-manager-host .tag-manager__drag-handle,
+#tag-manager-host .tag-manager__chip,
+#tag-manager-host .tag-manager__search-result {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+#tag-manager-host .tag-manager__indent {
+  width: 1.82rem;
+  min-width: 1.82rem;
+}
+
+#tag-manager-host .tag-manager__tree-toggle {
+  width: 1.85rem;
+  min-width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#tag-manager-host .tag-manager__tree-toggle:hover,
+#tag-manager-host .tag-manager__group-main:hover,
+#tag-manager-host .tag-manager__subgroup-main:hover,
+#tag-manager-host .tag-manager__tree-item-main:hover,
+#tag-manager-host .tag-manager__chip:hover,
+#tag-manager-host .tag-manager__search-result:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+#tag-manager-host .tag-manager__group-main,
+#tag-manager-host .tag-manager__subgroup-main,
+#tag-manager-host .tag-manager__tree-item-main {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  flex: 1 1 auto;
+  width: auto;
+  padding: 0.45rem 0;
+  border-radius: 0.62rem;
+  text-align: left;
+  font-size: 0.9rem;
+  font-weight: 680;
+  overflow: visible;
+  white-space: nowrap;
+  color: #eef3fb;
+  cursor: pointer;
+}
+
+#tag-manager-host .tag-manager__row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  flex: 0 0 auto;
+}
+
+#tag-manager-host .tag-manager__row-actions.is-batch-selected {
+  gap: 0.34rem;
+}
+
+#tag-manager-host .tag-manager__batch-toggle {
+  width: 1.95rem;
+  min-width: 1.95rem;
+  height: 1.95rem;
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: rgba(229, 237, 247, 0.58);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+#tag-manager-host .tag-manager__batch-toggle:hover {
+  background: rgba(255, 255, 255, 0.065);
+  color: rgba(245, 249, 255, 0.9);
+}
+
+#tag-manager-host .tag-manager__batch-toggle.is-checked {
+  color: rgba(132, 233, 171, 0.96);
+}
+
+#tag-manager-host .tag-manager__batch-toggle:active {
+  transform: scale(0.96);
+}
+
+#tag-manager-host .tag-manager__batch-toggle-icon {
+  width: 0.86rem;
+  height: 0.86rem;
+  display: block;
+}
+
+#tag-manager-host .tag-manager__batch-toggle-fallback {
+  font-size: 0.92rem;
+  line-height: 1;
+}
+
+#tag-manager-host .tag-manager__drag-handle {
+  width: 1.95rem;
+  min-width: 1.95rem;
+  height: 1.95rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(229, 237, 247, 0.58);
+  cursor: grab;
+  transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+#tag-manager-host .tag-manager__drag-handle:hover {
+  background: rgba(255, 255, 255, 0.065);
+  color: rgba(245, 249, 255, 0.9);
+}
+
+#tag-manager-host .tag-manager__drag-handle:active {
+  cursor: grabbing;
+  transform: scale(0.96);
+}
+
+#tag-manager-host .tag-manager__drag-handle.is-disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+#tag-manager-host .tag-manager__drag-icon {
+  width: 0.82rem;
+  height: 0.82rem;
+}
+
+#tag-manager-host .tag-manager__drag-fallback {
+  font-size: 0.9rem;
+  letter-spacing: 0.04em;
+}
+
+#tag-manager-host .tag-manager__tree-item-name {
+  display: block;
+  min-width: 0;
+  overflow: visible;
+  white-space: nowrap;
+}
+
+#tag-manager-host .tag-manager__group-main {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #f7fbff;
+}
+
+#tag-manager-host .tag-manager__subgroup-main {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+#tag-manager-host .tag-manager__tree-item-main {
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+#tag-manager-host .tag-manager__group.is-expanded > .tag-manager__group-header {
+  border-radius: 0.9rem 0.9rem 0 0;
+}
+
+#tag-manager-host .tag-manager__subgroup.is-expanded > .tag-manager__subgroup-header {
+  border-radius: 0.72rem 0.72rem 0 0;
+}
+
+#tag-manager-host .tag-manager__group-header.is-drag-source,
+#tag-manager-host .tag-manager__subgroup-header.is-drag-source,
+#tag-manager-host .tag-manager__tree-item.is-drag-source {
+  opacity: 0.64;
+}
+
+#tag-manager-host .tag-manager__group-header.is-drop-target,
+#tag-manager-host .tag-manager__subgroup-header.is-drop-target,
+#tag-manager-host .tag-manager__tree-item.is-drop-target,
+#tag-manager-host .tag-manager__root-header.is-drop-target {
+  background: rgba(84, 214, 128, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(174, 245, 193, 0.48);
+}
+
+#tag-manager-host .tag-manager__group-header.is-drop-invalid,
+#tag-manager-host .tag-manager__subgroup-header.is-drop-invalid,
+#tag-manager-host .tag-manager__tree-item.is-drop-invalid,
+#tag-manager-host .tag-manager__root-header.is-drop-invalid {
+  background: rgba(255, 108, 108, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 174, 174, 0.34);
+}
+
+#tag-manager-host .tag-manager__group-body,
+#tag-manager-host .tag-manager__subgroup-children {
+  display: grid;
+}
+
+#tag-manager-host .tag-manager__subgroup {
+  display: block;
+  position: relative;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+#tag-manager-host .tag-manager__subgroup-children .tag-manager__tree-item {
+  padding-left: 1.35rem;
+}
+
+#tag-manager-host .tag-manager__search-results {
+  display: grid;
+  gap: 0.32rem;
+}
+
+#tag-manager-host .tag-manager__search-result {
+  display: grid;
+  gap: 0.14rem;
+  text-align: left;
+  padding: 0.56rem 0.68rem;
+  border-radius: 0.8rem;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+#tag-manager-host .tag-manager__meta-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+#tag-manager-host .tag-manager__search-name,
+#tag-manager-host .tag-manager__inspector-title,
+#tag-manager-host .tag-manager__section-title {
+  color: #f3f7fd;
+}
+
+#tag-manager-host .tag-manager__search-name {
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+#tag-manager-host .tag-manager__sidebar .tag-manager__section-title {
+  font-size: 0.98rem;
+  font-weight: 750;
+}
+
+#tag-manager-host .tag-manager__search-meta,
+#tag-manager-host .tag-manager__helper,
+#tag-manager-host .tag-manager__meta-label,
+#tag-manager-host .tag-manager__field-label {
+  color: rgba(222, 230, 244, 0.7);
+}
+
+#tag-manager-host .tag-manager__search-meta,
+#tag-manager-host .tag-manager__helper {
+  font-size: 0.79rem;
+}
+
+#tag-manager-host .tag-manager__inspector-title {
+  margin: 0;
+  font-size: 1.22rem;
+  font-weight: 800;
+}
+
+#tag-manager-host .tag-manager__inspector-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(240px, 0.5fr);
+  gap: 0.8rem;
+  align-items: start;
+}
+
+#tag-manager-host .tag-manager__batch-card {
+  display: grid;
+  gap: 0.8rem;
+  align-content: start;
+}
+
+#tag-manager-host .tag-manager__batch-card-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+#tag-manager-host .tag-manager__split-workspace {
+  display: grid;
+  gap: 0.8rem;
+  align-content: start;
+}
+
+#tag-manager-host .tag-manager__split-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+#tag-manager-host .tag-manager__split-header .tag-manager__button-row {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
+
+#tag-manager-host .tag-manager__split-header .tag-manager__action-button {
+  min-width: 10rem;
+  white-space: nowrap;
+}
+
+#tag-manager-host .tag-manager__split-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: auto;
+  gap: 0.8rem;
+  align-items: stretch;
+}
+
+#tag-manager-host .tag-manager__split-grid > * {
+  min-width: 0;
+}
+
+#tag-manager-host .tag-manager__split-card {
+  align-content: start;
+  height: 100%;
+}
+
+#tag-manager-host .tag-manager__split-meta-card {
+  min-height: 0;
+  align-self: start;
+}
+
+#tag-manager-host .tag-manager__split-image-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 10rem;
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  color: rgba(228, 235, 247, 0.72);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+#tag-manager-host .tag-manager__inspector-main,
+#tag-manager-host .tag-manager__inspector-side {
+  display: grid;
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+#tag-manager-host .tag-manager__inspector-side {
+  align-content: stretch;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+#tag-manager-host .tag-manager__inspector-side.is-creating {
+  grid-template-rows: auto;
+}
+
+#tag-manager-host .tag-manager__meta-card,
+#tag-manager-host .tag-manager__editor-card,
+#tag-manager-host .tag-manager__empty-state {
+  padding: 0.88rem 0.95rem;
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+#tag-manager-host .tag-manager__meta-card {
+  display: grid;
+  gap: 0.5rem;
+}
+
+#tag-manager-host .tag-manager__meta-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+#tag-manager-host .tag-manager__meta-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+#tag-manager-host .tag-manager__meta-label,
+#tag-manager-host .tag-manager__field-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#tag-manager-host .tag-manager__meta-value {
+  font-size: 1.12rem;
+  font-weight: 800;
+  color: #f1f5fb;
+}
+
+#tag-manager-host .tag-manager__chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+}
+
+#tag-manager-host .tag-manager__batch-card .tag-manager__attach-picked {
+  align-items: flex-start;
+}
+
+#tag-manager-host .tag-manager__split-alias-list {
+  display: grid;
+  gap: 0.42rem;
+}
+
+#tag-manager-host .tag-manager__split-alias-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  padding: 0.42rem 0.5rem;
+  border-radius: 0.76rem;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+#tag-manager-host .tag-manager__split-alias-text {
+  min-width: 0;
+  color: #eef4fd;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+#tag-manager-host .tag-manager__split-alias-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+}
+
+#tag-manager-host .tag-manager__split-alias-button {
+  min-width: 4.8rem;
+}
+
+#tag-manager-host .tag-manager__split-meta-card .tag-manager__alias-panel-scroll {
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
+}
+
+#tag-manager-host .tag-manager__split-meta-card .tag-manager__alias-editor {
+  min-height: auto;
+}
+
+#tag-manager-host .tag-manager__chip,
+#tag-manager-host .tag-manager__child-chip,
+#tag-manager-host .tag-manager__meta-empty {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.6rem;
+  padding: 0.18rem 0.54rem;
+  border-radius: 999px;
+  background: rgba(131, 197, 255, 0.12);
+  color: #eef6ff;
+  font-size: 0.77rem;
+  font-weight: 700;
+}
+
+#tag-manager-host .tag-manager__child-chip {
+  gap: 0.36rem;
+  width: 100%;
+  max-width: 100%;
+  justify-content: start;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+#tag-manager-host .tag-manager__child-list,
+#tag-manager-host .tag-manager__path-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+}
+
+#tag-manager-host .tag-manager__child-list--column {
+  display: grid;
+  gap: 0.42rem;
+}
+
+#tag-manager-host .tag-manager__path-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.22rem;
+  width: 100%;
+}
+
+#tag-manager-host .tag-manager__path-separator {
+  color: rgba(220, 228, 242, 0.48);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+#tag-manager-host .tag-manager__child-branch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  background: rgba(131, 197, 255, 0.16);
+  color: #eef6ff;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+#tag-manager-host .tag-manager__meta-empty {
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(228, 235, 247, 0.72);
+}
+
+#tag-manager-host .tag-manager__usage-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.42rem;
+}
+
+#tag-manager-host .tag-manager__meta-card--usage {
+  padding-top: 0.72rem;
+  padding-bottom: 0.72rem;
+}
+
+#tag-manager-host .tag-manager__meta-card--usage .tag-manager__usage-badges {
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  gap: 0.24rem;
+}
+
+#tag-manager-host .tag-manager__usage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  min-height: 1.7rem;
+  padding: 0.2rem 0.58rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(235, 240, 249, 0.84);
+  font-size: 0.77rem;
+  font-weight: 700;
+}
+
+#tag-manager-host .tag-manager__usage-badge--link {
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+#tag-manager-host .tag-manager__usage-badge--link:hover,
+#tag-manager-host .tag-manager__usage-badge--link:focus-visible {
+  background: rgba(131, 197, 255, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(238, 246, 255, 0.42);
+  transform: translateY(-1px);
+}
+
+#tag-manager-host .tag-manager__meta-card--usage .tag-manager__usage-badge {
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: center;
+  padding-inline: 0.35rem;
+  font-size: 0.7rem;
+}
+
+#tag-manager-host .tag-manager__meta-card--usage .tag-manager__usage-badge strong {
+  white-space: nowrap;
+}
+
+#tag-manager-host .tag-manager__usage-badge-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0.9rem;
+  color: #eef4fd;
+}
+
+#tag-manager-host .tag-manager__fa-icon.tag-manager__usage-icon {
+  width: 0.84rem;
+  height: 0.84rem;
+  display: block;
+}
+
+#tag-manager-host .tag-manager__usage-badge strong {
+  color: #f4f8fe;
+  font-variant-numeric: tabular-nums;
+}
+
+#tag-manager-host .tag-manager__usage-badge--total {
+  background: rgba(131, 197, 255, 0.14);
+}
+
+#tag-manager-host .tag-manager__image-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#tag-manager-host .tag-manager__image-preview img {
+  max-width: min(100%, 22rem);
+  max-height: 26rem;
+  border-radius: 0.9rem;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+#tag-manager-host .tag-manager__file-input {
+  display: none;
+}
+
+#tag-manager-host .tag-manager__editor-card {
+  display: grid;
+  gap: 0.8rem;
+}
+
+#tag-manager-host .tag-manager__editor-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+#tag-manager-host .tag-manager__editor-card--primary {
+  min-height: 45rem;
+  align-content: start;
+}
+
+#tag-manager-host .tag-manager__id-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.1rem;
+  margin-left: auto;
+  padding: 0.1rem 0.68rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(230, 237, 248, 0.78);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+#tag-manager-host .tag-manager__child-panel-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 0.18rem;
+}
+
+#tag-manager-host .tag-manager__meta-card--children {
+  min-height: 0;
+}
+
+#tag-manager-host .tag-manager__meta-card--aliases {
+  min-height: 0;
+}
+
+#tag-manager-host .tag-manager__alias-editor {
+  display: grid;
+  gap: 0.48rem;
+  min-height: 0;
+}
+
+#tag-manager-host .tag-manager__alias-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+}
+
+#tag-manager-host .tag-manager__alias-panel-scroll {
+  min-height: 0;
+  max-height: 11.5rem;
+  overflow: auto;
+  padding-right: 0.18rem;
+}
+
+#tag-manager-host .tag-manager__alias-list {
+  display: grid;
+  gap: 0.38rem;
+}
+
+#tag-manager-host .tag-manager__alias-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  min-height: 1.9rem;
+  padding: 0.24rem 0.3rem 0.24rem 0.58rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #eef6ff;
+}
+
+#tag-manager-host .tag-manager__alias-chip-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.77rem;
+  font-weight: 700;
+}
+
+#tag-manager-host .tag-manager__alias-remove,
+#tag-manager-host .tag-manager__collapse-button {
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(236, 242, 251, 0.86);
+  cursor: pointer;
+}
+
+#tag-manager-host .tag-manager__alias-remove {
+  min-width: 1.7rem;
+  min-height: 1.7rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+#tag-manager-host .tag-manager__collapse-button {
+  min-height: 1.7rem;
+  padding: 0.14rem 0.58rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+#tag-manager-host .tag-manager__alias-remove:disabled,
+#tag-manager-host .tag-manager__collapse-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+#tag-manager-host .tag-manager__section-title {
+  font-size: 0.96rem;
+  font-weight: 780;
+}
+
+#tag-manager-host .tag-manager__field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.82rem;
+}
+
+#tag-manager-host .tag-manager__field-group {
+  display: grid;
+  gap: 0.32rem;
+}
+
+#tag-manager-host .tag-manager__field-note {
+  padding: 0.12rem 0.1rem 0;
+  border-radius: 0.76rem;
+  color: rgba(225, 233, 245, 0.74);
+  font-size: 0.77rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+#tag-manager-host .tag-manager__input,
+#tag-manager-host .tag-manager__textarea {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.76rem;
+  background: rgba(255, 255, 255, 0.05);
+  color: #f5f7fb;
+  padding: 0.62rem 0.72rem;
+}
+
+#tag-manager-host .tag-manager__input--readonly,
+#tag-manager-host .tag-manager__textarea--readonly {
+  cursor: default;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+#tag-manager-host .tag-manager__textarea {
+  resize: vertical;
+  min-height: 8rem;
+}
+
+#tag-manager-host .tag-manager__input:disabled,
+#tag-manager-host .tag-manager__textarea:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
+#tag-manager-host .tag-manager__inline-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+}
+
+#tag-manager-host .tag-manager__attach-picked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+#tag-manager-host .tag-manager__attach-picked-label {
+  color: rgba(222, 230, 244, 0.7);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+#tag-manager-host .tag-manager__attach-clear {
+  border: 0;
+  background: transparent;
+  color: rgba(222, 230, 244, 0.74);
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0.1rem 0.2rem;
+}
+
+#tag-manager-host .tag-manager__attach-results {
+  display: grid;
+  gap: 0.34rem;
+  max-height: 11rem;
+  overflow: auto;
+  padding-right: 0.12rem;
+}
+
+#tag-manager-host .tag-manager__attach-result {
+  display: grid;
+  gap: 0.14rem;
+  text-align: left;
+  padding: 0.52rem 0.64rem;
+  border: 0;
+  border-radius: 0.76rem;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  color: inherit;
+  cursor: pointer;
+}
+
+#tag-manager-host .tag-manager__attach-result:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+#tag-manager-host .tag-manager__attach-result-name {
+  color: #f1f6fd;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+#tag-manager-host .tag-manager__attach-result-meta {
+  color: rgba(220, 228, 242, 0.68);
+  font-size: 0.75rem;
+}
+
+#tag-manager-host .tag-manager__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+#tag-manager-host .tag-manager__button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+#tag-manager-host .tag-manager__action-button {
+  width: 100%;
+}
+
+#tag-manager-host .tag-manager__button-row .tag-manager__action-button {
+  flex: 1 1 0;
+  width: auto;
+}
+
+#tag-manager-host .tag-manager__image-picker {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.76rem 0.82rem;
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+#tag-manager-host .tag-manager__image-picker-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+#tag-manager-host .tag-manager__picker-button {
+  flex: 1 1 10rem;
+}
+
+#tag-manager-host .tag-manager__image-picker-url {
+  display: grid;
+  gap: 0.55rem;
+}
+
+#tag-manager-host .tag-manager__status {
+  padding: 0.62rem 0.72rem;
+  border-radius: 0.76rem;
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+#tag-manager-host .tag-manager__status--success {
+  background: rgba(84, 214, 128, 0.16);
+  color: #dff8e6;
+}
+
+#tag-manager-host .tag-manager__status--error {
+  background: rgba(255, 108, 108, 0.16);
+  color: #ffe4e4;
+}
+
+#tag-manager-host .tag-manager__status--info {
+  background: rgba(131, 197, 255, 0.14);
+  color: #edf6ff;
+}
+
+#tag-manager-host .tag-manager__delete-button {
+  color: #ffd7d7;
+}
+
+#tag-manager-host .tag-manager__danger-note {
+  display: grid;
+  gap: 0.24rem;
+  padding: 0.68rem 0.78rem;
+  border-radius: 0.82rem;
+  background: rgba(255, 108, 108, 0.1);
+  border: 1px solid rgba(255, 108, 108, 0.16);
+}
+
+#tag-manager-host .tag-manager__danger-title {
+  color: #ffe8e8;
+  font-size: 0.84rem;
+  font-weight: 760;
+}
+
+#tag-manager-host .tag-manager__danger-line {
+  color: rgba(255, 236, 236, 0.82);
+  font-size: 0.79rem;
+  line-height: 1.35;
+}
+
+#tag-manager-host .tag-manager__empty,
+#tag-manager-host .tag-manager__empty-state {
+  color: rgba(226, 232, 245, 0.72);
+}
+
+@media (max-width: 1180px) {
+  #tag-manager-host .tag-manager__layout {
+    grid-template-columns: minmax(220px, 32vw) minmax(0, 1fr);
+  }
+
+  #tag-manager-host .tag-manager__inspector-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  #tag-manager-toolbar {
+    margin-left: 0;
+    margin-top: 0.45rem;
+    width: 100%;
+  }
+
+  #tag-manager-host .tag-manager__layout {
+    grid-template-columns: 1fr;
+  }
+
+  #tag-manager-host .tag-manager__sidebar {
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  #tag-manager-host .tag-manager__tree-wrap {
+    max-height: 40vh;
+  }
+
+  #tag-manager-host .tag-manager__field-grid,
+  #tag-manager-host .tag-manager__inline-form,
+  #tag-manager-host .tag-manager__editor-split,
+  #tag-manager-host .tag-manager__split-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #tag-manager-host .tag-manager__meta-card--usage .tag-manager__usage-badges {
+    flex-wrap: wrap;
+  }
+}
