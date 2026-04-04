@@ -1,0 +1,16 @@
+name: Tag Manager
+description: Standalone hierarchical tag manager for editing and creating tags
+version: 0.1.0
+url: https://github.com/RollainKraus/stash-plugins
+
+settings:
+  c_treeExpansionBehavior:
+    displayName: Tree Expansion Behavior
+    type: STRING
+    description: "expand_all, collapse_all, or remember (Default: remember)"
+
+ui:
+  javascript:
+    - TagManager.js
+  css:
+    - TagManager.css
