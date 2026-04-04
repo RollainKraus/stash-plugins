@@ -1074,6 +1074,13 @@
   padding: 0.62rem 0.72rem;
 }
 
+#tag-manager-host .tag-manager__input--readonly,
+#tag-manager-host .tag-manager__textarea--readonly {
+  cursor: default;
+  user-select: text;
+  white-space: pre-wrap;
+}
+
 #tag-manager-host .tag-manager__textarea {
   resize: vertical;
   min-height: 8rem;
@@ -1180,27 +1187,6 @@
   border-radius: 0.9rem;
   background: rgba(255, 255, 255, 0.04);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
-}
-
-#tag-manager-host .tag-manager__merge-panel {
-  display: grid;
-  gap: 0.6rem;
-  padding: 0.76rem 0.82rem;
-  border-radius: 0.9rem;
-  background: rgba(255, 255, 255, 0.04);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
-}
-
-#tag-manager-host .tag-manager__merge-title {
-  color: #eef4fd;
-  font-size: 0.86rem;
-  font-weight: 760;
-}
-
-#tag-manager-host .tag-manager__merge-summary {
-  color: rgba(229, 236, 247, 0.76);
-  font-size: 0.8rem;
-  line-height: 1.4;
 }
 
 #tag-manager-host .tag-manager__image-picker-row {
