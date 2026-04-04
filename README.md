@@ -6,7 +6,7 @@
 - [Tag Based Browser](#Tag-Based-Browser)
 - [Simple Image Crop](#Simple-Image-Crop)
 - [Tag Sidebar](#Tag-Sidebar)
-- [Tag Manager](#Tag-Manager)
+- [Custom Tags Manager](#Custom-Tags-Manager)
 
 ## Installation
 
@@ -276,7 +276,7 @@ Without parents, tags automatically go in ‘Ungrouped’
   <img src="/plugins/TagSidebar/images/TagSidebarSettingsPreview.png" alt="TagSidebar settings" width="600">
 </p>
 
-# Tag Manager
+# Custom Tags Manager
 
 Adds a standalone page for creating and managing tags. This provides an easy way to preview your current tag hierarchies and make edits/additions all in one place. 
 
@@ -292,28 +292,28 @@ Adds a standalone page for creating and managing tags. This provides an easy way
 
 <h2>Preview</h2>
 <p>
-  <img src="/plugins/TagManager/images/TagManagerTagEditPreview.png" alt="TagManager preview" width="600">
+  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerTagEditPreview.png" alt="CustomTagsManager preview" width="600">
 </p>
 
 <p>
-  <img src="/plugins/TagManager/images/TagManagerNewTagPreview.png" alt="TagManager preview" width="600">
+  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerNewTagPreview.png" alt="CustomTagsManager preview" width="600">
 </p>
 
 <p>
-  <img src="/plugins/TagManager/images/TagManagerSplitTagPreview.png" alt="TagManager preview" width="600">
+  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerSplitTagPreview.png" alt="CustomTagsManager preview" width="600">
 </p>
 
 <p>
-  <img src="/plugins/TagManager/images/TagManagerBlankScreenPreview.png" alt="TagManager preview" width="600">
+  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerBlankScreenPreview.png" alt="CustomTagsManager preview" width="600">
 </p>
 
 <p>
-  <img src="/plugins/TagManager/images/TagManagerButtonPreview.png" alt="TagManager preview" width="600">
+  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerButtonPreview.png" alt="CustomTagsManager preview" width="600">
 </p>
 
 <h2>Settings Preview</h2>
 <p>
-  <img src="/plugins/TagManager/images/TagManagerSettingsPreview.png" alt="TagManager settings" width="600">
+  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerSettingsPreview.png" alt="CustomTagsManager settings" width="600">
 </p>
 
 
