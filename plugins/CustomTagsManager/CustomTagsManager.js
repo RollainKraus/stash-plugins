@@ -3250,6 +3250,14 @@
       )
     );
     childPanel.style.maxHeight = `${targetChildrenHeight}px`;
+    restoreTreeScrollPosition(host);
+  }
+
+  function restoreTreeScrollPosition(host = getHost()) {
+    if (!(host instanceof HTMLElement)) return;
+    const treePanel = host.querySelector(".tag-manager__tree-panel-scroll");
+    if (!(treePanel instanceof HTMLElement)) return;
+    treePanel.scrollTop = state.treeScrollTop || 0;
   }
 
   function classifyPreviewAspect(width, height) {
@@ -3321,6 +3329,10 @@
     if (didChange) {
       window.requestAnimationFrame(() => {
         syncMeasuredPanelHeights();
+        restoreTreeScrollPosition();
+        window.requestAnimationFrame(() => {
+          restoreTreeScrollPosition();
+        });
       });
     }
   }
@@ -3384,11 +3396,11 @@
     syncMeasuredPanelHeights();
     const nextTree = host.querySelector(".tag-manager__tree-panel-scroll");
     if (nextTree) {
-      const restoreTreeScroll = () => {
-        nextTree.scrollTop = state.treeScrollTop || 0;
-      };
+      const restoreTreeScroll = () => restoreTreeScrollPosition(host);
       restoreTreeScroll();
       window.requestAnimationFrame(restoreTreeScroll);
+      window.setTimeout(restoreTreeScroll, 0);
+      window.setTimeout(restoreTreeScroll, 60);
       nextTree.addEventListener("scroll", () => {
         state.treeScrollTop = nextTree.scrollTop;
       });
