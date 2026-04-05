@@ -441,21 +441,26 @@
   }
 
   function renderHoverPreview(tagRecord) {
-    const images = [];
+    const supplementalIds = getSupplementalImageIdsForTag(tagRecord);
+    const supplemental1Path = supplementalIds[0]
+      ? getSupplementalImagePath(state.supplementalImages.get(supplementalIds[0]))
+      : "";
     const primaryImage = String(tagRecord?.image_path || "").trim();
-    if (primaryImage) {
-      images.push({ path: primaryImage, label: tagRecord?.name || "Tag image" });
-    }
+    const supplemental2Path = supplementalIds[1]
+      ? getSupplementalImagePath(state.supplementalImages.get(supplementalIds[1]))
+      : "";
 
-    getSupplementalImageIdsForTag(tagRecord).forEach((imageId, index) => {
-      const previewPath = getSupplementalImagePath(state.supplementalImages.get(imageId));
-      if (previewPath) {
-        images.push({
-          path: previewPath,
-          label: `Supplemental image ${index + 1}`,
-        });
-      }
-    });
+    const images = [
+      supplemental1Path
+        ? { path: supplemental1Path, label: "Supplemental image 1" }
+        : null,
+      primaryImage
+        ? { path: primaryImage, label: tagRecord?.name || "Tag image" }
+        : null,
+      supplemental2Path
+        ? { path: supplemental2Path, label: "Supplemental image 2" }
+        : null,
+    ].filter(Boolean);
 
     const description = extractDescriptionPreview(tagRecord?.description || "");
 
