@@ -7,6 +7,7 @@
 - [Simple Image Crop](#Simple-Image-Crop)
 - [Tag Sidebar](#Tag-Sidebar)
 - [Custom Tags Manager](#Custom-Tags-Manager)
+- [Organize Images By Performer](#Organize-Images-By-Performer)
 
 ## Installation
 
@@ -320,6 +321,25 @@ Adds a standalone page for creating and managing tags. This provides an easy way
   <img src="/plugins/CustomTagsManager/images/CustomTagsManagerSettingsPreview.png" alt="CustomTagsManager settings" width="600">
 </p>
 
+# Organize Images By Performer
+
+Uses stash metadata to move images with attached performers into performer folders in a set directory
+** Be careful when using this: If you are already satisfied with your local image organization then this is not for you
+*** Also this plugin moves local files so you will have to rescan after each run to update new directories or else images may become detached
+
+- Set directories for Source and Destination folders (example '...To Sort' and '...Sorted'
+- Bucket and Fanout modes. Bucket puts images with multiple performers in a _MULTI folder, Fanout copies that image into each directory for all attached performers
+- Preview: Creates a log file to preview where images will be moved in to
+
+<h2>Preview</h2>
+<p>
+  <img src="/plugins/OrganizeImagesByPerformer/images/OrganizeImagesByPerformerSettingsPreview.gif" alt="OrganizeImagesByPerformer preview" width="600">
+</p>
+
+<h2>Settings Preview</h2>
+<p>
+  <img src="/plugins/OrganizeImagesByPerformer/images/OrganizeImagesByPerformerTaskPreview.png" alt="OrganizeImagesByPerformer settings" width="600">
+</p>
 
 Made with AI
 
