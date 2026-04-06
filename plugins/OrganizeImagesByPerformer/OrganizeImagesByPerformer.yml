@@ -1,0 +1,29 @@
+name: Organize Images By Performer
+description: Organize inbox images into performer folders using attached performer metadata.
+version: 0.1.0-alpha
+exec:
+  - python
+  - "{pluginDir}/OrganizeImagesByPerformer.py"
+interface: raw
+settings:
+  sourceDirectory:
+    displayName: Source Directory
+    description: Only images currently stored in this directory tree will be considered for sorting.
+    type: STRING
+  destinationDirectory:
+    displayName: Destination Directory
+    description: Performer folders will be created here for sorted images.
+    type: STRING
+  multiPerformerMode:
+    displayName: Multi Performer Mode
+    description: Enter 'bucket' to route 2+ performer images into _MULTI, or 'fanout' to copy them into each performer folder.
+    type: STRING
+tasks:
+  - name: Preview Image Organization
+    description: Preview how inbox images would be organized by performer without changing any files. The full preview is written to the plugin log file.
+    defaultArgs:
+      mode: preview
+  - name: Organize Images
+    description: Organize inbox images into performer folders or _MULTI.
+    defaultArgs:
+      mode: organize
