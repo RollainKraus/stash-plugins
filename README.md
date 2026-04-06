@@ -324,7 +324,9 @@ Adds a standalone page for creating and managing tags. This provides an easy way
 # Organize Images By Performer
 
 Uses stash metadata to move images with attached performers into performer folders in a set directory.
+
 ** Be careful when using this: If you are already satisfied with your local image organization then this is not for you.
+
 *** Also this plugin moves local files so you will have to rescan after each run to update new directories or else images may become detached.
 
 - Set directories for Source and Destination folders (example '...To Sort' and '...Sorted')
