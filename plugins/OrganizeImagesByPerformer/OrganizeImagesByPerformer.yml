@@ -1,6 +1,7 @@
 name: Organize Images By Performer
 description: Organize inbox images into performer folders using attached performer metadata.
 version: 0.1.0-alpha
+url: https://github.com/RollainKraus/stash-plugins
 exec:
   - python
   - "{pluginDir}/OrganizeImagesByPerformer.py"
