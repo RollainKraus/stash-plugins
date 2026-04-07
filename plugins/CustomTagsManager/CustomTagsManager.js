@@ -2499,6 +2499,24 @@
     return selectedIds.map((id) => getParentRelationshipBlockReason(id, targetTagId, "reparent", tagMap)).find(Boolean) || "";
   }
 
+  function getBatchUnparentBlockReason(sourceIds = state.batchSelectedTagIds, tagMap = state.tagMap) {
+    const selectedIds = (sourceIds || []).map(String).filter(Boolean);
+    if (!selectedIds.length) return "Select one or more tags first.";
+    const records = selectedIds.map((id) => tagMap.get(id)).filter(Boolean);
+    if (records.length !== selectedIds.length) return "Selected tag could not be found.";
+    if (records.some((record) => (record.childIds || []).length)) {
+      return "Only tags without child tags can be batch unparented.";
+    }
+    const typeSet = new Set(records.map((record) => getBatchSelectionType(record, tagMap)).filter(Boolean));
+    if (typeSet.size > 1) {
+      return "Batch selection requires tags from the same hierarchy level.";
+    }
+    if (records.some((record) => !Array.isArray(record.parentIds) || !record.parentIds.length)) {
+      return "Selected tags already have no parents.";
+    }
+    return "";
+  }
+
   function renderBatchInspector() {
     const selectedIds = (state.batchSelectedTagIds || []).map(String).filter((id) => state.tagMap.has(String(id)));
     const selectedRecords = selectedIds.map((id) => state.tagMap.get(String(id))).filter(Boolean);
@@ -2506,6 +2524,7 @@
     const batchReason = state.batchReparentTargetId
       ? getBatchReparentBlockReason(state.batchReparentTargetId, selectedIds)
       : "";
+    const batchUnparentReason = getBatchUnparentBlockReason(selectedIds);
     const targetRecord = state.batchReparentTargetId
       ? state.tagMap.get(String(state.batchReparentTargetId))
       : null;
@@ -2561,9 +2580,19 @@
                 ? `<div class="tag-manager__field-note">${escapeHtml(batchReason)}</div>`
                 : ""
             }
-            <button type="button" class="btn btn-primary tag-manager__action-button" data-action="reparent-selected-tags" ${
-              selectedRecords.length && state.batchReparentTargetId && !batchReason && !state.isSaving ? "" : "disabled"
-            }>Reparent Selected Tags</button>
+            <div class="tag-manager__button-row">
+              <button type="button" class="btn btn-primary tag-manager__action-button" data-action="reparent-selected-tags" ${
+                selectedRecords.length && state.batchReparentTargetId && !batchReason && !state.isSaving ? "" : "disabled"
+              }>Reparent Selected Tags</button>
+              <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="unparent-selected-tags" ${
+                selectedRecords.length && !batchUnparentReason && !state.isSaving ? "" : "disabled"
+              }>Unparent Selected</button>
+            </div>
+            ${
+              batchUnparentReason
+                ? `<div class="tag-manager__field-note">${escapeHtml(batchUnparentReason)}</div>`
+                : `<div class="tag-manager__field-note">Unparent Selected moves the chosen leaf tags back to ROOT.</div>`
+            }
           </div>
         </div>
       </div>
@@ -4279,6 +4308,11 @@
       reparentBatchSelectedTags();
       return;
     }
+    if (action === "unparent-selected-tags") {
+      event.preventDefault();
+      unparentBatchSelectedTags();
+      return;
+    }
     if (action === "save-tag") {
       event.preventDefault();
       saveSelectedTag();
@@ -4443,6 +4477,61 @@
     } catch (err) {
       console.error("[CustomTagsManager] batch reparent failed", err);
       setStatus("error", err?.message || "Failed to reparent selected tags.");
+      render();
+    } finally {
+      state.isSaving = false;
+      syncControlStates();
+    }
+  }
+
+  async function unparentBatchSelectedTags() {
+    if (state.isSaving) return;
+    const selectedIds = (state.batchSelectedTagIds || []).map(String).filter(Boolean);
+    if (!selectedIds.length) return;
+
+    const relationError = getBatchUnparentBlockReason(selectedIds);
+    if (relationError) {
+      setStatus("error", relationError);
+      render();
+      return;
+    }
+
+    const sourceRecords = selectedIds.map((id) => state.tagMap.get(id)).filter(Boolean);
+    if (sourceRecords.length !== selectedIds.length) {
+      setStatus("error", "Selected tag could not be found.");
+      render();
+      return;
+    }
+
+    state.isSaving = true;
+    setStatus(
+      "info",
+      `Removing parents from ${formatCount(sourceRecords.length)} selected tag${sourceRecords.length === 1 ? "" : "s"}...`
+    );
+    render();
+
+    try {
+      for (const sourceRecord of sourceRecords) {
+        await assignTagParents(sourceRecord.id, []);
+      }
+
+      invalidateTags();
+      await refreshDataWithRetry(() => {
+        return sourceRecords.every((sourceRecord) => {
+          const updatedSource = state.tagMap.get(String(sourceRecord.id));
+          return !updatedSource?.parentIds?.length;
+        });
+      });
+
+      clearBatchSelection();
+      setSelectedTag(sourceRecords[0]?.id || null);
+      setStatus(
+        "success",
+        `${formatCount(sourceRecords.length)} tag${sourceRecords.length === 1 ? "" : "s"} unparented.`
+      );
+    } catch (err) {
+      console.error("[CustomTagsManager] batch unparent failed", err);
+      setStatus("error", err?.message || "Failed to unparent selected tags.");
       render();
     } finally {
       state.isSaving = false;
