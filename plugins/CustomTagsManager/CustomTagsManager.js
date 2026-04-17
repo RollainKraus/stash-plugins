@@ -11,6 +11,7 @@
   const TOOLBAR_ID = "tag-manager-toolbar";
   const ROOT_DROP_ID = "__root__";
   const EXPANDED_STORAGE_KEY = "custom-tags-manager-expanded-v1";
+  const ORGANIZED_STORAGE_KEY = "custom-tags-manager-organized-v1";
   const HOVER_PREVIEW_ID = "custom-tags-manager-hover-preview";
   const TAG_DETAIL_PANEL_ID = "custom-tags-manager-tag-detail-panel";
   const DEFAULT_CONFIG = {
@@ -54,6 +55,7 @@
     refreshGeneration: 0,
     refreshTimeoutIds: [],
     expandedIds: loadSet(EXPANDED_STORAGE_KEY),
+    organizedIds: loadSet(ORGANIZED_STORAGE_KEY),
     groups: [],
     ungroupedLeaves: [],
     rootIds: [],
@@ -93,7 +95,11 @@
     mergePanelOpen: false,
     status: { type: "", text: "" },
     isSaving: false,
+    sortMode: false,
+    sortOriginalContainers: null,
+    sortDirectChangeIds: new Set(),
     treeScrollTop: 0,
+    dragKind: "",
     draggingTagId: "",
     dragOverTagId: "",
     dragOverMode: "",
@@ -117,6 +123,26 @@
     } catch (err) {
       void err;
     }
+  }
+
+  function isTagOrganized(tagId) {
+    return !!tagId && state.organizedIds.has(String(tagId));
+  }
+
+  function setTagOrganized(tagId, organized) {
+    const id = String(tagId || "");
+    if (!id) return;
+    if (organized) state.organizedIds.add(id);
+    else state.organizedIds.delete(id);
+    saveSet(ORGANIZED_STORAGE_KEY, state.organizedIds);
+  }
+
+  function toggleTagOrganized(tagId) {
+    const id = String(tagId || "");
+    if (!id) return false;
+    const next = !isTagOrganized(id);
+    setTagOrganized(id, next);
+    return next;
   }
 
   function gqlRequest(query, variables = {}) {
@@ -1274,6 +1300,187 @@
     };
   }
 
+  function renderSidebarSummary() {
+    const summary = getSummary();
+    const sortStats = getSortModeChangeStats();
+    return `
+      <div class="tag-manager__summary-bar">
+        <div class="tag-manager__summary-row">
+          <div class="tag-manager__summary tag-manager__summary--sidebar">
+            <span>${formatCount(summary.total)} tags</span>
+            <span>${formatCount(summary.roots)} roots</span>
+            <span>${formatCount(summary.noSortName)} missing sort name</span>
+          </div>
+          <div class="tag-manager__summary-actions">
+            <button
+              type="button"
+              class="tag-manager__summary-button ${state.sortMode ? "is-active" : ""}"
+              data-action="toggle-sort-mode"
+              aria-pressed="${state.sortMode ? "true" : "false"}"
+            >${state.sortMode ? "Exit Sort Mode" : "Sort Mode"}</button>
+          </div>
+        </div>
+        ${
+          state.sortMode
+            ? `<div class="tag-manager__summary-note">${
+                sortStats.changedContainers
+                  ? `${formatCount(sortStats.changedTags)} pending tag${
+                      sortStats.changedTags === 1 ? "" : "s"
+                    } across ${formatCount(sortStats.changedContainers)} changed section${
+                      sortStats.changedContainers === 1 ? "" : "s"
+                    }. `
+                  : ""
+              }Drag sort handles to reorder within a sibling list. Tags with multiple parents are marked Multi and will be skipped by sort mode.</div>
+              <div class="tag-manager__summary-actions tag-manager__summary-actions--sort-mode">
+                <button
+                  type="button"
+                  class="tag-manager__summary-button tag-manager__summary-button--apply"
+                  data-action="apply-sort-order"
+                >Apply Sort Order</button>
+                <button
+                  type="button"
+                  class="tag-manager__summary-button"
+                  data-action="discard-sort-order"
+                >Discard</button>
+              </div>`
+            : ""
+        }
+      </div>
+    `;
+  }
+
+  function createSortContainerKey(kind, id = "") {
+    const safeKind = String(kind || "").trim().toLowerCase();
+    const safeId = String(id || "").trim();
+    return safeId ? `${safeKind}:${safeId}` : safeKind;
+  }
+
+  function buildCurrentSortSnapshot(groups = state.groups, ungroupedLeaves = state.ungroupedLeaves) {
+    const snapshot = new Map();
+    snapshot.set(
+      createSortContainerKey("root-groups"),
+      (groups || []).map((group) => String(group?.parent?.id || "")).filter(Boolean)
+    );
+    snapshot.set(
+      createSortContainerKey("root-leaves"),
+      (ungroupedLeaves || []).map((leaf) => String(leaf?.id || "")).filter(Boolean)
+    );
+
+    (groups || []).forEach((group) => {
+      const groupId = String(group?.parent?.id || "");
+      if (!groupId) return;
+      snapshot.set(
+        createSortContainerKey("group", groupId),
+        (group.items || []).map((item) => String(item?.id || "")).filter(Boolean)
+      );
+
+      (group.items || []).forEach((item) => {
+        if (item?.type !== "subgroup") return;
+        snapshot.set(
+          createSortContainerKey("subgroup", item.id),
+          (item.children || []).map((child) => String(child?.id || "")).filter(Boolean)
+        );
+      });
+    });
+
+    return snapshot;
+  }
+
+  function ensureSortOrderBaseline(forceReset = false) {
+    if (forceReset || !(state.sortOriginalContainers instanceof Map)) {
+      state.sortOriginalContainers = buildCurrentSortSnapshot();
+      state.sortDirectChangeIds = new Set();
+    }
+    return state.sortOriginalContainers;
+  }
+
+  function clearSortOrderBaseline() {
+    state.sortOriginalContainers = null;
+    state.sortDirectChangeIds = new Set();
+  }
+
+  function getCurrentSortSnapshot() {
+    return buildCurrentSortSnapshot();
+  }
+
+  function getSortModeChangedContainers() {
+    if (!(state.sortOriginalContainers instanceof Map)) return [];
+    const original = state.sortOriginalContainers;
+    const current = getCurrentSortSnapshot();
+    const keys = new Set([...original.keys(), ...current.keys()]);
+    return Array.from(keys)
+      .map((key) => {
+        const originalIds = (original.get(key) || []).map(String);
+        const currentIds = (current.get(key) || []).map(String);
+        const changed =
+          originalIds.length !== currentIds.length ||
+          originalIds.some((id, index) => id !== currentIds[index]);
+        return changed ? { key, originalIds, currentIds } : null;
+      })
+      .filter(Boolean);
+  }
+
+  function getSortModeChangedTagIds() {
+    const changedIds = new Set();
+    getSortModeChangedContainers().forEach((container) => {
+      (container.originalIds || []).forEach((id, index) => {
+        if (String(container.currentIds?.[index] || "") !== String(id || "")) changedIds.add(String(id));
+      });
+      (container.currentIds || []).forEach((id, index) => {
+        if (String(container.originalIds?.[index] || "") !== String(id || "")) changedIds.add(String(id));
+      });
+    });
+    return Array.from(changedIds);
+  }
+
+  function hasPendingSortOrderChanges() {
+    return getSortModeChangedContainers().length > 0;
+  }
+
+  function getSortModeChangeStats() {
+    const changedContainers = getSortModeChangedContainers();
+    const changedTags = getSortModeChangedTagIds();
+    return {
+      changedContainers: changedContainers.length,
+      changedTags: changedTags.length,
+    };
+  }
+
+  function getOriginalSortPosition(containerKey, tagId) {
+    if (!(state.sortOriginalContainers instanceof Map)) return 0;
+    const ids = state.sortOriginalContainers.get(String(containerKey || "")) || [];
+    const index = ids.indexOf(String(tagId || ""));
+    return index >= 0 ? index + 1 : 0;
+  }
+
+  function getSortModePositionState(tagOrId, containerKey, currentPosition) {
+    const record = getSortModeRecord(tagOrId);
+    const eligible = canTagParticipateInSortMode(record);
+    const recordId = String(record?.id || "");
+    const current = Number(currentPosition) || 0;
+    const original = eligible ? getOriginalSortPosition(containerKey, recordId) : 0;
+    const changed = !!eligible && !!original && !!current && original !== current;
+    const changeType = changed && state.sortDirectChangeIds.has(recordId) ? "direct" : changed ? "indirect" : "";
+    const label = getSortModeEligibilityLabel(record);
+    const title = eligible
+      ? changed
+        ? changeType === "direct"
+          ? `Manually moved from sort position ${original} to ${current}`
+          : `Affected by another move: original sort position ${original}, pending sort position ${current}`
+        : `Current sort position ${current}`
+      : "Sort mode is limited to tags with zero or one parent";
+
+    return {
+      eligible,
+      changed,
+      changeType,
+      label,
+      title,
+      originalPosition: original,
+      currentPosition: current,
+    };
+  }
+
   function getParentPaths(tagId, tagMap, visited = new Set()) {
     const id = String(tagId || "");
     const record = tagMap.get(id);
@@ -2324,57 +2531,150 @@
     `;
   }
 
+  function renderSortDragHandle(tagOrId, label) {
+    const record = getSortModeRecord(tagOrId);
+    const eligible = canTagParticipateInSortMode(record);
+    const icon =
+      renderFontAwesomeIconMarkup("faArrowUpDown", {
+        className: "tag-manager__sort-icon",
+        title: eligible
+          ? `Reorder ${label || "tag"}`
+          : `${label || "Tag"} cannot be sorted because it has multiple parents`,
+      }) || '<span class="tag-manager__sort-fallback">#</span>';
+    const tagId = String(record?.id || "");
+    return `
+      <button
+        type="button"
+        class="tag-manager__sort-handle ${!eligible || state.isSaving ? "is-disabled" : ""}"
+        data-action="sort-handle"
+        data-sort-drag-tag-id="${escapeHtml(tagId)}"
+        draggable="${eligible && !state.isSaving ? "true" : "false"}"
+        aria-label="${escapeHtml(
+          eligible
+            ? `Reorder ${label || "tag"}`
+            : `${label || "Tag"} cannot be sorted because it has multiple parents`
+        )}"
+        title="${escapeHtml(
+          eligible
+            ? "Drag to reorder when sort mode is active"
+            : "Multi-parent tags are skipped by sort mode"
+        )}"
+        ${!eligible || state.isSaving ? "disabled" : ""}
+      >${icon}</button>
+    `;
+  }
+
+  function getSortModeRecord(tagOrId) {
+    const id =
+      typeof tagOrId === "object" && tagOrId
+        ? String(tagOrId.id || "")
+        : String(tagOrId || "");
+    return id ? state.tagMap.get(id) || null : null;
+  }
+
+  function canTagParticipateInSortMode(tagOrId) {
+    const record = getSortModeRecord(tagOrId);
+    if (!record) return false;
+    return (record.parentIds || []).length <= 1;
+  }
+
+  function getSortModeEligibilityLabel(tagOrId) {
+    const record = getSortModeRecord(tagOrId);
+    if (!record) return "Unavailable";
+    if ((record.parentIds || []).length > 1) return "Multi";
+    return "Sort";
+  }
+
+  function renderSortModeBadge(sortState) {
+    if (!state.sortMode) return "";
+    const eligible = !!sortState?.eligible;
+    const label = String(sortState?.label || "");
+    const title = String(sortState?.title || "");
+    const changed = !!sortState?.changed;
+    const changeType = String(sortState?.changeType || "");
+    const original = Number(sortState?.originalPosition) || 0;
+    const current = Number(sortState?.currentPosition) || 0;
+
+    return `
+      <span
+        class="tag-manager__sort-badge ${eligible ? "" : "is-ineligible"} ${changed ? "is-changed" : ""} ${
+          changeType === "direct" ? "is-changed-direct" : ""
+        }"
+        title="${escapeHtml(title)}"
+        aria-label="${escapeHtml(title)}"
+      >${
+        eligible
+          ? changed
+            ? `<span class="tag-manager__sort-badge-old">${escapeHtml(String(original))}</span><span class="tag-manager__sort-badge-arrow">&rarr;</span><span class="tag-manager__sort-badge-new">${escapeHtml(String(current))}</span>`
+            : escapeHtml(String(current || ""))
+          : escapeHtml(label)
+      }</span>
+    `;
+  }
+
   function getTreeRowDropAttributes(tagId) {
     const id = String(tagId || "");
     if (!id) return `data-tree-row-id=""`;
+    if (state.sortMode) return `data-tree-row-id="${escapeHtml(id)}"`;
     const canDropHere = canTagHaveChildren(id);
     return `${canDropHere ? `data-drop-tag-id="${escapeHtml(id)}"` : ""} data-tree-row-id="${escapeHtml(id)}"`;
   }
-  function renderTreeLeaf(node, extraClass = "") {
+  function renderTreeLeaf(node, extraClass = "", sortPosition = null, sortContainerKey = "") {
     const selected = state.selectedTagId === String(node.id);
     const batchSelected = (state.batchSelectedTagIds || []).map(String).includes(String(node.id));
+    const organized = isTagOrganized(node.id);
+    const sortEligible = canTagParticipateInSortMode(node.id);
+    const sortState = getSortModePositionState(node.id, sortContainerKey, sortPosition);
     return `
-      <div class="tag-manager__tree-item ${selected ? "is-selected" : ""} ${batchSelected ? "is-batch-selected" : ""} ${extraClass}" ${getTreeRowDropAttributes(
+      <div class="tag-manager__tree-item ${selected ? "is-selected" : ""} ${batchSelected ? "is-batch-selected" : ""} ${organized ? "is-organized" : ""} ${state.sortMode && !sortEligible ? "is-sort-ineligible" : ""} ${state.sortMode && sortState.changed ? "is-sort-changed" : ""} ${state.sortMode && sortState.changeType === "direct" ? "is-sort-changed-direct" : ""} ${extraClass}" ${getTreeRowDropAttributes(
         node.id
       )} data-action="select-tag" data-tag-id="${escapeHtml(node.id)}" role="button" tabindex="0">
         <div class="tag-manager__row-left">
           <span class="tag-manager__indent"></span>
+          ${renderSortModeBadge(sortState)}
           <span class="tag-manager__tree-item-main">
             <span class="tag-manager__tree-item-name">${escapeHtml(node.name)}</span>
           </span>
         </div>
         <div class="tag-manager__row-actions ${batchSelected ? "is-batch-selected" : ""}">
           ${renderBatchToggle(node.id, node.name || "tag")}
-          ${renderTreeDragHandle(node.id, node.name || "tag")}
+          ${state.sortMode ? renderSortDragHandle(node.id, node.name || "tag") : renderTreeDragHandle(node.id, node.name || "tag")}
         </div>
       </div>
     `;
   }
 
-  function renderTreeSubgroup(node) {
+  function renderTreeSubgroup(node, sortPosition = null, sortContainerKey = "") {
     const expanded = state.expandedIds.has(String(node.id));
     const selected = state.selectedTagId === String(node.id);
+    const organized = isTagOrganized(node.id);
+    const sortEligible = canTagParticipateInSortMode(node.id);
+    const sortState = getSortModePositionState(node.id, sortContainerKey, sortPosition);
+    const childContainerKey = createSortContainerKey("subgroup", node.id);
     return `
       <div class="tag-manager__subgroup ${expanded ? "is-expanded" : ""}" data-tag-id="${escapeHtml(node.id)}">
-        <div class="tag-manager__subgroup-header ${selected ? "is-selected" : ""}" ${getTreeRowDropAttributes(
+        <div class="tag-manager__subgroup-header ${selected ? "is-selected" : ""} ${organized ? "is-organized" : ""} ${state.sortMode && !sortEligible ? "is-sort-ineligible" : ""} ${state.sortMode && sortState.changed ? "is-sort-changed" : ""} ${state.sortMode && sortState.changeType === "direct" ? "is-sort-changed-direct" : ""}" ${getTreeRowDropAttributes(
           node.id
         )} data-action="select-toggle-group" data-tag-id="${escapeHtml(node.id)}" role="button" tabindex="0">
           <div class="tag-manager__row-left">
             <button type="button" class="tag-manager__tree-toggle" data-action="toggle-expanded" data-tag-id="${escapeHtml(
               node.id
             )}" aria-label="${expanded ? "Collapse subgroup" : "Expand subgroup"}" aria-expanded="${expanded ? "true" : "false"}">${expanded ? "&#9662;" : "&#9656;"}</button>
+            ${renderSortModeBadge(sortState)}
             <span class="tag-manager__subgroup-main">
               <span class="tag-manager__tree-item-name">${escapeHtml(node.name || "")}</span>
             </span>
           </div>
           <div class="tag-manager__row-actions">
-            ${renderTreeDragHandle(node.id, node.name || "tag")}
+            ${state.sortMode ? renderSortDragHandle(node.id, node.name || "tag") : renderTreeDragHandle(node.id, node.name || "tag")}
           </div>
         </div>
         ${
           expanded
             ? `<div class="tag-manager__subgroup-children">${node.children
-                .map((child) => renderTreeLeaf(child, "tag-manager__tree-item--nested"))
+                .map((child, index) =>
+                  renderTreeLeaf(child, "tag-manager__tree-item--nested", index + 1, childContainerKey)
+                )
                 .join("")}</div>`
             : ""
         }
@@ -2382,32 +2682,39 @@
     `;
   }
 
-  function renderTreeGroup(group) {
+  function renderTreeGroup(group, sortPosition = null, sortContainerKey = "") {
     const groupId = String(group.parent.id);
     const expanded = state.expandedIds.has(groupId);
     const selected = state.selectedTagId === groupId;
+    const organized = isTagOrganized(groupId);
+    const sortEligible = canTagParticipateInSortMode(groupId);
+    const sortState = getSortModePositionState(groupId, sortContainerKey, sortPosition);
+    const childContainerKey = createSortContainerKey("group", groupId);
     return `
       <div class="tag-manager__group ${expanded ? "is-expanded" : ""}" data-tag-id="${escapeHtml(groupId)}">
-        <div class="tag-manager__group-header ${selected ? "is-selected" : ""}" ${getTreeRowDropAttributes(
+        <div class="tag-manager__group-header ${selected ? "is-selected" : ""} ${organized ? "is-organized" : ""} ${state.sortMode && !sortEligible ? "is-sort-ineligible" : ""} ${state.sortMode && sortState.changed ? "is-sort-changed" : ""} ${state.sortMode && sortState.changeType === "direct" ? "is-sort-changed-direct" : ""}" ${getTreeRowDropAttributes(
           groupId
         )} data-action="select-toggle-group" data-tag-id="${escapeHtml(groupId)}" role="button" tabindex="0">
           <div class="tag-manager__row-left">
             <button type="button" class="tag-manager__tree-toggle" data-action="toggle-expanded" data-tag-id="${escapeHtml(
               groupId
             )}" aria-label="${expanded ? "Collapse group" : "Expand group"}" aria-expanded="${expanded ? "true" : "false"}">${expanded ? "&#9662;" : "&#9656;"}</button>
+            ${renderSortModeBadge(sortState)}
             <span class="tag-manager__group-main">
               <span class="tag-manager__tree-item-name">${escapeHtml(group.parent.name || "")}</span>
             </span>
           </div>
           <div class="tag-manager__row-actions">
-            ${renderTreeDragHandle(groupId, group.parent.name || "tag")}
+            ${state.sortMode ? renderSortDragHandle(groupId, group.parent.name || "tag") : renderTreeDragHandle(groupId, group.parent.name || "tag")}
           </div>
         </div>
         ${
           expanded
             ? `<div class="tag-manager__group-body">${group.items
-                .map((item) =>
-                  item.type === "subgroup" ? renderTreeSubgroup(item) : renderTreeLeaf(item)
+                .map((item, index) =>
+                  item.type === "subgroup"
+                    ? renderTreeSubgroup(item, index + 1, childContainerKey)
+                    : renderTreeLeaf(item, "", index + 1, childContainerKey)
                 )
                 .join("")}</div>`
             : ""
@@ -2419,6 +2726,8 @@
   function renderRootSection(groups, leaves) {
     const groupList = Array.isArray(groups) ? groups : [];
     const leafList = Array.isArray(leaves) ? leaves : [];
+    const rootGroupsKey = createSortContainerKey("root-groups");
+    const rootLeavesKey = createSortContainerKey("root-leaves");
     const hasItems = groupList.length > 0 || leafList.length > 0;
     return `
       <div class="tag-manager__root-section">
@@ -2432,8 +2741,10 @@
         <div class="tag-manager__root-body">
           ${
             hasItems
-              ? `${groupList.map((group) => renderTreeGroup(group)).join("")}${leafList
-                  .map((leaf) => renderTreeLeaf(leaf))
+              ? `${groupList
+                  .map((group, index) => renderTreeGroup(group, index + 1, rootGroupsKey))
+                  .join("")}${leafList
+                  .map((leaf, index) => renderTreeLeaf(leaf, "", index + 1, rootLeavesKey))
                   .join("")}`
               : `<div class="tag-manager__root-empty">No unparented tags</div>`
           }
@@ -2595,6 +2906,20 @@
             }
           </div>
         </div>
+        <div class="tag-manager__editor-card">
+          <div class="tag-manager__section-title">Organize Selected Tags</div>
+          <div class="tag-manager__field-group">
+            <div class="tag-manager__field-note">Mark the queued tags as finished inside Custom Tags Manager only. This does not change Stash metadata.</div>
+            <div class="tag-manager__button-row">
+              <button type="button" class="btn btn-success tag-manager__action-button" data-action="mark-selected-organized" ${
+                selectedRecords.length && !state.isSaving ? "" : "disabled"
+              }>Mark Selected Organized</button>
+              <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="clear-selected-organized" ${
+                selectedRecords.length && !state.isSaving ? "" : "disabled"
+              }>Clear Organized</button>
+            </div>
+          </div>
+        </div>
       </div>
     `;
   }
@@ -2753,6 +3078,7 @@
     if (state.mergePanelOpen && (record || state.mergeDestinationId)) {
       return renderMergeInspector();
     }
+    const organized = record ? isTagOrganized(record.id) : false;
     const creatingNew = isNewDraftMode();
     const dirty = isDraftDirty();
     const childCount = Number(record?.childIds?.length || 0);
@@ -2810,7 +3136,7 @@
       ${status || ""}
       <div class="tag-manager__inspector-grid">
         <div class="tag-manager__inspector-main">
-          <div class="tag-manager__editor-card tag-manager__editor-card--primary">
+          <div class="tag-manager__editor-card tag-manager__editor-card--primary ${organized ? "is-organized" : ""}">
             <div class="tag-manager__image-preview-grid">
               ${renderSupplementalImageField(SUPPLEMENTAL_IMAGE_FIELDS[0], state.draft)}
               <div class="tag-manager__image-preview tag-manager__image-preview--main">
@@ -2861,6 +3187,13 @@
               ${
                 creatingNew
                   ? ""
+                  : `<button type="button" class="btn ${organized ? "btn-success" : "btn-secondary"}" data-action="toggle-organized" ${
+                      state.isSaving ? "disabled" : ""
+                    }>${organized ? "Organized" : "Mark Organized"}</button>`
+              }
+              ${
+                creatingNew
+                  ? ""
                   : `<button type="button" class="btn btn-secondary" data-action="start-split-tag" ${
                       state.isSaving || dirty ? "disabled" : ""
                     }>Split Tag</button>`
@@ -2893,7 +3226,7 @@
                       state.isSaving ? "disabled" : ""
                     }>Delete Tag</button>`
               }
-              ${creatingNew ? "" : `<span class="tag-manager__id-chip">ID ${escapeHtml(record.id)}</span>`}
+              ${creatingNew ? "" : `<span class="tag-manager__id-chip ${organized ? "is-organized" : ""}">ID ${escapeHtml(record.id)}</span>`}
             </div>
             ${renderImagePicker()}
             ${
@@ -3170,6 +3503,15 @@
     host.querySelectorAll('[data-action="clear-batch-selection"]').forEach((button) => {
       button.disabled = state.isSaving;
     });
+    host.querySelectorAll('[data-action="toggle-sort-mode"]').forEach((button) => {
+      button.disabled = state.isSaving;
+    });
+    host.querySelectorAll('[data-action="apply-sort-order"]').forEach((button) => {
+      button.disabled = !state.sortMode || !hasPendingSortOrderChanges() || state.isSaving;
+    });
+    host.querySelectorAll('[data-action="discard-sort-order"]').forEach((button) => {
+      button.disabled = !state.sortMode || !hasPendingSortOrderChanges() || state.isSaving;
+    });
     host.querySelectorAll('[data-action="reparent-selected-tags"]').forEach((button) => {
       button.disabled =
         !hasBatchSelection() || !state.batchReparentTargetId || !!batchReason || state.isSaving;
@@ -3397,7 +3739,6 @@
     root.innerHTML = "";
     root.appendChild(host);
 
-    const summary = getSummary();
     host.innerHTML = `
       <div class="tag-manager__layout">
         <aside class="tag-manager__sidebar">
@@ -3411,15 +3752,12 @@
           <div class="tag-manager__tree-wrap">
             <div class="tag-manager__tree-panel-scroll">${renderTree()}</div>
           </div>
-          <div class="tag-manager__summary tag-manager__summary--sidebar">
-            <span>${formatCount(summary.total)} tags</span>
-            <span>${formatCount(summary.roots)} roots</span>
-            <span>${formatCount(summary.noSortName)} missing sort name</span>
-          </div>
+          ${renderSidebarSummary()}
         </aside>
         <section class="tag-manager__inspector">${renderInspector()}</section>
       </div>
     `;
+    host.classList.toggle("is-sort-mode", state.sortMode);
 
     syncControlStates();
     syncMeasuredPanelHeights();
@@ -3443,10 +3781,16 @@
     if (!(host instanceof HTMLElement)) return;
     host
       .querySelectorAll(
-        ".tag-manager__group-header.is-drag-source, .tag-manager__subgroup-header.is-drag-source, .tag-manager__tree-item.is-drag-source, .tag-manager__group-header.is-drop-target, .tag-manager__subgroup-header.is-drop-target, .tag-manager__tree-item.is-drop-target, .tag-manager__root-header.is-drop-target, .tag-manager__group-header.is-drop-invalid, .tag-manager__subgroup-header.is-drop-invalid, .tag-manager__tree-item.is-drop-invalid, .tag-manager__root-header.is-drop-invalid"
+        ".tag-manager__group-header.is-drag-source, .tag-manager__subgroup-header.is-drag-source, .tag-manager__tree-item.is-drag-source, .tag-manager__group-header.is-drop-target, .tag-manager__subgroup-header.is-drop-target, .tag-manager__tree-item.is-drop-target, .tag-manager__root-header.is-drop-target, .tag-manager__group-header.is-drop-invalid, .tag-manager__subgroup-header.is-drop-invalid, .tag-manager__tree-item.is-drop-invalid, .tag-manager__root-header.is-drop-invalid, .tag-manager__group-header.is-drop-before, .tag-manager__subgroup-header.is-drop-before, .tag-manager__tree-item.is-drop-before, .tag-manager__group-header.is-drop-after, .tag-manager__subgroup-header.is-drop-after, .tag-manager__tree-item.is-drop-after"
       )
       .forEach((element) => {
-        element.classList.remove("is-drag-source", "is-drop-target", "is-drop-invalid");
+        element.classList.remove(
+          "is-drag-source",
+          "is-drop-target",
+          "is-drop-invalid",
+          "is-drop-before",
+          "is-drop-after"
+        );
       });
   }
 
@@ -3472,14 +3816,21 @@
     if (state.dragOverTagId) {
       const targetRow = findTreeRowElement(state.dragOverTagId, host);
       if (targetRow) {
-        targetRow.classList.add(
-          state.dragOverMode === "invalid" ? "is-drop-invalid" : "is-drop-target"
-        );
+        if (state.dragOverMode === "invalid") {
+          targetRow.classList.add("is-drop-invalid");
+        } else if (state.dragOverMode === "sort-before") {
+          targetRow.classList.add("is-drop-target", "is-drop-before");
+        } else if (state.dragOverMode === "sort-after") {
+          targetRow.classList.add("is-drop-target", "is-drop-after");
+        } else {
+          targetRow.classList.add("is-drop-target");
+        }
       }
     }
   }
 
   function resetTreeDragState() {
+    state.dragKind = "";
     state.draggingTagId = "";
     state.dragOverTagId = "";
     state.dragOverMode = "";
@@ -3506,6 +3857,355 @@
       return "";
     }
     return getParentRelationshipBlockReason(sourceId, targetId, "reparent");
+  }
+
+  function getSortContainerDetails(tagId) {
+    const id = String(tagId || "");
+    if (!id) return null;
+
+    const rootGroupIndex = (state.groups || []).findIndex(
+      (group) => String(group?.parent?.id || "") === id
+    );
+    if (rootGroupIndex >= 0) {
+      return {
+        containerKey: createSortContainerKey("root-groups"),
+        list: state.groups,
+        index: rootGroupIndex,
+      };
+    }
+
+    const rootLeafIndex = (state.ungroupedLeaves || []).findIndex(
+      (leaf) => String(leaf?.id || "") === id
+    );
+    if (rootLeafIndex >= 0) {
+      return {
+        containerKey: createSortContainerKey("root-leaves"),
+        list: state.ungroupedLeaves,
+        index: rootLeafIndex,
+      };
+    }
+
+    for (const group of state.groups || []) {
+      const groupId = String(group?.parent?.id || "");
+      const groupItemIndex = (group.items || []).findIndex((item) => String(item?.id || "") === id);
+      if (groupItemIndex >= 0) {
+        return {
+          containerKey: createSortContainerKey("group", groupId),
+          list: group.items,
+          index: groupItemIndex,
+        };
+      }
+
+      for (const item of group.items || []) {
+        if (item?.type !== "subgroup") continue;
+        const childIndex = (item.children || []).findIndex((child) => String(child?.id || "") === id);
+        if (childIndex >= 0) {
+          return {
+            containerKey: createSortContainerKey("subgroup", item.id),
+            list: item.children,
+            index: childIndex,
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function getSortReorderBlockReason(sourceTagId, targetTagId) {
+    const sourceId = String(sourceTagId || "");
+    const targetId = String(targetTagId || "");
+    if (!sourceId || !targetId) return "Choose a valid tag row.";
+    if (targetId === ROOT_DROP_ID) return "Drop onto a tag row to reorder.";
+    if (sourceId === targetId) return "Drag above or below another tag to reorder.";
+
+    if (!canTagParticipateInSortMode(sourceId) || !canTagParticipateInSortMode(targetId)) {
+      return "Sort mode only supports tags with zero or one parent.";
+    }
+
+    const sourceDetails = getSortContainerDetails(sourceId);
+    const targetDetails = getSortContainerDetails(targetId);
+    if (!sourceDetails || !targetDetails) return "Selected tag could not be found.";
+    if (sourceDetails.containerKey !== targetDetails.containerKey) {
+      return "Tags can only be reordered within the same section.";
+    }
+    if (!Array.isArray(sourceDetails.list) || sourceDetails.list.length < 2) {
+      return "Nothing to reorder in this section.";
+    }
+    return "";
+  }
+
+  function moveItemWithinArray(list, fromIndex, toIndex) {
+    if (!Array.isArray(list)) return false;
+    if (fromIndex === toIndex) return false;
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= list.length || toIndex > list.length) {
+      return false;
+    }
+
+    const nextList = list;
+    const [moved] = nextList.splice(fromIndex, 1);
+    if (typeof moved === "undefined") return false;
+    nextList.splice(toIndex, 0, moved);
+    return true;
+  }
+
+  function reorderTagBySortDrag(sourceTagId, targetTagId, placement) {
+    const sourceId = String(sourceTagId || "");
+    const targetId = String(targetTagId || "");
+    const normalizedPlacement = placement === "after" ? "after" : "before";
+    const relationError = getSortReorderBlockReason(sourceId, targetId);
+    if (relationError) {
+      setStatus("error", relationError);
+      render();
+      return;
+    }
+
+    ensureSortOrderBaseline();
+
+    const sourceDetails = getSortContainerDetails(sourceId);
+    const targetDetails = getSortContainerDetails(targetId);
+    if (!sourceDetails || !targetDetails || sourceDetails.list !== targetDetails.list) {
+      setStatus("error", "Sort target could not be resolved.");
+      render();
+      return;
+    }
+
+    const sourceIndex = Number(sourceDetails.index);
+    const targetIndex = Number(targetDetails.index);
+    let insertIndex = normalizedPlacement === "after" ? targetIndex + 1 : targetIndex;
+    if (sourceIndex < insertIndex) insertIndex -= 1;
+
+    const moved = moveItemWithinArray(sourceDetails.list, sourceIndex, insertIndex);
+    if (!moved) return;
+
+    state.sortDirectChangeIds.add(sourceId);
+    setStatus("info", "Pending sort order updated.");
+    render();
+  }
+
+  function getSortNodeId(node) {
+    return String(node?.parent?.id || node?.id || "");
+  }
+
+  function reorderNodeListToSnapshot(list, orderedIds, getId = getSortNodeId) {
+    if (!Array.isArray(list) || !Array.isArray(orderedIds) || !orderedIds.length) return false;
+    const currentIds = list.map((item) => String(getId(item) || "")).filter(Boolean);
+    if (!currentIds.length) return false;
+
+    const nodeMap = new Map(
+      list
+        .map((item) => [String(getId(item) || ""), item])
+        .filter(([id]) => Boolean(id))
+    );
+
+    const next = [];
+    const seen = new Set();
+    orderedIds.forEach((id) => {
+      const safeId = String(id || "");
+      if (!safeId || seen.has(safeId) || !nodeMap.has(safeId)) return;
+      next.push(nodeMap.get(safeId));
+      seen.add(safeId);
+    });
+    list.forEach((item) => {
+      const id = String(getId(item) || "");
+      if (!id || seen.has(id)) return;
+      next.push(item);
+      seen.add(id);
+    });
+
+    const nextIds = next.map((item) => String(getId(item) || ""));
+    const changed =
+      nextIds.length !== currentIds.length ||
+      nextIds.some((id, index) => id !== currentIds[index]);
+    if (!changed) return false;
+    list.splice(0, list.length, ...next);
+    return true;
+  }
+
+  function restoreSortOrderFromBaseline() {
+    const snapshot = state.sortOriginalContainers;
+    if (!(snapshot instanceof Map)) return false;
+
+    let changed = false;
+    changed =
+      reorderNodeListToSnapshot(
+        state.groups,
+        snapshot.get(createSortContainerKey("root-groups")) || [],
+        (group) => String(group?.parent?.id || "")
+      ) || changed;
+    changed =
+      reorderNodeListToSnapshot(
+        state.ungroupedLeaves,
+        snapshot.get(createSortContainerKey("root-leaves")) || [],
+        (leaf) => String(leaf?.id || "")
+      ) || changed;
+
+    (state.groups || []).forEach((group) => {
+      const groupId = String(group?.parent?.id || "");
+      if (!groupId) return;
+      changed =
+        reorderNodeListToSnapshot(
+          group.items,
+          snapshot.get(createSortContainerKey("group", groupId)) || [],
+          (item) => String(item?.id || "")
+        ) || changed;
+      (group.items || []).forEach((item) => {
+        if (item?.type !== "subgroup") return;
+        changed =
+          reorderNodeListToSnapshot(
+            item.children,
+            snapshot.get(createSortContainerKey("subgroup", item.id)) || [],
+            (child) => String(child?.id || "")
+          ) || changed;
+      });
+    });
+
+    return changed;
+  }
+
+  function formatSortNameSegment(index) {
+    return String((Number(index) + 1) * 100).padStart(5, "0");
+  }
+
+  function buildDesiredSortNameMap() {
+    const desired = new Map();
+    let rootIndex = 0;
+
+    function setDesiredSortName(tagId, sortName) {
+      const id = String(tagId || "");
+      if (!id || !canTagParticipateInSortMode(id)) return;
+      desired.set(id, String(sortName || ""));
+    }
+
+    function assignChildSortNames(items, parentPrefix) {
+      (items || []).forEach((item, index) => {
+        const itemId = String(item?.id || "");
+        if (!itemId) return;
+        const sortName = `${parentPrefix}.${formatSortNameSegment(index)}`;
+        setDesiredSortName(itemId, sortName);
+        if (item?.type === "subgroup") {
+          (item.children || []).forEach((child, childIndex) => {
+            const childId = String(child?.id || "");
+            if (!childId) return;
+            setDesiredSortName(childId, `${sortName}.${formatSortNameSegment(childIndex)}`);
+          });
+        }
+      });
+    }
+
+    (state.groups || []).forEach((group) => {
+      const groupId = String(group?.parent?.id || "");
+      if (!groupId) return;
+      const groupSortName = formatSortNameSegment(rootIndex);
+      rootIndex += 1;
+      setDesiredSortName(groupId, groupSortName);
+      assignChildSortNames(group.items || [], groupSortName);
+    });
+
+    (state.ungroupedLeaves || []).forEach((leaf) => {
+      const leafId = String(leaf?.id || "");
+      if (!leafId) return;
+      const leafSortName = formatSortNameSegment(rootIndex);
+      rootIndex += 1;
+      setDesiredSortName(leafId, leafSortName);
+    });
+
+    return desired;
+  }
+
+  async function updateTagSortName(tagId, sortName) {
+    await gqlRequest(
+      `
+        mutation CustomTagsManagerUpdateSortName($input: TagUpdateInput!) {
+          tagUpdate(input: $input) {
+            id
+          }
+        }
+      `,
+      {
+        input: {
+          id: String(tagId),
+          sort_name: String(sortName || ""),
+        },
+      }
+    );
+  }
+
+  async function applyPendingSortOrder() {
+    if (state.isSaving) return;
+    const pendingTagIds = getSortModeChangedTagIds();
+    if (!pendingTagIds.length) {
+      setStatus("info", "No pending sort order changes to apply.");
+      render();
+      return;
+    }
+
+    const desiredSortNames = buildDesiredSortNameMap();
+    const updates = Array.from(desiredSortNames.entries()).filter(([id, nextSortName]) => {
+      const record = state.tagMap.get(String(id));
+      return record && String(record.sort_name || "") !== String(nextSortName || "");
+    });
+
+    if (!updates.length) {
+      clearSortOrderBaseline();
+      ensureSortOrderBaseline(true);
+      setStatus("success", "Sort order is already in sync.");
+      render();
+      return;
+    }
+
+    state.isSaving = true;
+    setStatus(
+      "info",
+      `Applying sort order to ${formatCount(updates.length)} tag${updates.length === 1 ? "" : "s"}...`
+    );
+    render();
+
+    try {
+      for (const [tagId, sortName] of updates) {
+        await updateTagSortName(tagId, sortName);
+      }
+
+      invalidateTags();
+      const expectedSortNames = new Map(updates.map(([tagId, sortName]) => [String(tagId), String(sortName)]));
+      await refreshDataWithRetry(() => {
+        return Array.from(expectedSortNames.entries()).every(([tagId, sortName]) => {
+          const updatedRecord = state.tagMap.get(String(tagId));
+          return String(updatedRecord?.sort_name || "") === String(sortName);
+        });
+      });
+
+      updateSelectedDraftFromRecord(state.tagMap.get(String(state.selectedTagId || "")) || null);
+      clearSortOrderBaseline();
+      ensureSortOrderBaseline(true);
+      setStatus(
+        "success",
+        `Sort order applied to ${formatCount(updates.length)} tag${updates.length === 1 ? "" : "s"}.`
+      );
+      render();
+    } catch (err) {
+      console.error("[CustomTagsManager] apply sort order failed", err);
+      setStatus("error", err?.message || "Failed to apply sort order.");
+      render();
+    } finally {
+      state.isSaving = false;
+      syncControlStates();
+    }
+  }
+
+  function discardPendingSortOrder() {
+    if (state.isSaving) return;
+    if (!hasPendingSortOrderChanges()) {
+      setStatus("info", "No pending sort order changes to discard.");
+      render();
+      return;
+    }
+
+    const restored = restoreSortOrderFromBaseline();
+    resetTreeDragState();
+    clearTreeDragIndicators();
+    setStatus("info", restored ? "Pending sort order discarded." : "Sort order restored.");
+    render();
   }
 
   function blobToDataUrl(blob) {
@@ -3621,10 +4321,25 @@
   }
 
   function onHostDragStart(event) {
-    const handle = event.target instanceof Element ? event.target.closest("[data-drag-tag-id]") : null;
+    const handle =
+      event.target instanceof Element
+        ? event.target.closest("[data-sort-drag-tag-id], [data-drag-tag-id]")
+        : null;
     if (!(handle instanceof HTMLElement) || state.isSaving) return;
-    const sourceId = String(handle.getAttribute("data-drag-tag-id") || "");
+    const dragKind = handle.hasAttribute("data-sort-drag-tag-id") ? "sort" : "parent";
+    if (state.sortMode && dragKind !== "sort") {
+      event.preventDefault();
+      return;
+    }
+    if (!state.sortMode && dragKind !== "parent") {
+      event.preventDefault();
+      return;
+    }
+    const sourceId = String(
+      handle.getAttribute(dragKind === "sort" ? "data-sort-drag-tag-id" : "data-drag-tag-id") || ""
+    );
     if (!sourceId) return;
+    state.dragKind = dragKind;
     state.draggingTagId = sourceId;
     state.dragOverTagId = "";
     state.dragOverMode = "";
@@ -3637,6 +4352,31 @@
 
   function onHostDragOver(event) {
     if (!state.draggingTagId) return;
+    if (state.dragKind === "sort") {
+      const row = event.target instanceof Element ? event.target.closest("[data-tree-row-id]") : null;
+      if (!(row instanceof HTMLElement)) {
+        setTreeDragTarget("", "");
+        return;
+      }
+      const targetId = String(row.getAttribute("data-tree-row-id") || "");
+      if (!targetId) {
+        setTreeDragTarget("", "");
+        return;
+      }
+      const blockReason = getSortReorderBlockReason(state.draggingTagId, targetId);
+      if (blockReason) {
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+        setTreeDragTarget(targetId, "invalid");
+        return;
+      }
+
+      const rect = row.getBoundingClientRect();
+      const placement = event.clientY < rect.top + rect.height / 2 ? "sort-before" : "sort-after";
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      setTreeDragTarget(targetId, placement);
+      return;
+    }
     const row = event.target instanceof Element ? event.target.closest("[data-drop-tag-id], [data-drop-root]") : null;
     if (!(row instanceof HTMLElement)) {
       setTreeDragTarget("", "");
@@ -3748,6 +4488,15 @@
 
   function onHostDrop(event) {
     if (!state.draggingTagId) return;
+    if (state.dragKind === "sort") {
+      const sourceId = state.draggingTagId;
+      const targetId = state.dragOverTagId;
+      const placement = state.dragOverMode === "sort-after" ? "after" : "before";
+      event.preventDefault();
+      resetTreeDragState();
+      if (targetId) reorderTagBySortDrag(sourceId, targetId, placement);
+      return;
+    }
     const sourceId = state.draggingTagId;
     const row = event.target instanceof Element ? event.target.closest("[data-drop-tag-id], [data-drop-root]") : null;
     const targetId =
@@ -3837,7 +4586,7 @@
     const tagId = trigger.getAttribute("data-tag-id");
     const imageTarget = String(trigger.getAttribute("data-image-target") || "main");
 
-    if (action === "drag-handle") {
+    if (action === "drag-handle" || action === "sort-handle") {
       event.preventDefault();
       return;
     }
@@ -4028,6 +4777,28 @@
       render();
       return;
     }
+    if (action === "toggle-sort-mode") {
+      event.preventDefault();
+      if (state.isSaving) return;
+      state.sortMode = !state.sortMode;
+      if (state.sortMode) ensureSortOrderBaseline();
+      clearTreeDragIndicators();
+      setStatus("", "");
+      render();
+      return;
+    }
+    if (action === "apply-sort-order") {
+      event.preventDefault();
+      if (!state.sortMode || state.isSaving) return;
+      void applyPendingSortOrder();
+      return;
+    }
+    if (action === "discard-sort-order") {
+      event.preventDefault();
+      if (!state.sortMode || state.isSaving) return;
+      discardPendingSortOrder();
+      return;
+    }
     if (action === "remove-batch-selected-tag" && tagId) {
       event.preventDefault();
       state.batchSelectedTagIds = (state.batchSelectedTagIds || []).filter((id) => String(id) !== String(tagId));
@@ -4048,6 +4819,14 @@
       event.preventDefault();
       if (isNewDraftMode()) startNewTagDraft();
       else setSelectedTag(state.selectedTagId);
+      return;
+    }
+    if (action === "toggle-organized") {
+      event.preventDefault();
+      if (!state.selectedTagId || state.isSaving) return;
+      const organized = toggleTagOrganized(state.selectedTagId);
+      setStatus("success", organized ? "Tag marked organized." : "Organized mark removed.");
+      render();
       return;
     }
     if (action === "toggle-image-picker") {
@@ -4311,6 +5090,30 @@
     if (action === "unparent-selected-tags") {
       event.preventDefault();
       unparentBatchSelectedTags();
+      return;
+    }
+    if (action === "mark-selected-organized") {
+      event.preventDefault();
+      const selectedIds = (state.batchSelectedTagIds || []).map(String).filter(Boolean);
+      if (!selectedIds.length || state.isSaving) return;
+      selectedIds.forEach((id) => setTagOrganized(id, true));
+      setStatus(
+        "success",
+        `${formatCount(selectedIds.length)} tag${selectedIds.length === 1 ? "" : "s"} marked organized.`
+      );
+      render();
+      return;
+    }
+    if (action === "clear-selected-organized") {
+      event.preventDefault();
+      const selectedIds = (state.batchSelectedTagIds || []).map(String).filter(Boolean);
+      if (!selectedIds.length || state.isSaving) return;
+      selectedIds.forEach((id) => setTagOrganized(id, false));
+      setStatus(
+        "success",
+        `Organized mark removed from ${formatCount(selectedIds.length)} tag${selectedIds.length === 1 ? "" : "s"}.`
+      );
+      render();
       return;
     }
     if (action === "save-tag") {
@@ -5112,6 +5915,7 @@
       state.rootIds = hierarchy.rootIds;
       state.tagMap = hierarchy.tagMap;
       state.searchIndex = hierarchy.searchIndex;
+      clearSortOrderBaseline();
       state.batchSelectedTagIds = (state.batchSelectedTagIds || [])
         .map(String)
         .filter((id) => state.tagMap.has(id));
