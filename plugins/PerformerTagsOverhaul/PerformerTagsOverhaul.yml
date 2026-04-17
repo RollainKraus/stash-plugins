@@ -30,14 +30,14 @@ settings:
     description: "Plugin automatically reformats tags into a compact layout which may override your preferred settings (Default: true)"
 
   a_parentTagBlacklist:
-    displayName: Parent Tag Blacklist
+    displayName: Blacklist Display Tags
     type: STRING
-    description: "parent tag names to hide from the performer panel separated by a comma (Default: empty)"
+    description: "Comma separated tag names to hide from Display mode. If parent tag, all descendant tags are also hidden (Default: empty)"
 
   a_subgroupTagBlacklist:
-    displayName: Subgroup Tag Blacklist
+    displayName: Blacklist Edit Tags
     type: STRING
-    description: "subgroup tag names to hide from the performer panel separated by a comma (Default: empty)"
+    description: "Comma separated tag names to hide from Edit mode. If parent tag, all descendant tags are also hidden (Default: empty)"
 
   b_displayModeDisplay:
     displayName: Display Mode Tag Layout
