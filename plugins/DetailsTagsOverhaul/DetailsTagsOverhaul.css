@@ -20,6 +20,10 @@
   gap: 1rem;
 }
 
+.details-tags-overhaul__panel-header--static {
+  justify-content: flex-start;
+}
+
 .details-tags-overhaul__panel-title {
   margin: 0;
   color: #fff;
@@ -34,6 +38,10 @@
 .details-tags-overhaul__groups {
   display: grid;
   gap: 0.75rem;
+}
+
+#kmv-details-tags-overhaul:not(.is-open) .details-tags-overhaul__groups {
+  display: none;
 }
 
 .details-tags-overhaul__group {
@@ -113,6 +121,7 @@
   font-size: 0.82rem;
 }
 
+.details-tags-overhaul__panel-toggle,
 .details-tags-overhaul__toggle,
 .details-tags-overhaul__subgroup-toggle {
   border: 0;
@@ -126,11 +135,13 @@
   flex: 0 0 auto;
 }
 
+#kmv-details-tags-overhaul.is-open .details-tags-overhaul__panel-toggle,
 .details-tags-overhaul__group.is-open .details-tags-overhaul__toggle,
 .details-tags-overhaul__subgroup.is-open .details-tags-overhaul__subgroup-toggle {
   transform: rotate(0deg);
 }
 
+#kmv-details-tags-overhaul:not(.is-open) .details-tags-overhaul__panel-toggle,
 .details-tags-overhaul__group:not(.is-open) .details-tags-overhaul__toggle,
 .details-tags-overhaul__subgroup:not(.is-open) .details-tags-overhaul__subgroup-toggle {
   transform: rotate(-90deg);
