@@ -1,6 +1,6 @@
 name: Details Tags Overhaul
 description: Hierarchical read-only tag overview for scene, gallery, and image detail pages
-version: 0.1.2
+version: 0.1.3
 url: https://github.com/RollainKraus/stash-plugins
 
 settings:
@@ -43,6 +43,11 @@ settings:
     displayName: Group Subgroups And Leaf Tags
     type: STRING
     description: top, bottom, or disable. Subgroups on top. Subgroups on bottom. Disable uses normal sort/tag name ordering
+
+  blacklistedTags:
+    displayName: Blacklisted Tags
+    type: STRING
+    description: Comma separated tag names to hide from the details panel. If parent tag, all descendant tags are also hidden
 
 ui:
   javascript:
