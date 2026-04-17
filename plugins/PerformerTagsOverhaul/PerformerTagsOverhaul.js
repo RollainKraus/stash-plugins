@@ -199,32 +199,81 @@
     return getConfigBoolean(cfg.a_optimizeFormatting, true);
   }
 
-  function getBlacklistedParentNames(cfg) {
+  function getBlacklistedTagNames(value) {
     return new Set(
-      String(cfg.a_parentTagBlacklist || "")
+      String(value || "")
         .split(",")
-        .map((value) => value.trim().toLowerCase())
+        .map((entry) => entry.trim().toLowerCase())
         .filter(Boolean)
     );
   }
 
-  function getBlacklistedSubgroupNames(cfg) {
-    return new Set(
-      String(cfg.a_subgroupTagBlacklist || "")
-        .split(",")
-        .map((value) => value.trim().toLowerCase())
-        .filter(Boolean)
-    );
+  function getBlacklistedDisplayTagNames(cfg) {
+    return getBlacklistedTagNames(cfg.a_parentTagBlacklist || "");
   }
 
-  function isBlacklistedParent(parent, blacklist) {
-    const name = String(parent?.name || "").trim().toLowerCase();
-    return !!name && blacklist.has(name);
+  function getBlacklistedEditTagNames(cfg) {
+    return getBlacklistedTagNames(cfg.a_subgroupTagBlacklist || "");
   }
 
-  function isBlacklistedSubgroup(parent, blacklist) {
-    const name = String(parent?.name || "").trim().toLowerCase();
-    return !!name && blacklist.has(name);
+  function buildChildMap(tags) {
+    const childMap = new Map();
+
+    for (const tag of tags) {
+      const childId = String(tag.id);
+      const parents = Array.isArray(tag.parents) ? tag.parents : [];
+
+      for (const parent of parents) {
+        const parentId = String(parent.id);
+        if (!childMap.has(parentId)) childMap.set(parentId, new Set());
+        childMap.get(parentId).add(childId);
+      }
+    }
+
+    return childMap;
+  }
+
+  function collectBlacklistedTagIds(tagMap, childMap, blacklistNames) {
+    const blacklistedIds = new Set();
+    if (!blacklistNames.size) return blacklistedIds;
+
+    const queue = [];
+
+    for (const tagRecord of tagMap.values()) {
+      const tagName = String(tagRecord.name || "").trim().toLowerCase();
+      if (!tagName || !blacklistNames.has(tagName)) continue;
+
+      if (!blacklistedIds.has(tagRecord.id)) {
+        blacklistedIds.add(tagRecord.id);
+        queue.push(tagRecord.id);
+      }
+    }
+
+    while (queue.length) {
+      const currentId = queue.shift();
+      const childIds = childMap.get(currentId);
+      if (!childIds) continue;
+
+      for (const childId of childIds) {
+        if (blacklistedIds.has(childId)) continue;
+        blacklistedIds.add(childId);
+        queue.push(childId);
+      }
+    }
+
+    return blacklistedIds;
+  }
+
+  function getBlacklistedTagIds(tags, cfg, mode, tagMap = null) {
+    const blacklistNames =
+      mode === "edit"
+        ? getBlacklistedEditTagNames(cfg)
+        : getBlacklistedDisplayTagNames(cfg);
+
+    if (!blacklistNames.size) return new Set();
+    const resolvedTagMap = tagMap || createTagMap(tags);
+    const childMap = buildChildMap(tags);
+    return collectBlacklistedTagIds(resolvedTagMap, childMap, blacklistNames);
   }
 
   function getTagPerformersHref(tagId) {
@@ -613,12 +662,12 @@
       cfg.a_duplicateMultiParentTags,
       false
     );
-    const blacklistedParents = getBlacklistedParentNames(cfg);
-    const blacklistedSubgroups = getBlacklistedSubgroupNames(cfg);
+    const mode = options.mode === "edit" ? "edit" : "display";
     const selectedOnly = !!options.selectedOnly;
     const showParentTagsAsLeaves = !!options.showParentTagsAsLeaves;
     const selectedTagIds = options.selectedTagIds || new Set();
     const tagMap = createTagMap(tags);
+    const blacklistedTagIds = getBlacklistedTagIds(tags, cfg, mode, tagMap);
 
     const topGroupsById = new Map();
     const orderedTopGroups = [];
@@ -687,20 +736,12 @@
 
       const tagRecord = tagMap.get(tagId);
       if (!tagRecord) continue;
+      if (blacklistedTagIds.has(tagId)) continue;
 
       const parentTag = isParentTag(tagRecord);
       const paths = getParentPaths(tagRecord, tagMap, duplicateMultiParentTags);
 
       for (const path of paths) {
-        if (
-          (path.type === "group" && isBlacklistedParent(path.topParent, blacklistedParents)) ||
-          (path.type === "subgroup" &&
-            (isBlacklistedParent(path.topParent, blacklistedParents) ||
-              isBlacklistedSubgroup(path.subgroupParent, blacklistedSubgroups)))
-        ) {
-          continue;
-        }
-
         if (path.type === "ungrouped") {
           if (parentTag && !showParentTagsAsLeaves) continue;
           const already = ungrouped.items.some((item) => item.id === tagRecord.id);
@@ -770,33 +811,24 @@
       .trim();
   }
 
-  function buildSearchIndex(tags, cfg) {
+  function buildSearchIndex(tags, cfg, mode = "edit") {
     const duplicateMultiParentTags = getConfigBoolean(
       cfg.a_duplicateMultiParentTags,
       false
     );
-    const blacklistedParents = getBlacklistedParentNames(cfg);
-    const blacklistedSubgroups = getBlacklistedSubgroupNames(cfg);
     const tagMap = createTagMap(tags);
+    const blacklistedTagIds = getBlacklistedTagIds(tags, cfg, mode, tagMap);
     const results = [];
 
     for (const tag of tags) {
       const tagRecord = tagMap.get(String(tag.id));
       if (!tagRecord) continue;
+      if (blacklistedTagIds.has(tagRecord.id)) continue;
 
       const parentTag = isParentTag(tagRecord);
       const paths = getParentPaths(tagRecord, tagMap, duplicateMultiParentTags);
 
       for (const path of paths) {
-        if (
-          (path.type === "group" && isBlacklistedParent(path.topParent, blacklistedParents)) ||
-          (path.type === "subgroup" &&
-            (isBlacklistedParent(path.topParent, blacklistedParents) ||
-              isBlacklistedSubgroup(path.subgroupParent, blacklistedSubgroups)))
-        ) {
-          continue;
-        }
-
         let breadcrumb = "Ungrouped";
         let targetKind = parentTag ? "header" : "leaf";
         let targetId = tagRecord.id;
@@ -1601,11 +1633,13 @@
     const groups =
       state.currentMode === "display"
         ? buildNestedGroups(state.allTags, state.config, {
+            mode: "display",
             selectedOnly: true,
             selectedTagIds: state.selectedTagIds,
             showParentTagsAsLeaves: false,
           })
         : buildNestedGroups(state.allTags, state.config, {
+            mode: "edit",
             selectedOnly: false,
             selectedTagIds: state.selectedTagIds,
             showParentTagsAsLeaves: false,
@@ -1817,16 +1851,18 @@
 
       cleanupPanel();
       state.currentPerformer = latestPerformer;
-      state.searchIndex = buildSearchIndex(allTags, cfg);
+      state.searchIndex = buildSearchIndex(allTags, cfg, "edit");
 
       const groups =
         state.currentMode === "display"
           ? buildNestedGroups(allTags, cfg, {
+              mode: "display",
               selectedOnly: true,
               selectedTagIds: state.selectedTagIds,
               showParentTagsAsLeaves: false,
             })
           : buildNestedGroups(allTags, cfg, {
+              mode: "edit",
               selectedOnly: false,
               selectedTagIds: state.selectedTagIds,
               showParentTagsAsLeaves: false,
