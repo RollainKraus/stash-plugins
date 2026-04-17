@@ -139,6 +139,20 @@
     return "disable";
   }
 
+  function getBlacklistedTagNames(cfg) {
+    const raw = String(cfg.blacklistedTags || "");
+    if (!raw.trim()) return [];
+
+    return Array.from(
+      new Set(
+        raw
+          .split(/[\r\n,]+/)
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean)
+      )
+    );
+  }
+
   function applyPanelVariables(panel, cfg) {
     const imageSize = getImageSize(cfg);
     const stackedImageSize = Math.max(24, imageSize);
@@ -309,6 +323,7 @@
   function buildNestedGroupsSelectedOnly(tags, selectedTagIds, cfg) {
     const duplicateMultiParentTags = shouldDuplicateMultiParentTags(cfg);
     const showParentTagsAsSelectable = shouldShowParentTagsAsSelectable(cfg);
+    const blacklistedNames = new Set(getBlacklistedTagNames(cfg));
 
     const tagMap = new Map();
     tags.forEach((tag) => {
@@ -330,6 +345,33 @@
         childIds: (tag.children || []).map((c) => String(c.id)),
       });
     });
+
+    const blacklistedTagIds = new Set();
+
+    function collectDescendantTagIds(tagId) {
+      if (blacklistedTagIds.has(tagId)) return;
+      blacklistedTagIds.add(tagId);
+
+      const tagRecord = tagMap.get(tagId);
+      if (!tagRecord || !tagRecord.childIds) return;
+
+      tagRecord.childIds.forEach((childId) => {
+        collectDescendantTagIds(childId);
+      });
+    }
+
+    if (blacklistedNames.size > 0) {
+      tagMap.forEach((tagRecord) => {
+        const normalizedName = String(tagRecord.name || "").trim().toLowerCase();
+        const normalizedSortName = String(tagRecord.sort_name || "").trim().toLowerCase();
+        if (
+          blacklistedNames.has(normalizedName) ||
+          (normalizedSortName && blacklistedNames.has(normalizedSortName))
+        ) {
+          collectDescendantTagIds(tagRecord.id);
+        }
+      });
+    }
 
     const topGroupsById = new Map();
     const orderedTopGroups = [];
@@ -442,6 +484,7 @@
     for (const tag of tags) {
       const tagId = String(tag.id);
       if (!selectedTagIds.has(tagId)) continue;
+      if (blacklistedTagIds.has(tagId)) continue;
 
       const tagRecord = tagMap.get(tagId);
       if (!tagRecord) continue;
@@ -580,7 +623,7 @@
       ? "details-tags-overhaul__subgroup-toggle"
       : "details-tags-overhaul__toggle";
     btn.setAttribute("aria-label", "Toggle section");
-    btn.textContent = "▾";
+    btn.textContent = "\u25BE";
 
     btn.addEventListener("click", (event) => {
       event.preventDefault();
@@ -589,6 +632,33 @@
     });
 
     return btn;
+  }
+
+  function createPanelCollapseButton(panel) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "details-tags-overhaul__panel-toggle";
+    btn.setAttribute("aria-label", "Toggle tags panel");
+    btn.textContent = "\u25BE";
+
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      panel.classList.toggle("is-open");
+    });
+
+    return btn;
+  }
+
+  function bindPanelToggle(header, panel, cfg) {
+    if (!shouldShowCollapseButtons(cfg)) return;
+
+    header.classList.add("details-tags-overhaul__panel-header--click-toggle");
+    header.style.cursor = "pointer";
+    header.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      panel.classList.toggle("is-open");
+    });
   }
 
   function bindHeaderToggle(header, toggleArea, section, cfg) {
@@ -734,6 +804,7 @@
     const panel = document.createElement("section");
     panel.id = PANEL_ID;
     panel.className = "details-tags-overhaul";
+    panel.classList.toggle("is-open", getConfigBoolean(cfg.defaultExpanded, true));
 
     applyPanelVariables(panel, cfg);
 
@@ -746,10 +817,26 @@
 
     const summary = document.createElement("div");
     summary.className = "details-tags-overhaul__panel-summary";
-    summary.textContent = `${groups.length} groups`;
+    let totalTags = 0;
+    groups.forEach((group) => {
+      group.items.forEach((item) => {
+        if (item.type === "leaf") totalTags += 1;
+        if (item.type === "subgroup") totalTags += item.children.length;
+      });
+    });
+    summary.textContent = `${groups.length} groups • ${totalTags} tags`;
 
     titleRow.appendChild(heading);
     titleRow.appendChild(summary);
+
+    if (shouldShowCollapseButtons(cfg)) {
+      titleRow.appendChild(createPanelCollapseButton(panel));
+    } else {
+      titleRow.classList.add("details-tags-overhaul__panel-header--static");
+    }
+
+    bindPanelToggle(titleRow, panel, cfg);
+
     panel.appendChild(titleRow);
 
     const groupsWrap = document.createElement("div");
