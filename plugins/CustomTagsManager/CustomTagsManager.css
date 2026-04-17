@@ -56,10 +56,79 @@
   font-weight: 600;
 }
 
+#tag-manager-host .tag-manager__summary-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+#tag-manager-host .tag-manager__summary-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 #tag-manager-host .tag-manager__summary--sidebar {
   margin-top: 0;
   padding: 0 0.1rem 0.1rem;
   justify-content: flex-start;
+  flex: 1 1 auto;
+}
+
+#tag-manager-host .tag-manager__summary-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 0 0 auto;
+}
+
+#tag-manager-host .tag-manager__summary-actions--sort-mode {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+#tag-manager-host .tag-manager__summary-button {
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(236, 242, 250, 0.9);
+  padding: 0.38rem 0.82rem;
+  font-size: 0.77rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+}
+
+#tag-manager-host .tag-manager__summary-button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+#tag-manager-host .tag-manager__summary-button:active {
+  transform: translateY(1px);
+}
+
+#tag-manager-host .tag-manager__summary-button.is-active {
+  background: rgba(83, 197, 255, 0.2);
+  color: #f3f8ff;
+  box-shadow: inset 0 0 0 1px rgba(214, 239, 255, 0.56);
+}
+
+#tag-manager-host .tag-manager__summary-button--apply {
+  background: rgba(84, 214, 128, 0.18);
+  color: #f0fff4;
+  box-shadow: inset 0 0 0 1px rgba(174, 245, 193, 0.34);
+}
+
+#tag-manager-host .tag-manager__summary-button--apply:hover {
+  background: rgba(84, 214, 128, 0.25);
+}
+
+#tag-manager-host .tag-manager__summary-note {
+  color: rgba(189, 215, 240, 0.78);
+  font-size: 0.77rem;
+  line-height: 1.45;
 }
 
 #tag-manager-host .tag-manager__filter-row {
@@ -222,6 +291,57 @@
   overflow: visible;
 }
 
+#tag-manager-host .tag-manager__sort-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  height: 1.55rem;
+  padding: 0 0.45rem;
+  border-radius: 999px;
+  background: rgba(90, 197, 255, 0.16);
+  color: rgba(230, 245, 255, 0.95);
+  font-size: 0.73rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  box-shadow: inset 0 0 0 1px rgba(181, 227, 255, 0.35);
+  flex: 0 0 auto;
+}
+
+#tag-manager-host .tag-manager__sort-badge.is-ineligible {
+  background: rgba(255, 184, 107, 0.14);
+  color: rgba(255, 225, 186, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(255, 206, 145, 0.28);
+}
+
+#tag-manager-host .tag-manager__sort-badge.is-changed {
+  gap: 0.24rem;
+  background: rgba(255, 212, 92, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 224, 133, 0.34);
+}
+
+#tag-manager-host .tag-manager__sort-badge.is-changed-direct {
+  background: rgba(255, 157, 92, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(255, 186, 133, 0.38);
+}
+
+#tag-manager-host .tag-manager__sort-badge-old {
+  color: rgba(255, 152, 152, 0.96);
+}
+
+#tag-manager-host .tag-manager__sort-badge-arrow {
+  color: rgba(225, 234, 246, 0.66);
+}
+
+#tag-manager-host .tag-manager__sort-badge-new {
+  color: rgba(255, 229, 135, 0.98);
+}
+
+#tag-manager-host .tag-manager__sort-badge.is-changed-direct .tag-manager__sort-badge-new {
+  color: rgba(255, 192, 134, 0.98);
+}
+
 #tag-manager-host .tag-manager__group-header,
 #tag-manager-host .tag-manager__subgroup-header {
   background: rgba(255, 255, 255, 0.055);
@@ -266,6 +386,44 @@
   box-shadow: none;
 }
 
+#tag-manager-host .tag-manager__group-header.is-organized,
+#tag-manager-host .tag-manager__subgroup-header.is-organized,
+#tag-manager-host .tag-manager__tree-item.is-organized {
+  background: rgba(124, 208, 144, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(124, 208, 144, 0.22);
+}
+
+#tag-manager-host .tag-manager__group-header.is-organized.is-selected,
+#tag-manager-host .tag-manager__subgroup-header.is-organized.is-selected,
+#tag-manager-host .tag-manager__tree-item.is-organized.is-selected {
+  background: rgba(124, 208, 144, 0.2);
+}
+
+#tag-manager-host.is-sort-mode .tag-manager__group-header.is-sort-ineligible,
+#tag-manager-host.is-sort-mode .tag-manager__subgroup-header.is-sort-ineligible,
+#tag-manager-host.is-sort-mode .tag-manager__tree-item.is-sort-ineligible {
+  box-shadow: inset 0 0 0 1px rgba(255, 192, 118, 0.22);
+}
+
+#tag-manager-host.is-sort-mode .tag-manager__group-header.is-sort-changed,
+#tag-manager-host.is-sort-mode .tag-manager__subgroup-header.is-sort-changed,
+#tag-manager-host.is-sort-mode .tag-manager__tree-item.is-sort-changed {
+  background: rgba(255, 212, 92, 0.15);
+  box-shadow: inset 0 0 0 1px rgba(255, 224, 133, 0.3);
+}
+
+#tag-manager-host.is-sort-mode .tag-manager__group-header.is-sort-changed-direct,
+#tag-manager-host.is-sort-mode .tag-manager__subgroup-header.is-sort-changed-direct,
+#tag-manager-host.is-sort-mode .tag-manager__tree-item.is-sort-changed-direct {
+  background: rgba(255, 157, 92, 0.17);
+  box-shadow: inset 0 0 0 1px rgba(255, 186, 133, 0.32);
+}
+
+#tag-manager-host.is-sort-mode [data-drop-tag-id],
+#tag-manager-host.is-sort-mode [data-drop-root] {
+  cursor: default;
+}
+
 #tag-manager-host .tag-manager__group-header.is-selected::after,
 #tag-manager-host .tag-manager__subgroup-header.is-selected::after,
 #tag-manager-host .tag-manager__tree-item.is-selected::after {
@@ -299,6 +457,7 @@
 #tag-manager-host .tag-manager__tree-item-main,
 #tag-manager-host .tag-manager__tree-toggle,
 #tag-manager-host .tag-manager__drag-handle,
+#tag-manager-host .tag-manager__sort-handle,
 #tag-manager-host .tag-manager__chip,
 #tag-manager-host .tag-manager__search-result {
   border: 0;
@@ -416,12 +575,36 @@
   transition: background 140ms ease, color 140ms ease, transform 140ms ease;
 }
 
+#tag-manager-host .tag-manager__sort-handle {
+  width: 1.95rem;
+  min-width: 1.95rem;
+  height: 1.95rem;
+  border-radius: 0.62rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(90, 197, 255, 0.12);
+  color: rgba(236, 244, 252, 0.94);
+  box-shadow: inset 0 0 0 1px rgba(170, 225, 255, 0.26);
+  cursor: grab;
+  transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
 #tag-manager-host .tag-manager__drag-handle:hover {
   background: rgba(255, 255, 255, 0.065);
   color: rgba(245, 249, 255, 0.9);
 }
 
+#tag-manager-host .tag-manager__sort-handle:hover {
+  background: rgba(90, 197, 255, 0.18);
+}
+
 #tag-manager-host .tag-manager__drag-handle:active {
+  cursor: grabbing;
+  transform: scale(0.96);
+}
+
+#tag-manager-host .tag-manager__sort-handle:active {
   cursor: grabbing;
   transform: scale(0.96);
 }
@@ -431,14 +614,30 @@
   cursor: not-allowed;
 }
 
+#tag-manager-host .tag-manager__sort-handle.is-disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
 #tag-manager-host .tag-manager__drag-icon {
   width: 0.82rem;
   height: 0.82rem;
 }
 
+#tag-manager-host .tag-manager__sort-icon {
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
 #tag-manager-host .tag-manager__drag-fallback {
   font-size: 0.9rem;
   letter-spacing: 0.04em;
+}
+
+#tag-manager-host .tag-manager__sort-fallback {
+  font-size: 0.92rem;
+  line-height: 1;
+  font-weight: 800;
 }
 
 #tag-manager-host .tag-manager__tree-item-name {
@@ -492,6 +691,50 @@
 #tag-manager-host .tag-manager__root-header.is-drop-invalid {
   background: rgba(255, 108, 108, 0.12);
   box-shadow: inset 0 0 0 1px rgba(255, 174, 174, 0.34);
+}
+
+#tag-manager-host .tag-manager__group-header.is-drop-before,
+#tag-manager-host .tag-manager__subgroup-header.is-drop-before,
+#tag-manager-host .tag-manager__tree-item.is-drop-before {
+  box-shadow: inset 0 3px 0 rgba(131, 197, 255, 0.92);
+}
+
+#tag-manager-host .tag-manager__group-header.is-drop-after,
+#tag-manager-host .tag-manager__subgroup-header.is-drop-after,
+#tag-manager-host .tag-manager__tree-item.is-drop-after {
+  box-shadow: inset 0 -3px 0 rgba(131, 197, 255, 0.92);
+}
+
+#tag-manager-host.is-sort-mode .tag-manager__group-header.is-drop-before,
+#tag-manager-host.is-sort-mode .tag-manager__subgroup-header.is-drop-before,
+#tag-manager-host.is-sort-mode .tag-manager__tree-item.is-drop-before {
+  background-image: linear-gradient(
+    to bottom,
+    rgba(131, 197, 255, 1) 0,
+    rgba(131, 197, 255, 1) 4px,
+    transparent 4px,
+    transparent 100%
+  );
+  background-repeat: no-repeat;
+  box-shadow:
+    inset 0 4px 0 rgba(131, 197, 255, 1),
+    inset 0 0 0 1px rgba(131, 197, 255, 0.34);
+}
+
+#tag-manager-host.is-sort-mode .tag-manager__group-header.is-drop-after,
+#tag-manager-host.is-sort-mode .tag-manager__subgroup-header.is-drop-after,
+#tag-manager-host.is-sort-mode .tag-manager__tree-item.is-drop-after {
+  background-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(100% - 4px),
+    rgba(131, 197, 255, 1) calc(100% - 4px),
+    rgba(131, 197, 255, 1) 100%
+  );
+  background-repeat: no-repeat;
+  box-shadow:
+    inset 0 -4px 0 rgba(131, 197, 255, 1),
+    inset 0 0 0 1px rgba(131, 197, 255, 0.34);
 }
 
 #tag-manager-host .tag-manager__group-body,
@@ -1211,6 +1454,13 @@
   align-content: start;
 }
 
+#tag-manager-host .tag-manager__editor-card--primary.is-organized {
+  background: rgba(124, 208, 144, 0.06);
+  box-shadow:
+    inset 0 0 0 1px rgba(124, 208, 144, 0.22),
+    0 0 0 1px rgba(124, 208, 144, 0.06);
+}
+
 #tag-manager-host .tag-manager__id-chip {
   display: inline-flex;
   align-items: center;
@@ -1222,6 +1472,12 @@
   color: rgba(230, 237, 248, 0.78);
   font-size: 0.78rem;
   font-weight: 700;
+}
+
+#tag-manager-host .tag-manager__id-chip.is-organized {
+  background: rgba(124, 208, 144, 0.18);
+  color: rgba(234, 247, 236, 0.96);
+  box-shadow: inset 0 0 0 1px rgba(124, 208, 144, 0.24);
 }
 
 #tag-manager-host .tag-manager__child-panel-scroll {
