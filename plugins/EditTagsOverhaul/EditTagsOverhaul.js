@@ -5,6 +5,7 @@
   const PANEL_ID = "kmv-edit-tags-overhaul";
   const STYLE_HIDE_ID = "kmv-edit-tags-overhaul-hide-original";
   const HOVER_PREVIEW_ID = "edit-tags-overhaul-hover-preview";
+  const TAG_CLIPBOARD_STORAGE_KEY = "EditTagsOverhaul.tagClipboard";
   const ROUTE_RETRY_DELAYS = [0, 200, 600, 1200, 2000, 3500];
   const SUPPLEMENTAL_IMAGE_KEYS = [
     "ctm_supplemental_image_1",
@@ -139,6 +140,86 @@
       .map((line) => line.trim())
       .filter(Boolean);
     return lines.slice(0, 3).join("\n");
+  }
+
+  function readTagClipboard() {
+    try {
+      const raw = window.localStorage.getItem(TAG_CLIPBOARD_STORAGE_KEY);
+      if (!raw) return null;
+
+      const parsed = JSON.parse(raw);
+      const tagIds = Array.isArray(parsed?.tagIds)
+        ? parsed.tagIds.map((id) => String(id)).filter(Boolean)
+        : [];
+      const tags = Array.isArray(parsed?.tags)
+        ? parsed.tags
+            .map((tag) => ({
+              id: String(tag?.id || "").trim(),
+              name: String(tag?.name || "").trim(),
+            }))
+            .filter((tag) => tag.id && tag.name)
+        : [];
+
+      if (!tagIds.length || !tags.length) return null;
+
+      return {
+        tagIds: Array.from(new Set(tagIds)),
+        tags,
+        copiedAt: String(parsed?.copiedAt || ""),
+      };
+    } catch (err) {
+      console.error("[EditTagsOverhaul] clipboard read failed", err);
+      return null;
+    }
+  }
+
+  function writeTagClipboard(clipboard) {
+    try {
+      window.localStorage.setItem(
+        TAG_CLIPBOARD_STORAGE_KEY,
+        JSON.stringify(clipboard)
+      );
+    } catch (err) {
+      console.error("[EditTagsOverhaul] clipboard write failed", err);
+    }
+  }
+
+  function getSortedClipboardTags(tagIds) {
+    const tags = Array.from(tagIds)
+      .map((tagId) => {
+        const tag = state.tagMap.get(String(tagId));
+        if (!tag) return null;
+        return {
+          id: String(tag.id),
+          name: String(tag.name || ""),
+          sort_name: String(tag.sort_name || tag.name || ""),
+        };
+      })
+      .filter(Boolean);
+
+    tags.sort((a, b) => {
+      const aKey = (a.sort_name || a.name || "").toLowerCase();
+      const bKey = (b.sort_name || b.name || "").toLowerCase();
+      return aKey.localeCompare(bKey, undefined, { sensitivity: "base" });
+    });
+
+    return tags.map(({ id, name }) => ({ id, name }));
+  }
+
+  function buildClipboardPayloadFromSelection() {
+    const tags = getSortedClipboardTags(state.selectedTagIds);
+    if (!tags.length) return null;
+
+    return {
+      tagIds: tags.map((tag) => tag.id),
+      tags,
+      copiedAt: new Date().toISOString(),
+    };
+  }
+
+  function getAvailableClipboardTagIds(clipboard) {
+    if (!clipboard || !Array.isArray(clipboard.tagIds)) return [];
+    return clipboard.tagIds.filter((tagId) => state.tagMap.has(String(tagId)));
   }
 
   async function loadConfig() {
@@ -571,6 +652,39 @@
     });
 
     return data?.[cfg.updateMutationKey]?.id;
+  }
+
+  async function persistSelectedTagIds(nextSelectedTagIds) {
+    if (!state.currentEntity || state.isSaving) return false;
+
+    const previousSelectedTagIds = new Set(state.selectedTagIds);
+    state.selectedTagIds = new Set(
+      Array.from(nextSelectedTagIds).map((id) => String(id))
+    );
+    syncRenderedSelectionStates();
+
+    state.isSaving = true;
+    document.body.classList.add("edit-tags-overhaul--saving");
+    syncClipboardActionState();
+
+    try {
+      await saveEntityTagIds(
+        state.currentEntity.type,
+        state.currentEntity.id,
+        Array.from(state.selectedTagIds)
+      );
+      state.loadedSelectionEntityKey = getCurrentEntityKey(state.currentEntity);
+      return true;
+    } catch (err) {
+      console.error("[EditTagsOverhaul] tag save failed", err);
+      state.selectedTagIds = previousSelectedTagIds;
+      syncRenderedSelectionStates();
+      return false;
+    } finally {
+      state.isSaving = false;
+      document.body.classList.remove("edit-tags-overhaul--saving");
+      syncClipboardActionState();
+    }
   }
 
   function sortItemsBySortNameThenName(items) {
@@ -1130,6 +1244,108 @@
     return subgroup.children.some((child) => state.selectedTagIds.has(child.id));
   }
 
+  function syncClipboardActionState(panel = document.getElementById(PANEL_ID)) {
+    if (!panel) return;
+
+    const copyBtn = panel.querySelector("[data-eto-copy-tags]");
+    const pasteBtn = panel.querySelector("[data-eto-paste-tags]");
+    const clipboard = readTagClipboard();
+    const availableClipboardIds = getAvailableClipboardTagIds(clipboard);
+
+    if (copyBtn) {
+      const selectedCount = state.selectedTagIds.size;
+      copyBtn.disabled = selectedCount === 0 || state.isSaving;
+      copyBtn.textContent =
+        selectedCount > 0 ? `Copy Tags (${selectedCount})` : "Copy Tags";
+      copyBtn.setAttribute(
+        "title",
+        selectedCount > 0
+          ? `Copy ${selectedCount} selected tags`
+          : "Select tags to copy"
+      );
+    }
+
+    if (pasteBtn) {
+      pasteBtn.disabled = availableClipboardIds.length === 0 || state.isSaving;
+      pasteBtn.textContent =
+        availableClipboardIds.length > 0
+          ? `Paste Tags (${availableClipboardIds.length})`
+          : "Paste Tags";
+      pasteBtn.setAttribute(
+        "title",
+        availableClipboardIds.length > 0
+          ? `Review and paste ${availableClipboardIds.length} copied tags`
+          : "No copied tags available"
+      );
+    }
+  }
+
+  function hidePasteModal(panel = document.getElementById(PANEL_ID)) {
+    const modal = panel?.querySelector(".edit-tags-overhaul__paste-modal");
+    if (modal) modal.remove();
+  }
+
+  function renderPasteModal(panel, clipboard) {
+    hidePasteModal(panel);
+    if (!panel || !clipboard) return;
+
+    const availableIds = getAvailableClipboardTagIds(clipboard);
+    if (!availableIds.length) return;
+
+    const tagNameMap = new Map(
+      (clipboard.tags || []).map((tag) => [String(tag.id), String(tag.name || "")])
+    );
+    const availableTags = availableIds
+      .map((tagId) => ({
+        id: String(tagId),
+        name:
+          tagNameMap.get(String(tagId)) ||
+          String(state.tagMap.get(String(tagId))?.name || tagId),
+      }))
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+      );
+
+    const unavailableCount = Array.isArray(clipboard.tagIds)
+      ? clipboard.tagIds.length - availableIds.length
+      : 0;
+
+    const overlay = document.createElement("div");
+    overlay.className = "edit-tags-overhaul__paste-modal";
+    overlay.innerHTML = `
+      <div class="edit-tags-overhaul__paste-modal-backdrop" data-eto-paste-cancel="1"></div>
+      <div class="edit-tags-overhaul__paste-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-tags-overhaul-paste-title">
+        <div class="edit-tags-overhaul__paste-modal-header">
+          <div>
+            <div class="edit-tags-overhaul__paste-modal-title" id="edit-tags-overhaul-paste-title">Paste Tags</div>
+            <div class="edit-tags-overhaul__paste-modal-subtitle">${availableTags.length} copied tags ready to paste</div>
+          </div>
+          <button type="button" class="edit-tags-overhaul__paste-modal-close" data-eto-paste-cancel="1" aria-label="Close paste dialog">x</button>
+        </div>
+        ${
+          unavailableCount > 0
+            ? `<div class="edit-tags-overhaul__paste-modal-note">${unavailableCount} copied tag${unavailableCount === 1 ? "" : "s"} no longer exist and will be skipped.</div>`
+            : ""
+        }
+        <div class="edit-tags-overhaul__paste-modal-list">
+          ${availableTags
+            .map(
+              (tag) =>
+                `<div class="edit-tags-overhaul__paste-modal-tag">${escapeHtml(tag.name)}</div>`
+            )
+            .join("")}
+        </div>
+        <div class="edit-tags-overhaul__paste-modal-actions">
+          <button type="button" class="edit-tags-overhaul__paste-modal-btn" data-eto-paste-cancel="1">Cancel</button>
+          <button type="button" class="edit-tags-overhaul__paste-modal-btn edit-tags-overhaul__paste-modal-btn--secondary" data-eto-paste-action="merge">Merge With Tags</button>
+          <button type="button" class="edit-tags-overhaul__paste-modal-btn edit-tags-overhaul__paste-modal-btn--primary" data-eto-paste-action="replace">Replace Tags</button>
+        </div>
+      </div>
+    `;
+
+    panel.appendChild(overlay);
+  }
+
   function updateTagButtonState(button, attached) {
     button.classList.toggle("is-selected", attached);
     button.setAttribute("aria-pressed", attached ? "true" : "false");
@@ -1194,54 +1410,58 @@
       const id = el.getAttribute("data-eto-search-toggle-id");
       const selected = state.selectedTagIds.has(id);
       el.classList.toggle("is-selected", selected);
-      el.textContent = selected ? "✓" : "+";
+      el.textContent = selected ? "\u2713" : "+";
       el.setAttribute("title", selected ? "Remove tag" : "Add tag");
       el.setAttribute("aria-pressed", selected ? "true" : "false");
     });
+
+    syncClipboardActionState();
   }
 
-  async function onTagToggleClick(tagId, buttonEl) {
+  async function onTagToggleClick(tagId) {
     if (!state.currentEntity || state.isSaving) return;
 
     const wasSelected = state.selectedTagIds.has(tagId);
-    if (wasSelected) state.selectedTagIds.delete(tagId);
-    else state.selectedTagIds.add(tagId);
+    const nextSelectedTagIds = new Set(state.selectedTagIds);
+    if (wasSelected) nextSelectedTagIds.delete(tagId);
+    else nextSelectedTagIds.add(tagId);
 
-    if (buttonEl?.hasAttribute("data-eto-parent-toggle-id")) {
-      updateParentToggleState(buttonEl, !wasSelected);
-    } else if (buttonEl) {
-      updateTagButtonState(buttonEl, !wasSelected);
+    await persistSelectedTagIds(nextSelectedTagIds);
+  }
+
+  function handleCopyTagsClick(panel) {
+    const clipboard = buildClipboardPayloadFromSelection();
+    if (!clipboard) return;
+    writeTagClipboard(clipboard);
+    hidePasteModal(panel);
+    syncClipboardActionState(panel);
+  }
+
+  function handlePasteTagsClick(panel) {
+    if (state.isSaving) return;
+    const clipboard = readTagClipboard();
+    if (!clipboard) return;
+    renderPasteModal(panel, clipboard);
+  }
+
+  async function handlePasteAction(mode, panel) {
+    if (state.isSaving) return;
+
+    const clipboard = readTagClipboard();
+    const availableIds = getAvailableClipboardTagIds(clipboard);
+    if (!availableIds.length) {
+      hidePasteModal(panel);
+      syncClipboardActionState(panel);
+      return;
     }
 
-    syncRenderedSelectionStates();
+    const nextSelectedTagIds =
+      mode === "replace"
+        ? new Set(availableIds)
+        : new Set([...state.selectedTagIds, ...availableIds]);
 
-    state.isSaving = true;
-    document.body.classList.add("edit-tags-overhaul--saving");
-
-    try {
-      await saveEntityTagIds(
-        state.currentEntity.type,
-        state.currentEntity.id,
-        Array.from(state.selectedTagIds)
-      );
-      state.loadedSelectionEntityKey = getCurrentEntityKey(state.currentEntity);
-    } catch (err) {
-      console.error("[EditTagsOverhaul] tag save failed", err);
-
-      if (wasSelected) state.selectedTagIds.add(tagId);
-      else state.selectedTagIds.delete(tagId);
-
-      if (buttonEl?.hasAttribute("data-eto-parent-toggle-id")) {
-        updateParentToggleState(buttonEl, wasSelected);
-      } else if (buttonEl) {
-        updateTagButtonState(buttonEl, wasSelected);
-      }
-
-      syncRenderedSelectionStates();
-    } finally {
-      state.isSaving = false;
-      document.body.classList.remove("edit-tags-overhaul--saving");
-    }
+    const saved = await persistSelectedTagIds(nextSelectedTagIds);
+    if (saved) hidePasteModal(panel);
   }
 
   function createParentToggleButton(tagId) {
@@ -1434,12 +1654,47 @@
     panel.addEventListener("mouseout", handlePanelHoverOut);
 
     panel.addEventListener("click", (event) => {
+      const copyTagsBtn = event.target.closest("[data-eto-copy-tags]");
+      if (copyTagsBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        handleCopyTagsClick(panel);
+        return;
+      }
+
+      const pasteTagsBtn = event.target.closest("[data-eto-paste-tags]");
+      if (pasteTagsBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        handlePasteTagsClick(panel);
+        return;
+      }
+
+      const pasteCancelBtn = event.target.closest("[data-eto-paste-cancel]");
+      if (pasteCancelBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        hidePasteModal(panel);
+        return;
+      }
+
+      const pasteActionBtn = event.target.closest("[data-eto-paste-action]");
+      if (pasteActionBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        handlePasteAction(
+          pasteActionBtn.getAttribute("data-eto-paste-action"),
+          panel
+        );
+        return;
+      }
+
       const parentToggleBtn = event.target.closest("[data-eto-parent-toggle-id]");
       if (parentToggleBtn) {
         event.preventDefault();
         event.stopPropagation();
         const tagId = parentToggleBtn.getAttribute("data-eto-parent-toggle-id");
-        if (tagId) onTagToggleClick(tagId, parentToggleBtn);
+        if (tagId) onTagToggleClick(tagId);
         return;
       }
 
@@ -1447,7 +1702,7 @@
       if (tagBtn) {
         event.preventDefault();
         const tagId = tagBtn.getAttribute("data-eto-tag-id");
-        if (tagId) onTagToggleClick(tagId, tagBtn);
+        if (tagId) onTagToggleClick(tagId);
         return;
       }
 
@@ -1456,7 +1711,7 @@
         event.preventDefault();
         event.stopPropagation();
         const tagId = searchToggleBtn.getAttribute("data-eto-search-toggle-id");
-        if (tagId) onTagToggleClick(tagId, searchToggleBtn);
+        if (tagId) onTagToggleClick(tagId);
         return;
       }
 
@@ -1541,8 +1796,31 @@
     summary.className = "edit-tags-overhaul__panel-summary";
     summary.textContent = `${groups.length} groups`;
 
-    titleRow.appendChild(heading);
-    titleRow.appendChild(summary);
+    const headerInfo = document.createElement("div");
+    headerInfo.className = "edit-tags-overhaul__panel-header-info";
+    headerInfo.appendChild(heading);
+    headerInfo.appendChild(summary);
+
+    const panelActions = document.createElement("div");
+    panelActions.className = "edit-tags-overhaul__panel-actions";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "edit-tags-overhaul__panel-btn";
+    copyBtn.setAttribute("data-eto-copy-tags", "1");
+    copyBtn.textContent = "Copy Tags";
+
+    const pasteBtn = document.createElement("button");
+    pasteBtn.type = "button";
+    pasteBtn.className = "edit-tags-overhaul__panel-btn";
+    pasteBtn.setAttribute("data-eto-paste-tags", "1");
+    pasteBtn.textContent = "Paste Tags";
+
+    panelActions.appendChild(copyBtn);
+    panelActions.appendChild(pasteBtn);
+
+    titleRow.appendChild(headerInfo);
+    titleRow.appendChild(panelActions);
     panel.appendChild(titleRow);
 
     const searchControls = createSearchControls();
@@ -1558,6 +1836,7 @@
     panel.appendChild(groupsWrap);
     attachPanelEventDelegation(panel);
     renderSearchResults(panel);
+    syncClipboardActionState(panel);
     return panel;
   }
 
