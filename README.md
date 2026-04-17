@@ -173,7 +173,6 @@ Intended to work alongside PerformerTagsOverhaul, but works as its own standalon
 2. Insure they are assigned to the performer
 3. Add tags - for example: based on outfit, clothed, nude or different features
 4. In the plugin settings, add one or more tags to a slot and optionally change the label of that slot
-   -- to do -- add support for images with subtags to be shown as well (example, any image tagged with a subtag of Clothes will be shown in a slot set to the tag Clothes)
 6. They should appear in the performer page in their own column on the right
 7. Crop the images to isolate the specific feature you want to highlight or to just better fit the image in the panel
 
@@ -186,6 +185,8 @@ Intended to work alongside PerformerTagsOverhaul, but works as its own standalon
 <p>
   <img src="/plugins/PerformerTagBasedSupportingImages/images/PerformerTagBasedSupportingImagesSettingsPreview.png" alt="DetailsTagsOverhaul settings" width="600">
 </p>
+
+-- to do -- add support for images with subtags to be shown as well (example, any image tagged with a subtag of Clothes will be shown in a slot set to the tag Clothes)
 
 # Tag Based Browser
 
