@@ -638,11 +638,6 @@
     return value === "random" ? "random" : "first";
   }
 
-  function getSlotTagMatchMode(cfg) {
-    const value = String(cfg.a_slotTagMatchMode || "").trim().toLowerCase();
-    return value === "all" ? "all" : "any";
-  }
-
   function shouldEnableLoopingSlots(slots, cfg) {
     return (
       getConfigBoolean(cfg?.a_loopSlots, true) &&
@@ -799,31 +794,55 @@
         key: "slot1",
         tagNames: parseTagList(cfg.b_slot1Tags || ""),
         customLabel: parseLabelText(readConfigValue(cfg, "c_slot1Label", "j_slot1Label")),
+        includeDescendantTags: getConfigBoolean(
+          readConfigValue(cfg, "c1_slot1IncludeSubTags"),
+          false
+        ),
       },
       {
         key: "slot2",
         tagNames: parseTagList(readConfigValue(cfg, "d_slot2Tags", "c_slot2Tags")),
         customLabel: parseLabelText(readConfigValue(cfg, "e_slot2Label", "k_slot2Label")),
+        includeDescendantTags: getConfigBoolean(
+          readConfigValue(cfg, "e1_slot2IncludeSubTags"),
+          false
+        ),
       },
       {
         key: "slot3",
         tagNames: parseTagList(readConfigValue(cfg, "f_slot3Tags", "d_slot3Tags")),
         customLabel: parseLabelText(readConfigValue(cfg, "g_slot3Label", "l_slot3Label")),
+        includeDescendantTags: getConfigBoolean(
+          readConfigValue(cfg, "g1_slot3IncludeSubTags"),
+          false
+        ),
       },
       {
         key: "slot4",
         tagNames: parseTagList(readConfigValue(cfg, "h_slot4Tags", "e_slot4Tags")),
         customLabel: parseLabelText(readConfigValue(cfg, "i_slot4Label", "m_slot4Label")),
+        includeDescendantTags: getConfigBoolean(
+          readConfigValue(cfg, "i1_slot4IncludeSubTags"),
+          false
+        ),
       },
       {
         key: "slot5",
         tagNames: parseTagList(readConfigValue(cfg, "j_slot5Tags", "f_slot5Tags")),
         customLabel: parseLabelText(readConfigValue(cfg, "k_slot5Label", "n_slot5Label")),
+        includeDescendantTags: getConfigBoolean(
+          readConfigValue(cfg, "k1_slot5IncludeSubTags"),
+          false
+        ),
       },
       {
         key: "slot6",
         tagNames: parseTagList(readConfigValue(cfg, "l_slot6Tags", "g_slot6Tags")),
         customLabel: parseLabelText(readConfigValue(cfg, "m_slot6Label", "o_slot6Label")),
+        includeDescendantTags: getConfigBoolean(
+          readConfigValue(cfg, "m1_slot6IncludeSubTags"),
+          false
+        ),
       },
     ];
 
@@ -848,23 +867,141 @@
     return state.config;
   }
 
+  function buildTagIndex(tags = []) {
+    const byName = new Map();
+    const byId = new Map();
+
+    (tags || []).forEach((tag) => {
+      const id = String(tag?.id || "").trim();
+      const name = String(tag?.name || "").trim();
+      if (!id || !name) return;
+
+      const normalizedName = name.toLowerCase();
+      byName.set(normalizedName, id);
+
+      byId.set(id, {
+        id,
+        name,
+        childIds: Array.from(tag?.children || [])
+          .map((child) => String(child?.id || "").trim())
+          .filter(Boolean),
+      });
+    });
+
+    const descendantsById = new Map();
+
+    function collectDescendants(tagId, visited = new Set()) {
+      const safeId = String(tagId || "").trim();
+      if (!safeId || visited.has(safeId)) return [];
+      if (descendantsById.has(safeId)) {
+        return descendantsById.get(safeId);
+      }
+
+      const record = byId.get(safeId);
+      if (!record) {
+        descendantsById.set(safeId, []);
+        return [];
+      }
+
+      const nextVisited = new Set(visited);
+      nextVisited.add(safeId);
+      const descendants = [];
+      const seen = new Set();
+
+      (record.childIds || []).forEach((childId) => {
+        if (!childId || seen.has(childId)) return;
+        descendants.push(childId);
+        seen.add(childId);
+        collectDescendants(childId, nextVisited).forEach((descendantId) => {
+          if (!descendantId || seen.has(descendantId)) return;
+          descendants.push(descendantId);
+          seen.add(descendantId);
+        });
+      });
+
+      descendantsById.set(safeId, descendants);
+      return descendants;
+    }
+
+    Array.from(byId.keys()).forEach((id) => {
+      collectDescendants(id);
+    });
+
+    return { byName, byId, descendantsById };
+  }
+
+  function getTagIdByName(tagIndex, name) {
+    return tagIndex?.byName?.get(String(name || "").trim().toLowerCase()) || "";
+  }
+
+  function hasTagName(tagIndex, name) {
+    return !!getTagIdByName(tagIndex, name);
+  }
+
+  function getDescendantTagIds(tagIndex, tagId) {
+    const safeId = String(tagId || "").trim();
+    if (!safeId) return [];
+    return Array.from(tagIndex?.descendantsById?.get(safeId) || []).map(String);
+  }
+
+  function resolveSlotTagGroups(slot, tagIndex, includeDescendants = false) {
+    const groups = [];
+    const missingTags = [];
+
+    (slot?.tagNames || []).forEach((name) => {
+      const tagId = getTagIdByName(tagIndex, name);
+      if (!tagId) {
+        missingTags.push(name);
+        return;
+      }
+
+      const descendantIds = includeDescendants
+        ? getDescendantTagIds(tagIndex, tagId)
+        : [];
+      const groupTagIds = Array.from(new Set([tagId, ...descendantIds].map(String).filter(Boolean)));
+
+      groups.push({
+        name,
+        tagId,
+        tagIds: groupTagIds,
+      });
+    });
+
+    const tagFilterItems = groups.map((group) => {
+      const record = tagIndex?.byId?.get(String(group.tagId));
+      return {
+        id: String(group.tagId),
+        label: record?.name || group.name || String(group.tagId),
+      };
+    });
+
+    const resolvedTagIds = Array.from(
+      new Set(groups.flatMap((group) => group.tagIds).map(String).filter(Boolean))
+    );
+
+    return {
+      groups,
+      missingTags,
+      resolvedTagIds,
+      directTagIds: groups.map((group) => String(group.tagId)),
+      tagFilterItems,
+    };
+  }
+
   async function fetchTagMap() {
     const data = await gqlRequest(`
       query PerformerTagBasedSupportingImagesTags {
         allTags {
           id
           name
+          children {
+            id
+          }
         }
       }
     `);
 
-    const map = new Map();
-    (data?.allTags || []).forEach((tag) => {
-      const name = String(tag?.name || "").trim().toLowerCase();
-      if (!name || !tag?.id) return;
-      map.set(name, String(tag.id));
-    });
-    return map;
+    return buildTagIndex(data?.allTags || []);
   }
 
   async function ensureTagMap(options = {}) {
@@ -891,7 +1028,7 @@
     return data?.findPerformer || null;
   }
 
-  async function findImagesForSlot(performerId, tagIds, tagMatchMode = "any") {
+  async function queryImagesForTagSet(performerId, tagIds, perPage = 40) {
     if (!tagIds.length) return [];
 
     const data = await gqlRequest(
@@ -923,16 +1060,26 @@
           },
           tags: {
             value: tagIds.map(String),
-            modifier: tagMatchMode === "all" ? "INCLUDES_ALL" : "INCLUDES",
+            modifier: "INCLUDES",
           },
         },
         filter: {
-          per_page: 40,
+          per_page: perPage,
         },
       }
     );
 
     return data?.findImages?.images || [];
+  }
+
+  async function findImagesForSlot(performerId, tagGroups) {
+    const groups = Array.isArray(tagGroups) ? tagGroups.filter((group) => (group?.tagIds || []).length) : [];
+    if (!groups.length) return [];
+
+    const unionTagIds = Array.from(
+      new Set(groups.flatMap((group) => group.tagIds || []).map(String).filter(Boolean))
+    );
+    return queryImagesForTagSet(performerId, unionTagIds, 40);
   }
 
   function getImageUrl(image) {
@@ -976,25 +1123,30 @@
       .join("");
   }
 
-  function buildTagFilterCriterion(slot, tagMatchMode = "any") {
-    const tagIds = Array.isArray(slot?.tagIds) ? slot.tagIds.filter(Boolean) : [];
-    if (!tagIds.length) return null;
-
-    const items = tagIds.map((id, index) => {
-      const numericId = Number(id);
-      return {
-        id: Number.isFinite(numericId) && numericId > 0 ? numericId : String(id),
-        label: slot?.tagNames?.[index] || String(id),
-      };
-    });
+  function buildTagFilterCriterion(slot) {
+    const items = Array.isArray(slot?.tagFilterItems)
+      ? slot.tagFilterItems
+          .map((item) => {
+            const numericId = Number(item?.id);
+            return {
+              id:
+                Number.isFinite(numericId) && numericId > 0
+                  ? numericId
+                  : String(item?.id || ""),
+              label: String(item?.label || item?.id || ""),
+            };
+          })
+          .filter((item) => item.id && item.label)
+      : [];
+    if (!items.length) return null;
 
     return {
       type: "tags",
-      modifier: tagMatchMode === "all" ? "INCLUDES_ALL" : "INCLUDES",
+      modifier: "INCLUDES",
       value: {
         items,
         excluded: [],
-        depth: 0,
+        depth: slot?.includeDescendantTags ? -1 : 0,
       },
     };
   }
@@ -1004,7 +1156,7 @@
     if (!performerId) return "";
 
     const basePath = `/performers/${encodeURIComponent(performerId)}/images`;
-    const criterion = buildTagFilterCriterion(slot, getSlotTagMatchMode(cfg));
+    const criterion = buildTagFilterCriterion(slot);
     if (!criterion) return basePath;
 
     const searchParams = new URLSearchParams();
@@ -1555,12 +1707,11 @@
     let tagMap = await ensureTagMap();
     const performerInfo = await fetchPerformerName(performer.id);
     const selectionMode = getSelectionMode(cfg);
-    const tagMatchMode = getSlotTagMatchMode(cfg);
     const slots = getSlotConfigs(cfg);
     const configuredTagNames = slots.flatMap((slot) => slot.tagNames);
 
     const hasMissingConfiguredTags = configuredTagNames.some(
-      (name) => !tagMap.has(name.toLowerCase())
+      (name) => !hasTagName(tagMap, name)
     );
 
     if (hasMissingConfiguredTags) {
@@ -1570,17 +1721,17 @@
     const slotResults = await Promise.all(
       slots.map(async (slot) => {
         try {
-          const tagIds = slot.tagNames
-            .map((name) => tagMap.get(name.toLowerCase()))
-            .filter(Boolean);
-
-          const missingTags = slot.tagNames.filter(
-            (name) => !tagMap.has(name.toLowerCase())
+          const resolvedTags = resolveSlotTagGroups(
+            slot,
+            tagMap,
+            slot.includeDescendantTags
           );
+          const tagIds = resolvedTags.resolvedTagIds;
+          const missingTags = resolvedTags.missingTags;
 
           const images =
-            tagIds.length === slot.tagNames.length
-              ? await findImagesForSlot(performer.id, tagIds, tagMatchMode)
+            missingTags.length === 0 && resolvedTags.groups.length
+              ? await findImagesForSlot(performer.id, resolvedTags.groups)
               : [];
 
           const currentIndex = normalizeSlotIndex(
@@ -1598,6 +1749,8 @@
             ...slot,
             performerId: performer.id,
             tagIds,
+            configuredTagIds: resolvedTags.directTagIds,
+            tagFilterItems: resolvedTags.tagFilterItems,
             missingTags,
             images,
             currentIndex,
