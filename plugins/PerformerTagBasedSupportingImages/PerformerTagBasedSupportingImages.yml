@@ -9,11 +9,6 @@ settings:
     type: STRING
     description: "How each slot chooses among multiple matches: first or random (Default: first)"
 
-  a_slotTagMatchMode:
-    displayName: Slot Tag Match Mode
-    type: STRING
-    description: "How multiple tags within a single slot are matched: any or all (Default: any)"
-
   a_loopSlots:
     displayName: Loop Slots
     type: BOOLEAN
@@ -84,6 +79,11 @@ settings:
     type: STRING
     description: "Custom label for slot 1 (Default: tag names)"
 
+  c1_slot1IncludeSubTags:
+    displayName: Slot 1 Include Sub Tags
+    type: BOOLEAN
+    description: "When enabled, slot 1 also matches descendant tags of the listed tags (Default: false)"
+
   d_slot2Tags:
     displayName: Slot 2 Tags
     type: STRING
@@ -93,6 +93,11 @@ settings:
     displayName: Slot 2 Label
     type: STRING
     description: "Custom label for slot 2 (Default: tag names)"
+
+  e1_slot2IncludeSubTags:
+    displayName: Slot 2 Include Sub Tags
+    type: BOOLEAN
+    description: "When enabled, slot 2 also matches descendant tags of the listed tags (Default: false)"
 
   f_slot3Tags:
     displayName: Slot 3 Tags
@@ -104,6 +109,11 @@ settings:
     type: STRING
     description: "Custom label for slot 3 (Default: tag names)"
 
+  g1_slot3IncludeSubTags:
+    displayName: Slot 3 Include Sub Tags
+    type: BOOLEAN
+    description: "When enabled, slot 3 also matches descendant tags of the listed tags (Default: false)"
+
   h_slot4Tags:
     displayName: Slot 4 Tags
     type: STRING
@@ -113,6 +123,11 @@ settings:
     displayName: Slot 4 Label
     type: STRING
     description: "Custom label for slot 4 (Default: tag names)"
+
+  i1_slot4IncludeSubTags:
+    displayName: Slot 4 Include Sub Tags
+    type: BOOLEAN
+    description: "When enabled, slot 4 also matches descendant tags of the listed tags (Default: false)"
 
   j_slot5Tags:
     displayName: Slot 5 Tags
@@ -124,6 +139,11 @@ settings:
     type: STRING
     description: "Custom label for slot 5 (Default: tag names)"
 
+  k1_slot5IncludeSubTags:
+    displayName: Slot 5 Include Sub Tags
+    type: BOOLEAN
+    description: "When enabled, slot 5 also matches descendant tags of the listed tags (Default: false)"
+
   l_slot6Tags:
     displayName: Slot 6 Tags
     type: STRING
@@ -133,6 +153,11 @@ settings:
     displayName: Slot 6 Label
     type: STRING
     description: "Custom label for slot 6 (Default: tag names)"
+
+  m1_slot6IncludeSubTags:
+    displayName: Slot 6 Include Sub Tags
+    type: BOOLEAN
+    description: "When enabled, slot 6 also matches descendant tags of the listed tags (Default: false)"
 
 ui:
   javascript:
