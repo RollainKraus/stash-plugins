@@ -28,6 +28,7 @@
   --ptbsi-overlay-surface: rgba(255, 255, 255, 0.06);
   --ptbsi-overlay-surface-strong: rgba(255, 255, 255, 0.12);
   --ptbsi-overlay-border: rgba(255, 255, 255, 0.18);
+  --ptbsi-slot-transition-ms: 0ms;
   --ptbsi-portrait-max-height: calc(var(--ptbsi-image-height) * 1.9);
   --ptbsi-landscape-max-height: calc(var(--ptbsi-image-height) * 1.15);
   --ptbsi-square-max-height: calc(var(--ptbsi-image-height) * 1.35);
@@ -485,6 +486,23 @@
   object-position: center;
   display: block;
   background: rgba(0, 0, 0, 0.18);
+}
+
+#ptbsi-performer-supporting-images.has-slot-transition
+  .performer-tag-based-supporting-images__slot--multi-image
+  .performer-tag-based-supporting-images__image {
+  animation: ptbsi-slot-image-soft-reveal var(--ptbsi-slot-transition-ms, 160ms) ease-out both;
+}
+
+@keyframes ptbsi-slot-image-soft-reveal {
+  from {
+    opacity: 0.86;
+    transform: scale(1.008);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .performer-tag-based-supporting-images__image--cropped {
