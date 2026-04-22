@@ -17,7 +17,7 @@
   const CROP_STORAGE_KEY = "ptbsi-slot-crops-v1";
   const SLOT_ASPECT_STORAGE_KEY = "ptbsi-slot-aspect-modes-v1";
   const COLLAPSED_STORAGE_KEY = "ptbsi-panel-collapsed-v1";
-  const SLOT_ASPECT_MODES = ["tall", "portrait", "square", "landscape"];
+  const SLOT_ASPECT_MODES = ["tall", "portrait", "square", "landscape", "widescreen"];
   const LOOP_REPEAT_COUNT = 3;
   const LAYOUT_REFRESH_DELAYS = [0, 80, 180, 320];
 
@@ -45,6 +45,7 @@
     slotAspectStore: loadSlotAspectStore(),
     isCollapsed: false,
     cropEditor: null,
+    slotSlideshowTimer: null,
   };
 
   function gqlRequest(query, variables = {}) {
@@ -191,6 +192,8 @@
         return 2 / 3;
       case "landscape":
         return 4 / 3;
+      case "widescreen":
+        return 16 / 9;
       default:
         return 1;
     }
@@ -239,6 +242,8 @@
         return "2:3";
       case "landscape":
         return "4:3";
+      case "widescreen":
+        return "16:9";
       default:
         return "1:1";
     }
@@ -638,6 +643,14 @@
     return value === "random" ? "random" : "first";
   }
 
+  function getSlotSlideshowSeconds(cfg) {
+    return getConfigNumber(cfg?.a_slotSlideshowSeconds, 0, 0, 3600);
+  }
+
+  function getSlotTransitionMs(cfg) {
+    return getConfigNumber(cfg?.a_slotTransitionMs, 0, 0, 5000);
+  }
+
   function shouldEnableLoopingSlots(slots, cfg) {
     return (
       getConfigBoolean(cfg?.a_loopSlots, true) &&
@@ -717,7 +730,9 @@
     const backgroundColor = getPanelBackgroundColor(cfg);
     const overlayOpacity = getOverlayBackgroundOpacity(cfg);
     const overlayBackgroundColor = getOverlayBackgroundColor(cfg);
+    const transitionMs = getSlotTransitionMs(cfg);
     panel.style.setProperty("--ptbsi-image-height", `${getImageHeight(cfg)}px`);
+    panel.style.setProperty("--ptbsi-slot-transition-ms", `${transitionMs}ms`);
     panel.style.setProperty("--ptbsi-panel-opacity", panelOpacity);
     panel.style.setProperty("--ptbsi-font-color", getPanelFontColor(cfg));
     panel.style.setProperty("--ptbsi-panel-bg-color", backgroundColor);
@@ -1810,6 +1825,7 @@
 
   function cleanupPanel(options = {}) {
     const { preserveHost = false } = options;
+    stopSlotSlideshow();
     closeCropEditor();
     const existing = document.getElementById(PANEL_ID);
     if (existing) existing.remove();
@@ -1967,6 +1983,9 @@
     );
     if (fixedFrame) {
       slotEl.classList.add("performer-tag-based-supporting-images__slot--reel");
+    }
+    if ((slot.images?.length || 0) > 1) {
+      slotEl.classList.add("performer-tag-based-supporting-images__slot--multi-image");
     }
 
     if (!slot.tagNames.length) {
@@ -2169,6 +2188,9 @@
     applyPanelVariables(panel, cfg);
     if (state.isCollapsed) {
       panel.classList.add("is-collapsed");
+    }
+    if (getSlotTransitionMs(cfg) > 0) {
+      panel.classList.add("has-slot-transition");
     }
     panel.appendChild(createCollapseToggleButton());
     const slotsWrap = document.createElement("div");
@@ -2377,11 +2399,63 @@
     const existing = document.getElementById(PANEL_ID);
     const viewportState = capturePanelViewportState(existing, anchorElement);
     const nextPanel = renderPanel();
-    if (!nextPanel) return;
+    if (!nextPanel) {
+      stopSlotSlideshow();
+      return;
+    }
     if (existing) existing.replaceWith(nextPanel);
     setupLoopingSlots(nextPanel, { viewportState });
     restorePanelViewportState(nextPanel, viewportState);
     updateFloatingPanelLayout();
+  }
+
+  function stopSlotSlideshow() {
+    if (state.slotSlideshowTimer) {
+      window.clearInterval(state.slotSlideshowTimer);
+      state.slotSlideshowTimer = null;
+    }
+  }
+
+  function hasSlideshowEligibleSlots() {
+    return Array.isArray(state.panelData?.slots) &&
+      state.panelData.slots.some((slot) => (slot?.images?.length || 0) > 1);
+  }
+
+  function advanceSlotSlideshow() {
+    if (state.isInjecting || state.isCollapsed || state.cropEditor || document.hidden) {
+      return;
+    }
+
+    const slots = Array.isArray(state.panelData?.slots) ? state.panelData.slots : [];
+    let changed = false;
+
+    slots.forEach((slot) => {
+      const total = Number(slot?.images?.length || 0);
+      if (total <= 1) return;
+
+      const currentIndex = Number(slot.currentIndex || 0);
+      const nextIndex = ((currentIndex + 1) % total + total) % total;
+      if (nextIndex === currentIndex) return;
+
+      slot.currentIndex = nextIndex;
+      state.slotIndices.set(slot.key, nextIndex);
+      changed = true;
+    });
+
+    if (changed) {
+      rerenderPanel();
+    }
+  }
+
+  function syncSlotSlideshow(cfg = state.config || {}) {
+    stopSlotSlideshow();
+
+    const seconds = getSlotSlideshowSeconds(cfg);
+    if (!(seconds > 0) || !hasSlideshowEligibleSlots()) return;
+
+    state.slotSlideshowTimer = window.setInterval(() => {
+      advanceSlotSlideshow();
+    }, seconds * 1000);
   }
 
   function rerenderSlot(slotKey, options = {}) {
@@ -2668,6 +2742,9 @@
         if (host && panel) {
           host.appendChild(panel);
           setupLoopingSlots(panel);
+          syncSlotSlideshow(state.config || {});
+        } else {
+          stopSlotSlideshow();
         }
       }
       scheduleLayoutRefresh([0, 80, 180, 320, 500]);
@@ -2716,10 +2793,14 @@
       const host = ensureLayoutHost();
       refreshObservedElements();
       const panel = renderPanel();
-      if (!host || !panel) return;
+      if (!host || !panel) {
+        stopSlotSlideshow();
+        return;
+      }
       host.appendChild(panel);
       setupLoopingSlots(panel);
       state.panelKey = key;
+      syncSlotSlideshow(cfg);
       updateFloatingPanelLayout();
     } catch (err) {
       console.error("[PerformerTagBasedSupportingImages] inject failed", err);
