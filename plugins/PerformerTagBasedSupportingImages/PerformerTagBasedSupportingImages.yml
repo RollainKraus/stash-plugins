@@ -1,6 +1,6 @@
 name: Performer Tag Based Supporting Images
 description: Supporting performer images selected by performer plus slot tag rules
-version: 0.1.0
+version: 0.2.0
 url: https://github.com/RollainKraus/stash-plugins
 
 settings:
@@ -8,6 +8,16 @@ settings:
     displayName: Image Selection Mode
     type: STRING
     description: "How each slot chooses among multiple matches: first or random (Default: first)"
+
+  a_slotSlideshowSeconds:
+    displayName: Slot Slideshow Seconds
+    type: STRING
+    description: "0 disables. 1+ enables slot slideshows (Default: 0)"
+
+  a_slotTransitionMs:
+    displayName: Slot Transition Milliseconds
+    type: STRING
+    description: "0 disables. Transition duration in milliseconds (Default: 0)"
 
   a_loopSlots:
     displayName: Loop Slots
