@@ -354,7 +354,7 @@ Changes: The original code is largely unchanged. visage-marquee.js hijacks the o
 
 <h2>Workflow Preview</h2>
 <p>
-  <img src="/plugins/Visage/images/VisageCropPreview.gif" alt="Visage preview" width="600">
+  <img src="/plugins/visage/images/VisageCropPreview.gif" alt="Visage preview" width="600">
 </p>
 
 Made with AI
