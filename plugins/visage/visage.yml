@@ -1,6 +1,6 @@
 name: Visage
 # requires: CommunityScriptsUILibrary
-description: Use facial Recognition To Lookup Performers. Roughly patched and added marquee selection instead of face detection
+description: Use facial Recognition To Lookup Performers. Roughly patched and uses marquee selection instead of face detection
 version: 2.0.2
 ui:
   requires:
