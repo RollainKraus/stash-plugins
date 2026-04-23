@@ -350,7 +350,7 @@ Uses stash metadata to move images with attached performers into performer folde
 
 Roughly patched fork of the original Visage plugin: Uses facial recognition to identify performers based on a stashdb database.
 
-Changes: The original code is largely unchanged. visage-marquee.js hijacks the original visage.js by using a manual marquee selection to detect faces rather than the original face detection. 
+Changes: The original code is largely unchanged. visage-marquee.js hijacks the original visage.js by using a manual marquee selection to isolate faces rather than the original face detection. 
 
 <h2>Workflow Preview</h2>
 <p>
