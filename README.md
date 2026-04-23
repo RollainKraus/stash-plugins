@@ -8,6 +8,7 @@
 - [Tag Sidebar](#Tag-Sidebar)
 - [Custom Tags Manager](#Custom-Tags-Manager)
 - [Organize Images By Performer](#Organize-Images-By-Performer)
+- [Visage](#Visage)
 
 ## Installation
 
@@ -343,6 +344,17 @@ Uses stash metadata to move images with attached performers into performer folde
 <h2>Tasks Preview</h2>
 <p>
   <img src="/plugins/OrganizeImagesByPerformer/images/OrganizeImagesByPerformerTasksPreview.png" alt="OrganizeImagesByPerformer settings" width="600">
+</p>
+
+# Visage
+
+Roughly patched fork of the original Visage plugin: Uses facial recognition to identify performers based on a stashdb database
+
+Changes: The original code is largely unchanged. visage-marquee.js hijacks the original visage.js by using a manual marquee selection to detect faces rather than the original face detection. 
+
+<h2>Workflow Preview</h2>
+<p>
+  <img src="/plugins/Visage/images/VisageCropPreview.gif" alt="Visage preview" width="600">
 </p>
 
 Made with AI
