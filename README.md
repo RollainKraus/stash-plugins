@@ -358,6 +358,7 @@ Changes: The original code is largely unchanged. visage-marquee.js hijacks the o
 </p>
 
 Added helpful buttons if using the backend is preferred since there are more options there
+
 Largely untested
 
 All credit goes to the original uploader cc1234
