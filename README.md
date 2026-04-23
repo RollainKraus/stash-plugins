@@ -348,7 +348,7 @@ Uses stash metadata to move images with attached performers into performer folde
 
 # Visage
 
-Roughly patched fork of the original Visage plugin: Uses facial recognition to identify performers based on a stashdb database
+Roughly patched fork of the original Visage plugin: Uses facial recognition to identify performers based on a stashdb database.
 
 Changes: The original code is largely unchanged. visage-marquee.js hijacks the original visage.js by using a manual marquee selection to detect faces rather than the original face detection. 
 
@@ -357,8 +357,13 @@ Changes: The original code is largely unchanged. visage-marquee.js hijacks the o
   <img src="/plugins/visage/images/VisageCropPreview.gif" alt="Visage preview" width="600">
 </p>
 
-Made with AI
+Added helpful buttons if using the backend is preferred since there are more options there
+Largely untested
+
+All credit goes to the original uploader cc1234
 
 ## License
 
 The default license is set to [AGPL-3.0](/LICENCE). Before publishing any plugins you can change it.
+
+Most of these made with AI
