@@ -20,6 +20,14 @@
   const SLOT_ASPECT_MODES = ["tall", "portrait", "square", "landscape", "widescreen"];
   const LOOP_REPEAT_COUNT = 3;
   const LAYOUT_REFRESH_DELAYS = [0, 80, 180, 320];
+  const QUICK_TAG_CLOSE_DELAY_MS = 140;
+  const QUICK_TAG_VIEWPORT_PAD = 8;
+  const QUICK_TAG_PANEL_GUTTER = 8;
+  const QUICK_TAG_MIN_WIDTH = 220;
+  const QUICK_TAG_MIN_HEIGHT = 120;
+  const QUICK_TAG_MIN_MAX_HEIGHT = 180;
+  const quickTagCleanupMap = new WeakMap();
+  const quickTagCloseMap = new WeakMap();
 
   const state = {
     currentPerformer: null,
@@ -46,6 +54,12 @@
     isCollapsed: false,
     cropEditor: null,
     slotSlideshowTimer: null,
+    quickTagObserver: null,
+    quickTagRefreshHandle: 0,
+    quickTagDecorating: false,
+    quickTagSlotsKey: "",
+    quickTagSlots: null,
+    quickTagImageTags: new Map(),
   };
 
   function gqlRequest(query, variables = {}) {
@@ -310,6 +324,10 @@
 
   function isPerformerPage() {
     return !!getPerformerFromPath(window.location.pathname);
+  }
+
+  function isPerformerImagesPage() {
+    return /^\/performers\/\d+\/images\/?$/.test(window.location.pathname);
   }
 
   function getCurrentKey(performer) {
@@ -1043,6 +1061,46 @@
     return data?.findPerformer || null;
   }
 
+  async function fetchImageTagIds(imageId) {
+    const data = await gqlRequest(
+      `
+        query PerformerSupportingImagesImageTags($id: ID!) {
+          findImage(id: $id) {
+            id
+            tags {
+              id
+            }
+          }
+        }
+      `,
+      { id: imageId }
+    );
+
+    return (data?.findImage?.tags || [])
+      .map((tag) => String(tag?.id || "").trim())
+      .filter(Boolean);
+  }
+
+  async function updateImageTagIds(imageId, tagIds) {
+    const data = await gqlRequest(
+      `
+        mutation PerformerSupportingImagesUpdateImageTags($input: ImageUpdateInput!) {
+          imageUpdate(input: $input) {
+            id
+          }
+        }
+      `,
+      {
+        input: {
+          id: String(imageId),
+          tag_ids: Array.from(new Set((tagIds || []).map(String).filter(Boolean))),
+        },
+      }
+    );
+
+    return data?.imageUpdate?.id || null;
+  }
+
   async function queryImagesForTagSet(performerId, tagIds, perPage = 40) {
     if (!tagIds.length) return [];
 
@@ -1716,6 +1774,561 @@
     const normalized = ((current % total) + total) % total;
     state.slotIndices.set(slotKey, normalized);
     return normalized;
+  }
+
+  function getSlotDisplayName(slot) {
+    const match = String(slot?.key || "").match(/slot(\d+)/i);
+    return match ? `Slot ${match[1]}` : "Slot";
+  }
+
+  function getImageIdFromCard(card) {
+    if (!(card instanceof Element)) return "";
+    const link = card.querySelector('a[href*="/images/"]');
+    const href = String(link?.getAttribute("href") || "");
+    const match = href.match(/\/images\/(\d+)/);
+    return match ? match[1] : "";
+  }
+
+  function getQuickTagSlotCacheKey(cfg) {
+    return getSlotConfigs(cfg)
+      .map((slot) =>
+        [
+          slot.key,
+          slot.tagNames.join("|"),
+          slot.customLabel || "",
+          slot.includeDescendantTags ? "1" : "0",
+        ].join(":")
+      )
+      .join(";");
+  }
+
+  async function getQuickTagSlots() {
+    const cfg = state.config || (await loadConfig());
+    const slotsKey = getQuickTagSlotCacheKey(cfg);
+    if (state.quickTagSlots && state.quickTagSlotsKey === slotsKey) {
+      return state.quickTagSlots;
+    }
+
+    const tagMap = await ensureTagMap();
+    const slots = getSlotConfigs(cfg).map((slot) => {
+      const directTags = (slot.tagNames || []).map((name) => {
+        const tagId = getTagIdByName(tagMap, name);
+        return {
+          id: tagId,
+          name,
+        };
+      });
+      const missingTags = directTags
+        .filter((tag) => !tag.id)
+        .map((tag) => tag.name);
+      const tagIds = directTags
+        .map((tag) => String(tag.id || "").trim())
+        .filter(Boolean);
+
+      return {
+        key: slot.key,
+        label: `${getSlotDisplayName(slot)}: ${slot.tagNames.join(", ")}`,
+        title: slot.customLabel || slot.tagNames.join(", "),
+        tagIds,
+        missingTags,
+      };
+    });
+
+    state.quickTagSlotsKey = slotsKey;
+    state.quickTagSlots = slots;
+    return slots;
+  }
+
+  function setQuickTagMenuStatus(menu, status, message) {
+    if (!(menu instanceof Element)) return;
+    menu.setAttribute("data-ptbsi-status", status || "");
+    const statusEl = menu.querySelector(".performer-tag-based-supporting-images__quick-tag-status");
+    if (statusEl) {
+      statusEl.textContent = message || "";
+    }
+  }
+
+  function getActionableQuickTagSlots(slots) {
+    return (slots || []).filter((slot) => (slot?.tagIds || []).length > 0);
+  }
+
+  function setCachedQuickTagImageTags(imageId, tagIds) {
+    state.quickTagImageTags.set(
+      String(imageId),
+      Array.from(new Set((tagIds || []).map(String).filter(Boolean)))
+    );
+  }
+
+  function areTagListsEqual(left, right) {
+    if (left === right) return true;
+    if (!Array.isArray(left) || !Array.isArray(right)) return false;
+    return (
+      left.length === right.length &&
+      left.every((value, index) => String(value) === String(right[index]))
+    );
+  }
+
+  function isQuickTagSlotApplied(slot, imageTagSet) {
+    return (
+      !!slot &&
+      (slot.tagIds || []).length > 0 &&
+      slot.tagIds.every((tagId) => imageTagSet.has(String(tagId)))
+    );
+  }
+
+  function addEventListeners(target, eventNames, handler) {
+    eventNames.forEach((eventName) => {
+      target.addEventListener(eventName, handler);
+    });
+  }
+
+  function buildQuickTagUpdate(existingTagIds, slotTagIds) {
+    const existing = Array.from(new Set((existingTagIds || []).map(String).filter(Boolean)));
+    const slot = Array.from(new Set((slotTagIds || []).map(String).filter(Boolean)));
+    const existingSet = new Set(existing);
+    const isApplied = slot.length > 0 && slot.every((tagId) => existingSet.has(tagId));
+    const nextTagIds = isApplied
+      ? existing.filter((tagId) => !slot.includes(tagId))
+      : Array.from(new Set([...existing, ...slot]));
+
+    return { existingTagIds: existing, nextTagIds, isApplied };
+  }
+
+  function isQuickTagMenuOpen(menu) {
+    return menu instanceof Element && menu.classList.contains("is-open");
+  }
+
+  function closeQuickTagMenu(menu) {
+    if (!(menu instanceof Element)) return;
+    const closeHandler = quickTagCloseMap.get(menu);
+    if (typeof closeHandler === "function") {
+      closeHandler();
+    } else {
+      menu.classList.remove("is-open");
+    }
+  }
+
+  function cleanupQuickTagMenuElement(menu) {
+    if (!(menu instanceof Element)) return;
+    const cleanupHandler = quickTagCleanupMap.get(menu);
+    if (typeof cleanupHandler === "function") {
+      cleanupHandler();
+    }
+    quickTagCleanupMap.delete(menu);
+    quickTagCloseMap.delete(menu);
+  }
+
+  function applyQuickTagMenuSelectionState(menu, imageTagIds, slots) {
+    if (!(menu instanceof Element)) return;
+    const imageTagSet = new Set((imageTagIds || []).map(String));
+    menu
+      .querySelectorAll("[data-ptbsi-quick-slot]")
+      .forEach((button) => {
+        const slotKey = button.getAttribute("data-ptbsi-quick-slot");
+        const slot = (slots || []).find((item) => item.key === slotKey);
+        const isApplied = isQuickTagSlotApplied(slot, imageTagSet);
+        button.classList.toggle("is-applied", isApplied);
+        button.setAttribute("aria-pressed", isApplied ? "true" : "false");
+      });
+  }
+
+  async function syncQuickTagMenuSelectionState(imageId, slots, menu, options = {}) {
+    if (!imageId || !(menu instanceof Element)) return [];
+    const { forceRefresh = false } = options;
+    const cacheKey = String(imageId);
+    if (!forceRefresh && state.quickTagImageTags.has(cacheKey)) {
+      const cachedTagIds = state.quickTagImageTags.get(cacheKey) || [];
+      applyQuickTagMenuSelectionState(menu, cachedTagIds, slots);
+      return cachedTagIds;
+    }
+
+    setQuickTagMenuStatus(menu, "loading", "Checking tags...");
+    try {
+      const imageTagIds = await fetchImageTagIds(imageId);
+      setCachedQuickTagImageTags(cacheKey, imageTagIds);
+      applyQuickTagMenuSelectionState(menu, imageTagIds, slots);
+      setQuickTagMenuStatus(menu, "", "");
+      return imageTagIds;
+    } catch (err) {
+      console.error("[PerformerTagBasedSupportingImages] quick tag state failed", err);
+      setQuickTagMenuStatus(menu, "error", "Could not load image tags");
+      return [];
+    }
+  }
+
+  async function toggleSlotTagsOnImage(imageId, slot, menu, slots) {
+    if (!imageId || !slot?.tagIds?.length) return;
+    setQuickTagMenuStatus(menu, "saving", "Saving...");
+
+    try {
+      const syncedTagIds = await syncQuickTagMenuSelectionState(imageId, slots, menu);
+      const { existingTagIds, nextTagIds, isApplied } = buildQuickTagUpdate(
+        syncedTagIds,
+        slot.tagIds
+      );
+      const didChange = !areTagListsEqual(existingTagIds, nextTagIds);
+
+      if (!didChange) {
+        setCachedQuickTagImageTags(imageId, nextTagIds);
+        applyQuickTagMenuSelectionState(menu, nextTagIds, slots);
+        setQuickTagMenuStatus(menu, "saved", isApplied ? "Removed" : "Already tagged");
+        return;
+      }
+
+      await updateImageTagIds(imageId, nextTagIds);
+      setCachedQuickTagImageTags(imageId, nextTagIds);
+      applyQuickTagMenuSelectionState(menu, nextTagIds, slots);
+      setQuickTagMenuStatus(menu, "saved", isApplied ? "Removed" : "Added");
+    } catch (err) {
+      console.error("[PerformerTagBasedSupportingImages] image quick tag failed", err);
+      setQuickTagMenuStatus(menu, "error", "Tag update failed");
+    }
+  }
+
+  function closeOtherQuickTagMenus(currentMenu) {
+    document
+      .querySelectorAll(".performer-tag-based-supporting-images__quick-tag.is-open")
+      .forEach((menu) => {
+        if (menu !== currentMenu) {
+          closeQuickTagMenu(menu);
+        }
+      });
+  }
+
+  function createQuickTagMenu(imageId, slots) {
+    const menu = document.createElement("div");
+    menu.className = "performer-tag-based-supporting-images__quick-tag";
+    menu.setAttribute("data-ptbsi-image-id", String(imageId));
+    let closeTimer = 0;
+    let viewportEventsBound = false;
+
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "performer-tag-based-supporting-images__quick-tag-toggle";
+    trigger.title = "Add slot tags to this image";
+    trigger.textContent = "Tag";
+    trigger.setAttribute("aria-haspopup", "menu");
+    trigger.setAttribute("aria-expanded", "false");
+    menu.appendChild(trigger);
+
+    const panel = document.createElement("div");
+    panel.className = "performer-tag-based-supporting-images__quick-tag-menu";
+    panel.setAttribute("role", "menu");
+    panel.hidden = true;
+
+    function clearCloseTimer() {
+      if (closeTimer) {
+        window.clearTimeout(closeTimer);
+        closeTimer = 0;
+      }
+    }
+
+    function positionPanel() {
+      if (panel.hidden) return;
+
+      panel.style.maxHeight = `${Math.max(
+        QUICK_TAG_MIN_MAX_HEIGHT,
+        window.innerHeight - QUICK_TAG_VIEWPORT_PAD * 2
+      )}px`;
+      panel.style.visibility = "hidden";
+      panel.style.left = "0px";
+      panel.style.top = "0px";
+
+      const triggerRect = trigger.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      const panelWidth = Math.max(QUICK_TAG_MIN_WIDTH, Math.round(panelRect.width || 260));
+      const panelHeight = Math.max(QUICK_TAG_MIN_HEIGHT, Math.round(panelRect.height || 160));
+
+      const spaceRight = window.innerWidth - triggerRect.right - QUICK_TAG_VIEWPORT_PAD;
+      const spaceLeft = triggerRect.left - QUICK_TAG_VIEWPORT_PAD;
+      const preferRight = spaceRight >= panelWidth || spaceRight >= spaceLeft;
+
+      let left = preferRight
+        ? triggerRect.right + QUICK_TAG_PANEL_GUTTER
+        : triggerRect.left - panelWidth - QUICK_TAG_PANEL_GUTTER;
+      let top = triggerRect.top;
+
+      left = Math.max(
+        QUICK_TAG_VIEWPORT_PAD,
+        Math.min(left, window.innerWidth - panelWidth - QUICK_TAG_VIEWPORT_PAD)
+      );
+      top = Math.max(
+        QUICK_TAG_VIEWPORT_PAD,
+        Math.min(top, window.innerHeight - panelHeight - QUICK_TAG_VIEWPORT_PAD)
+      );
+
+      panel.style.left = `${Math.round(left)}px`;
+      panel.style.top = `${Math.round(top)}px`;
+      panel.style.visibility = "";
+      panel.setAttribute("data-placement", preferRight ? "right" : "left");
+    }
+
+    function handleViewportChange() {
+      if (isQuickTagMenuOpen(menu)) {
+        positionPanel();
+      }
+    }
+
+    function bindViewportEvents() {
+      if (viewportEventsBound) return;
+      viewportEventsBound = true;
+      window.addEventListener("resize", handleViewportChange);
+      window.addEventListener("scroll", handleViewportChange, true);
+    }
+
+    function unbindViewportEvents() {
+      if (!viewportEventsBound) return;
+      viewportEventsBound = false;
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    }
+
+    function closeMenuImmediate() {
+      clearCloseTimer();
+      menu.classList.remove("is-open");
+      trigger.setAttribute("aria-expanded", "false");
+      panel.hidden = true;
+      panel.style.visibility = "";
+      unbindViewportEvents();
+    }
+
+    function openMenu(options = {}) {
+      const { forceRefresh = false } = options;
+      clearCloseTimer();
+      menu.classList.add("is-open");
+      trigger.setAttribute("aria-expanded", "true");
+      panel.hidden = false;
+      closeOtherQuickTagMenus(menu);
+      bindViewportEvents();
+      positionPanel();
+      syncQuickTagMenuSelectionState(imageId, slots, panel, { forceRefresh }).then(() => {
+        if (isQuickTagMenuOpen(menu)) {
+          positionPanel();
+        }
+      });
+    }
+
+    function queueCloseMenu() {
+      clearCloseTimer();
+      closeTimer = window.setTimeout(() => {
+        closeMenuImmediate();
+        closeTimer = 0;
+      }, QUICK_TAG_CLOSE_DELAY_MS);
+    }
+
+    const actionableSlots = getActionableQuickTagSlots(slots);
+    if (!actionableSlots.length) {
+      const empty = document.createElement("div");
+      empty.className = "performer-tag-based-supporting-images__quick-tag-empty";
+      empty.textContent = "No configured slot tags";
+      panel.appendChild(empty);
+    } else {
+      actionableSlots.forEach((slot) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "performer-tag-based-supporting-images__quick-tag-option";
+        button.setAttribute("role", "menuitem");
+        button.setAttribute("data-ptbsi-quick-slot", slot.key);
+        button.title = slot.title ? `Add ${slot.title}` : "Add slot tags";
+        button.textContent = slot.label;
+        panel.appendChild(button);
+      });
+    }
+
+    const status = document.createElement("div");
+    status.className = "performer-tag-based-supporting-images__quick-tag-status";
+    panel.appendChild(status);
+    document.body.appendChild(panel);
+
+    [menu, panel].forEach((target) => {
+      addEventListeners(target, ["click", "mousedown", "pointerdown"], (event) => {
+        event.stopPropagation();
+      });
+    });
+
+    quickTagCloseMap.set(menu, closeMenuImmediate);
+    quickTagCleanupMap.set(menu, () => {
+      clearCloseTimer();
+      unbindViewportEvents();
+      panel.remove();
+    });
+
+    trigger.addEventListener("click", (event) => {
+      event.preventDefault();
+      if (isQuickTagMenuOpen(menu)) {
+        closeMenuImmediate();
+      } else {
+        openMenu({ forceRefresh: true });
+      }
+    });
+
+    [trigger, menu].forEach((target) => {
+      target.addEventListener("mouseenter", () => {
+        openMenu();
+      });
+    });
+
+    menu.addEventListener("mouseleave", () => {
+      queueCloseMenu();
+    });
+
+    panel.addEventListener("mouseenter", () => {
+      clearCloseTimer();
+    });
+
+    panel.addEventListener("mouseleave", () => {
+      queueCloseMenu();
+    });
+
+    trigger.addEventListener("focusin", () => {
+      openMenu();
+    });
+
+    panel.addEventListener("focusin", () => {
+      clearCloseTimer();
+    });
+
+    panel.addEventListener("focusout", (event) => {
+      const nextTarget = event.relatedTarget;
+      if (
+        nextTarget instanceof Element &&
+        (panel.contains(nextTarget) || menu.contains(nextTarget))
+      ) {
+        return;
+      }
+      queueCloseMenu();
+    });
+
+    panel.addEventListener("click", (event) => {
+      if (!(event.target instanceof Element)) return;
+      const button = event.target.closest("[data-ptbsi-quick-slot]");
+      if (!button) return;
+      event.preventDefault();
+      const slotKey = button.getAttribute("data-ptbsi-quick-slot");
+      const slot = (slots || []).find((item) => item.key === slotKey);
+      toggleSlotTagsOnImage(imageId, slot, panel, slots);
+    });
+
+    panel.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeMenuImmediate();
+        trigger.focus();
+      }
+    });
+
+    menu.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeMenuImmediate();
+      }
+    });
+
+    return menu;
+  }
+
+  function cleanupQuickTagMenus() {
+    document
+      .querySelectorAll(".performer-tag-based-supporting-images__quick-tag")
+      .forEach((menu) => {
+        cleanupQuickTagMenuElement(menu);
+        menu.remove();
+      });
+    document
+      .querySelectorAll(".ptbsi-quick-tag-card")
+      .forEach((card) => {
+        card.classList.remove("ptbsi-quick-tag-card");
+        card.removeAttribute("data-ptbsi-quick-tag-image-id");
+        card.removeAttribute("data-ptbsi-quick-tag-key");
+      });
+  }
+
+  async function decorateQuickTagImageCards() {
+    state.quickTagRefreshHandle = 0;
+
+    if (!isPerformerImagesPage()) {
+      cleanupQuickTagMenus();
+      return;
+    }
+    if (state.quickTagDecorating) return;
+
+    state.quickTagDecorating = true;
+    try {
+      const slots = await getQuickTagSlots();
+      const actionableSlots = getActionableQuickTagSlots(slots);
+      if (!actionableSlots.length) {
+        cleanupQuickTagMenus();
+        return;
+      }
+
+      const slotKey = state.quickTagSlotsKey;
+      document.querySelectorAll(".image-card").forEach((card) => {
+        if (!(card instanceof HTMLElement)) return;
+        if (card.closest(`#${PANEL_ID}`)) return;
+
+        const imageId = getImageIdFromCard(card);
+        if (!imageId) return;
+
+        const existingMenu = card.querySelector(
+          ".performer-tag-based-supporting-images__quick-tag"
+        );
+        if (
+          existingMenu &&
+          card.getAttribute("data-ptbsi-quick-tag-image-id") === imageId &&
+          card.getAttribute("data-ptbsi-quick-tag-key") === slotKey
+        ) {
+          return;
+        }
+
+        cleanupQuickTagMenuElement(existingMenu);
+        existingMenu?.remove();
+        card.classList.add("ptbsi-quick-tag-card");
+        card.setAttribute("data-ptbsi-quick-tag-image-id", imageId);
+        card.setAttribute("data-ptbsi-quick-tag-key", slotKey);
+
+        card.appendChild(createQuickTagMenu(imageId, slots));
+      });
+    } catch (err) {
+      console.error("[PerformerTagBasedSupportingImages] quick tag menu failed", err);
+    } finally {
+      state.quickTagDecorating = false;
+    }
+  }
+
+  function scheduleQuickTagRefresh() {
+    if (state.quickTagRefreshHandle) return;
+    state.quickTagRefreshHandle = window.requestAnimationFrame(() => {
+      decorateQuickTagImageCards();
+    });
+  }
+
+  function installQuickTagObserver() {
+    if (state.quickTagObserver || typeof MutationObserver !== "function") return;
+    state.quickTagObserver = new MutationObserver((mutations) => {
+      if (!isPerformerImagesPage()) {
+        if (
+          document.querySelector(
+            ".performer-tag-based-supporting-images__quick-tag"
+          )
+        ) {
+          scheduleQuickTagRefresh();
+        }
+        return;
+      }
+
+      const hasRelevantMutation = mutations.some((mutation) =>
+        Array.from(mutation.addedNodes || []).some(
+          (node) =>
+            node instanceof Element &&
+            !node.closest(".performer-tag-based-supporting-images__quick-tag")
+        )
+      );
+      if (hasRelevantMutation) {
+        scheduleQuickTagRefresh();
+      }
+    });
+    state.quickTagObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
   }
 
   async function buildPanelData(performer, cfg) {
@@ -2814,15 +3427,18 @@
     if (path === state.lastPath) return;
     state.lastPath = path;
     closeCropEditor();
+    closeOtherQuickTagMenus(null);
     state.scheduledLayoutToken += 1;
     refreshObservedElements();
     scheduleRouteInjection();
+    scheduleQuickTagRefresh();
   }
 
   function init() {
     installNavigationHooks();
     installObserver();
     installResizeObserver();
+    installQuickTagObserver();
     installDetailInteractionHook();
     installLayoutHandlers();
     state.lastPath = window.location.pathname;
@@ -2830,6 +3446,7 @@
       refreshObservedElements();
       scheduleRouteInjection();
     }
+    scheduleQuickTagRefresh();
   }
 
   if (document.readyState === "loading") {
