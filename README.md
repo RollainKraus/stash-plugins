@@ -357,6 +357,17 @@ Simple menu to add tags or performers to images/scenes/performers directly from 
 - Images support Visage for quick 'right click >> edit performers >> crop >> find matches'
 - Right click or hover over right 1/3 of content card to show menu (hoverZone makes this compatible with other plugins that add right click menus)
 
+<h2>Preview</h2>
+<p>
+  <img src="/pluginPreviews/SimpleRightClickTaggingPreview.gif" alt="SimpleRightClickTagging preview" width="600">
+</p>
+<p>
+  <img src="/pluginPreviews/SimpleRightClickTaggingPerformersPreview.png" alt="SimpleRightClickTaggingPerformers preview" width="600">
+</p>
+<p>
+  <img src="/pluginPreviews/SimpleRightClickTaggingTagsPreview.png" alt="SimpleRightClickTaggingTags preview" width="600">
+</p>
+
 ## License
 
 The default license is set to [AGPL-3.0](/LICENCE). Before publishing any plugins you can change it.
