@@ -354,7 +354,7 @@ All credit goes to the original uploader cc1234
 Simple menu to add tags or performers to images/scenes/performers directly from the content browser pages
 
 - Supports multi-select for batch editing
-- Images support Visage for quick 'right click >> edit performers >> crop >> find matches'
+- Images support Visage for quick 'right click >> edit performers >> crop >> find matches'  (Requires Visage)
 - Right click or hover over right 1/3 of content card to show menu (hoverZone makes this compatible with other plugins that add right click menus)
 
 <h2>Preview</h2>
