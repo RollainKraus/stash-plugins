@@ -620,6 +620,57 @@
     });
   }
 
+  function getLastCrop() {
+    return {
+      dataUrl: lastCropDataUrl,
+      pngDataUrl: lastCropPngDataUrl,
+      blob: lastCropBlob,
+      pngBlob: lastCropPngBlob,
+    };
+  }
+
+  function clearLastCrop() {
+    lastCropBlob = null;
+    lastCropPngBlob = null;
+    lastCropDataUrl = null;
+    lastCropPngDataUrl = null;
+  }
+
+  async function cropTarget(target, selectionRect, targetRect) {
+    if (!canCapture(target)) {
+      throw new Error("Visage could not find a loaded image or video frame to crop.");
+    }
+    await cropSelection(
+      target,
+      selectionRect,
+      targetRect || target.getBoundingClientRect()
+    );
+    return getLastCrop();
+  }
+
+  async function findMatchesForLastCrop() {
+    if (!lastCropPngBlob) {
+      throw new Error("No face crop is available.");
+    }
+    const result = await callOfficialGradioClient();
+    return extractCandidates(result);
+  }
+
+  window.VisageQuickTagging = {
+    version: 1,
+    openStashFace: () => window.open(STASHFACE_URL, "_blank", "noopener,noreferrer"),
+    canCapture,
+    cropTarget,
+    copyCropToClipboard,
+    downloadCrop,
+    findMatches: findMatchesForLastCrop,
+    getLastCrop,
+    clearLastCrop,
+    imageSource,
+  };
+
+  window.dispatchEvent(new CustomEvent("visage:quick-tagging-ready"));
+
   document.addEventListener(
     "click",
     (event) => {
