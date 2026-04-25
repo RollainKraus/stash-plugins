@@ -51,7 +51,7 @@ Without parents, tags automatically go in ‘Ungrouped’
 
 <h2>Preview</h2>
 <p>
-  <img src="/plugins/EditTagsOverhaul/images/EditTagsOverhaulPreview.gif" alt="EditTagsOverhaul preview" width="600">
+  <img src="/pluginPreviews/EditTagsOverhaulPreview.gif" alt="EditTagsOverhaul preview" width="600">
 </p>
 
 <h2>Search Preview</h2>
