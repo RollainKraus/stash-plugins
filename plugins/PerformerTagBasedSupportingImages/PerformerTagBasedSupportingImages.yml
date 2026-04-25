@@ -1,6 +1,6 @@
 name: Performer Tag Based Supporting Images
 description: Supporting performer images selected by performer plus slot tag rules
-version: 0.2.0
+version: 2.2.0
 url: https://github.com/RollainKraus/stash-plugins
 
 settings:
