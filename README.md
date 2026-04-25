@@ -56,12 +56,12 @@ Without parents, tags automatically go in ‘Ungrouped’
 
 <h2>Search Preview</h2>
 <p>
-  <img src="/plugins/EditTagsOverhaul/images/EditTagsOverhaulSEARCHPreview.png" alt="EditTagsOverhaul search" width="600">
+  <img src="/pluginPreviews/EditTagsOverhaulSEARCHPreview.png" alt="EditTagsOverhaul search" width="600">
 </p>
 
 <h2>Settings Preview</h2>
 <p>
-  <img src="/plugins/EditTagsOverhaul/images/EditTagsOverhaulSettingsPreview.png" alt="EditTagsOverhaul settings" width="600">
+  <img src="/pluginPreviews/EditTagsOverhaulSettingsPreview.png" alt="EditTagsOverhaul settings" width="600">
 </p>
 
 # Details Tags Overhaul
@@ -85,12 +85,12 @@ Use Sort Name to rearrange how the groups, subgroups and tags are ordered in the
 Without parents, tags automatically go in ‘Ungrouped’
 <h2>Preview</h2>
 <p>
-  <img src="/plugins/DetailsTagsOverhaul/images/DetailsTagsOverhaulPreview.gif" alt="DetailsTagsOverhaul preview" width="600">
+  <img src="/pluginPreviews/DetailsTagsOverhaulPreview.gif" alt="DetailsTagsOverhaul preview" width="600">
 </p>
 
 <h2>Settings Preview</h2>
 <p>
-  <img src="/plugins/DetailsTagsOverhaul/images/DetailsTagsOverhaulSettingsPreview.png" alt="DetailsTagsOverhaul settings" width="600">
+  <img src="/pluginPreviews/DetailsTagsOverhaulSettingsPreview.png" alt="DetailsTagsOverhaul settings" width="600">
 </p>
 
 # Performer Tags Overhaul
@@ -128,22 +128,22 @@ Without parents, tags automatically go in ‘Ungrouped’
 
 <h2>Preview</h2>
 <p>
-  <img src="/plugins/PerformerTagsOverhaul/images/PerformerTagsOverhaulPreview.gif" alt="PerformerTagsOverhaul preview" width="600">
+  <img src="/pluginPreviews/PerformerTagsOverhaulPreview.gif" alt="PerformerTagsOverhaul preview" width="600">
 </p>
 
 <h2>Text and Image Display Mode Preview</h2>
 <p>
-  <img src="/plugins/PerformerTagsOverhaul/images/PerformerTagsSubGroupsPreviewTextAndImageMode.png" alt="PerformerTagsOverhaul search" width="600">
+  <img src="/pluginPreviews/PerformerTagsSubGroupsPreviewTextAndImageMode.png" alt="PerformerTagsOverhaul search" width="600">
 </p>
 
 <h2>Text Display Mode Preview</h2>
 <p>
-  <img src="/plugins/PerformerTagsOverhaul/images/PerformerTagsSubGroupsPreviewTextMode.png" alt="PerformerTagsOverhaul search" width="600">
+  <img src="/pluginPreviews/PerformerTagsSubGroupsPreviewTextMode.png" alt="PerformerTagsOverhaul search" width="600">
 </p>
 
 <h2>Settings Preview</h2>
 <p>
-  <img src="/plugins/PerformerTagsOverhaul/images/PerformerTagsOverhaulSettingsPreview.png" alt="PerformerTagsOverhaul settings" width="600">
+  <img src="/pluginPreviews/PerformerTagsOverhaulSettingsPreview.png" alt="PerformerTagsOverhaul settings" width="600">
 </p>
 
 
@@ -180,12 +180,12 @@ Intended to work alongside PerformerTagsOverhaul, but works as its own standalon
 
 <h2>Preview</h2>
 <p>
-  <img src="/plugins/PerformerTagBasedSupportingImages/images/PerformerTagBasedSupportingImagesPreview.gif" alt="DetailsTagsOverhaul preview" width="600">
+  <img src="/pluginPreviews/PerformerTagBasedSupportingImagesPreview.gif" alt="DetailsTagsOverhaul preview" width="600">
 </p>
 
 <h2>Settings Preview</h2>
 <p>
-  <img src="/plugins/PerformerTagBasedSupportingImages/images/PerformerTagBasedSupportingImagesSettingsPreview.png" alt="DetailsTagsOverhaul settings" width="600">
+  <img src="/pluginPreviews/PerformerTagBasedSupportingImagesSettingsPreview.png" alt="DetailsTagsOverhaul settings" width="600">
 </p>
 
 -- to do -- add support for images with subtags to be shown as well (example, any image tagged with a subtag of Clothes will be shown in a slot set to the tag Clothes)
@@ -221,17 +221,17 @@ This recreates the content browser functionality of scenes, images, galleries, s
 
 <h2>Preview</h2>
 <p>
-  <img src="/plugins/TagBasedBrowser/images/TagBasedBrowserPreview.gif" alt="TagBasedBrowser preview" width="600">
+  <img src="/pluginPreviews/TagBasedBrowserPreview.gif" alt="TagBasedBrowser preview" width="600">
 </p>
 
 <h2>UI Preview</h2>
 <p>
-  <img src="/plugins/TagBasedBrowser/images/TagBasedBrowserUIPreview.png" alt="TagBasedBrowser search" width="600">
+  <img src="/pluginPreviews/TagBasedBrowserUIPreview.png" alt="TagBasedBrowser search" width="600">
 </p>
 
 <h2>Settings Preview</h2>
 <p>
-  <img src="/plugins/TagBasedBrowser/images/TagBasedBrowserSettingsPreview.png" alt="TagBasedBrowser settings" width="600">
+  <img src="/pluginPreviews/TagBasedBrowserSettingsPreview.png" alt="TagBasedBrowser settings" width="600">
 </p>
 
 # Simple Image Crop
@@ -244,12 +244,12 @@ Adds a button to crop images from the edit image tab.
 
 <h2>Preview</h2>
 <p>
-  <img src="/plugins/SimpleImageCrop/images/SimpleImageCropPreview.gif" alt="SimpleImageCrop preview" width="600">
+  <img src="/pluginPreviews/SimpleImageCropPreview.gif" alt="SimpleImageCrop preview" width="600">
 </p>
 
 <h2>Settings Preview</h2>
 <p>
-  <img src="/plugins/SimpleImageCrop/images/SimpleImageCropSettingsPreview.png" alt="SimpleImageCrop settings" width="600">
+  <img src="/pluginPreviews/SimpleImageCropSettingsPreview.png" alt="SimpleImageCrop settings" width="600">
 </p>
 
 # Tag Sidebar
@@ -273,12 +273,12 @@ Without parents, tags automatically go in ‘Ungrouped’
 
 <h2>Preview</h2>
 <p>
-  <img src="/plugins/TagSidebar/images/TagSidebarPreview.gif" alt="TagSidebar preview" width="600">
+  <img src="/pluginPreviews/TagSidebarPreview.gif" alt="TagSidebar preview" width="600">
 </p>
 
 <h2>Settings Preview</h2>
 <p>
-  <img src="/plugins/TagSidebar/images/TagSidebarSettingsPreview.png" alt="TagSidebar settings" width="600">
+  <img src="/pluginPreviews/TagSidebarSettingsPreview.png" alt="TagSidebar settings" width="600">
 </p>
 
 # Custom Tags Manager
@@ -297,32 +297,32 @@ Adds a standalone page for creating and managing tags. This provides an easy way
 
 <h2>Preview</h2>
 <p>
-  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerTagEditPreview.png" alt="CustomTagsManager preview" width="600">
+  <img src="/pluginPreviews/CustomTagsManagerTagEditPreview.png" alt="CustomTagsManager preview" width="600">
 </p>
 
 <p>
-  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerNewTagPreview.png" alt="CustomTagsManager preview" width="600">
+  <img src="/pluginPreviews/CustomTagsManagerNewTagPreview.png" alt="CustomTagsManager preview" width="600">
 </p>
 
 <p>
-  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerSplitTagPreview.png" alt="CustomTagsManager preview" width="600">
+  <img src="/pluginPreviews/CustomTagsManagerSplitTagPreview.png" alt="CustomTagsManager preview" width="600">
 </p>
 
 <p>
-  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerSupplementalImagesPreview.png" alt="CustomTagsManager preview" width="600">
+  <img src="/pluginPreviews/CustomTagsManagerSupplementalImagesPreview.png" alt="CustomTagsManager preview" width="600">
 </p>
 
 <p>
-  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerHoverTagPreview.png" alt="CustomTagsManager preview" width="600">
+  <img src="/pluginPreviews/CustomTagsManagerHoverTagPreview.png" alt="CustomTagsManager preview" width="600">
 </p>
 
 <p>
-  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerButtonPreview.png" alt="CustomTagsManager preview" width="600">
+  <img src="/pluginPreviews/CustomTagsManagerButtonPreview.png" alt="CustomTagsManager preview" width="600">
 </p>
 
 <h2>Settings Preview</h2>
 <p>
-  <img src="/plugins/CustomTagsManager/images/CustomTagsManagerSettingsPreview.png" alt="CustomTagsManager settings" width="600">
+  <img src="/pluginPreviews/CustomTagsManagerSettingsPreview.png" alt="CustomTagsManager settings" width="600">
 </p>
 
 # Organize Images By Performer
@@ -339,12 +339,12 @@ Uses stash metadata to move images with attached performers into performer folde
 
 <h2>Settings Preview</h2>
 <p>
-  <img src="/plugins/OrganizeImagesByPerformer/images/OrganizeImagesByPerformerSettingsPreview.png" alt="OrganizeImagesByPerformer preview" width="600">
+  <img src="/pluginPreviews/OrganizeImagesByPerformerSettingsPreview.png" alt="OrganizeImagesByPerformer preview" width="600">
 </p>
 
 <h2>Tasks Preview</h2>
 <p>
-  <img src="/plugins/OrganizeImagesByPerformer/images/OrganizeImagesByPerformerTasksPreview.png" alt="OrganizeImagesByPerformer settings" width="600">
+  <img src="/pluginPreviews/OrganizeImagesByPerformerTasksPreview.png" alt="OrganizeImagesByPerformer settings" width="600">
 </p>
 
 # Visage
@@ -355,7 +355,7 @@ Changes: The original code is largely unchanged. visage-marquee.js hijacks the o
 
 <h2>Workflow Preview</h2>
 <p>
-  <img src="/plugins/visage/images/VisageCropPreview.gif" alt="Visage preview" width="600">
+  <img src="/pluginPreviews/VisageCropPreview.gif" alt="Visage preview" width="600">
 </p>
 
 Added helpful buttons if using the backend is preferred since there are more options there
