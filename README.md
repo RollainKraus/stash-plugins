@@ -219,21 +219,6 @@ This recreates the content browser functionality of scenes, images, galleries, s
 - Add missing metadata displays and sort rules
 - UI customization
 
-<h2>Preview</h2>
-<p>
-  <img src="/pluginPreviews/TagBasedBrowserPreview.gif" alt="TagBasedBrowser preview" width="600">
-</p>
-
-<h2>UI Preview</h2>
-<p>
-  <img src="/pluginPreviews/TagBasedBrowserUIPreview.png" alt="TagBasedBrowser search" width="600">
-</p>
-
-<h2>Settings Preview</h2>
-<p>
-  <img src="/pluginPreviews/TagBasedBrowserSettingsPreview.png" alt="TagBasedBrowser settings" width="600">
-</p>
-
 # Simple Image Crop
 
 Adds a button to crop images from the edit image tab.
