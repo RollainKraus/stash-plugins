@@ -1,0 +1,36 @@
+name: Simple Right Click Tagging
+description: Quick performer and tag editing from image, scene, and performer cards
+version: 0.1.0
+url: https://github.com/RollainKraus/stash-plugins
+
+settings:
+  menuAccessMode:
+    displayName: Menu Access Mode
+    type: STRING
+    description: "rightClick or hoverZone. HoverZone uses the right third of each card. (Default: rightClick)"
+
+  defaultExpanded:
+    displayName: Default Expanded
+    type: BOOLEAN
+    description: "Expand tag groups by default (Default: false)"
+
+  autoExpandIfSelected:
+    displayName: Auto Expand If Selected
+    type: BOOLEAN
+    description: "Expand groups containing selected tags by default (Default: true)"
+
+  duplicateMultiParentTags:
+    displayName: Duplicate Multi-Parent Tags
+    type: BOOLEAN
+    description: "Allow tags with multiple parents to appear under each parent (Default: false)"
+
+  selectedBorderColor:
+    displayName: Selected Border Color
+    type: STRING
+    description: "Border color for selected tags (Default: #ffffff)"
+
+ui:
+  javascript:
+    - SimpleRightClickTagging.js
+  css:
+    - SimpleRightClickTagging.css
