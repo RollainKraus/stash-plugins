@@ -11,11 +11,12 @@
   const PANEL_BOTTOM_GAP = 16;
   const PANEL_SIDE_GAP = 8;
   const PANEL_MIN_HEIGHT = 220;
-  const PANEL_BASE_WIDTH = 300;
-  const PANEL_MAX_WIDTH = Math.round(PANEL_BASE_WIDTH * 1.5);
+  const PANEL_DEFAULT_WIDTH = 300;
+  const PANEL_MIN_WIDTH = 220;
   const PANEL_COLLAPSED_WIDTH = 58;
   const CROP_STORAGE_KEY = "ptbsi-slot-crops-v1";
   const SLOT_ASPECT_STORAGE_KEY = "ptbsi-slot-aspect-modes-v1";
+  const SLOT_ASPECT_LOCK_STORAGE_KEY = "ptbsi-slot-aspect-locks-v1";
   const COLLAPSED_STORAGE_KEY = "ptbsi-panel-collapsed-v1";
   const SLOT_ASPECT_MODES = ["tall", "portrait", "square", "landscape", "widescreen"];
   const LOOP_REPEAT_COUNT = 3;
@@ -26,8 +27,20 @@
   const QUICK_TAG_MIN_WIDTH = 220;
   const QUICK_TAG_MIN_HEIGHT = 120;
   const QUICK_TAG_MIN_MAX_HEIGHT = 180;
+  const CARD_PREVIEW_GUTTER = 12;
+  const CARD_PREVIEW_VIEWPORT_PAD = 8;
+  const CARD_PREVIEW_TILE_GAP = 8;
+  const CARD_PREVIEW_PANEL_PADDING = 8;
+  const CARD_PREVIEW_MIN_PANEL_WIDTH = 220;
+  const CARD_PREVIEW_MIN_PANEL_HEIGHT = 220;
+  const CARD_PREVIEW_DEFAULT_PANEL_WIDTH = 500;
+  const CARD_PREVIEW_DEFAULT_PANEL_HEIGHT = 500;
+  const CARD_PREVIEW_MIN_ROW_HEIGHT = 88;
+  const CARD_PREVIEW_MAX_ROW_HEIGHT = 260;
+  const CARD_PREVIEW_CLOSE_DELAY_MS = 140;
   const quickTagCleanupMap = new WeakMap();
   const quickTagCloseMap = new WeakMap();
+  const cardPreviewCleanupMap = new WeakMap();
 
   const state = {
     currentPerformer: null,
@@ -51,6 +64,7 @@
     observedElements: new Set(),
     cropStore: loadCropStore(),
     slotAspectStore: loadSlotAspectStore(),
+    slotAspectLockStore: loadSlotAspectLockStore(),
     isCollapsed: false,
     cropEditor: null,
     slotSlideshowTimer: null,
@@ -60,6 +74,17 @@
     quickTagSlotsKey: "",
     quickTagSlots: null,
     quickTagImageTags: new Map(),
+    cardPreviewObserver: null,
+    cardPreviewRefreshHandle: 0,
+    cardPreviewRoot: null,
+    cardPreviewCloseTimer: 0,
+    cardPreviewActiveCard: null,
+    cardPreviewActivePerformerId: "",
+    cardPreviewOpenToken: 0,
+    cardPreviewDataCache: new Map(),
+    cardPreviewViewportBound: false,
+    cardPreviewSessionData: null,
+    cardPreviewSlideshowTimer: null,
   };
 
   function gqlRequest(query, variables = {}) {
@@ -140,6 +165,28 @@
     }
   }
 
+  function loadSlotAspectLockStore() {
+    try {
+      const raw = window.localStorage.getItem(SLOT_ASPECT_LOCK_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (err) {
+      return {};
+    }
+  }
+
+  function saveSlotAspectLockStore() {
+    try {
+      window.localStorage.setItem(
+        SLOT_ASPECT_LOCK_STORAGE_KEY,
+        JSON.stringify(state.slotAspectLockStore)
+      );
+    } catch (err) {
+      void err;
+    }
+  }
+
   function getPanelStateBehavior(cfg) {
     const value = String(cfg?.a_defaultPanelState || "").trim().toLowerCase();
     if (value === "expanded" || value === "always-expanded") {
@@ -193,9 +240,42 @@
     return normalizeSlotAspectMode(state.slotAspectStore?.[String(slotKey)]);
   }
 
+  function getStoredSlotAspectMode(slotKey) {
+    const key = String(slotKey || "");
+    if (
+      !key ||
+      !state.slotAspectStore ||
+      !Object.prototype.hasOwnProperty.call(state.slotAspectStore, key)
+    ) {
+      return "";
+    }
+    const raw = String(state.slotAspectStore[key] || "").trim();
+    return raw ? normalizeSlotAspectMode(raw) : "";
+  }
+
   function setSavedSlotAspectMode(slotKey, mode) {
     state.slotAspectStore[String(slotKey)] = normalizeSlotAspectMode(mode);
     saveSlotAspectStore();
+  }
+
+  function isSlotAspectLocked(slotKey) {
+    return !!state.slotAspectLockStore?.[String(slotKey)];
+  }
+
+  function setSlotAspectLocked(slotKey, locked) {
+    const key = String(slotKey || "");
+    if (!key) return false;
+    if (locked) {
+      state.slotAspectLockStore[key] = true;
+    } else {
+      delete state.slotAspectLockStore[key];
+    }
+    saveSlotAspectLockStore();
+    return !!locked;
+  }
+
+  function toggleSlotAspectLocked(slotKey) {
+    return setSlotAspectLocked(slotKey, !isSlotAspectLocked(slotKey));
   }
 
   function getAspectRatioForMode(mode) {
@@ -248,6 +328,13 @@
     return `Slot aspect: ${getSlotAspectDisplayName(mode)}`;
   }
 
+  function getSlotAspectLockTitle(mode, locked) {
+    const label = getSlotAspectDisplayName(mode);
+    return locked
+      ? `Slot aspect locked: ${label}. Click to unlock.`
+      : `Slot aspect unlocked: ${label}. Click to lock.`;
+  }
+
   function getSlotAspectDisplayName(mode) {
     switch (normalizeSlotAspectMode(mode)) {
       case "tall":
@@ -271,6 +358,11 @@
       slot.aspectMode = normalized;
     }
     return normalized;
+  }
+
+  function getSlotCropAspectMode(slot) {
+    if (!slot || !isSlotAspectLocked(slot.key)) return "";
+    return normalizeSlotAspectMode(slot.aspectMode || getSavedSlotAspectMode(slot.key));
   }
 
   function getCropStoreKey(slotKey, imageId) {
@@ -305,7 +397,8 @@
     return normalizeCropRect(crop);
   }
 
-  function setSavedCrop(slotKey, imageId, crop) {
+  function setSavedCrop(slotKey, imageId, crop, options = {}) {
+    const { skipSave = false } = options;
     const key = getCropStoreKey(slotKey, imageId);
     const normalized = normalizeCropRect(crop);
     if (normalized) {
@@ -313,7 +406,9 @@
     } else {
       delete state.cropStore[key];
     }
-    saveCropStore();
+    if (!skipSave) {
+      saveCropStore();
+    }
   }
 
   function getPerformerFromPath(pathname) {
@@ -619,14 +714,10 @@
 
     const overlayTop = topCandidates.length ? Math.min(...topCandidates) : null;
     const overlayRight = rightCandidates.length ? Math.max(...rightCandidates) : null;
-    const widthScale = getPanelWidthScale(state.config || {});
-    const overlayWidth = Math.max(
-      state.isCollapsed ? PANEL_COLLAPSED_WIDTH : PANEL_BASE_WIDTH,
-      Math.min(
-        PANEL_MAX_WIDTH,
-        Math.round((PANEL_BASE_WIDTH * widthScale) / 100)
-      )
-    );
+    const configuredPanelWidth = getPanelWidth(state.config || {});
+    const overlayWidth = state.isCollapsed
+      ? PANEL_COLLAPSED_WIDTH
+      : configuredPanelWidth;
     const overlayLeft =
       Number.isFinite(overlayRight) && Number.isFinite(overlayTop)
         ? Math.max(0, Math.round(overlayRight - overlayWidth))
@@ -689,8 +780,81 @@
     return getConfigNumber(cfg.a_imageHeight, 210, 80, 1200);
   }
 
-  function getPanelWidthScale(cfg) {
-    return getConfigNumber(cfg.a_panelWidthScale, 100, 100, 150);
+  function getCardPreviewPanelWidth(cfg) {
+    return getConfigNumber(
+      cfg?.a_cardPreviewPanelWidth,
+      CARD_PREVIEW_DEFAULT_PANEL_WIDTH,
+      CARD_PREVIEW_MIN_PANEL_WIDTH,
+      1400
+    );
+  }
+
+  function getCardPreviewPanelHeight(cfg) {
+    return getConfigNumber(
+      cfg?.a_cardPreviewPanelHeight,
+      CARD_PREVIEW_DEFAULT_PANEL_HEIGHT,
+      CARD_PREVIEW_MIN_PANEL_HEIGHT,
+      1400
+    );
+  }
+
+  function getCardPreviewBackgroundColor(cfg) {
+    const value = String(cfg?.a_cardPreviewBackgroundColor || "").trim();
+    return value || "#000000";
+  }
+
+  function shouldShowEmptyCardPreviewSlots(cfg) {
+    return getConfigBoolean(cfg?.a_cardPreviewShowEmptySlots, false);
+  }
+
+  function getCardPreviewHoverBehavior(cfg) {
+    const rawValue = String(cfg?.a_cardPreviewHoverBehavior || "")
+      .trim()
+      .toLowerCase();
+
+    switch (rawValue) {
+      case "performer card":
+      case "performercard":
+      case "card":
+      case "anywhere":
+        return "performer-card";
+      case "badge":
+        return "badge";
+      case "disabled":
+      case "disable":
+      case "off":
+      case "none":
+      case "false":
+        return "disabled";
+      default:
+        break;
+    }
+    return "badge";
+  }
+
+  function getCardPreviewSlotOrder(cfg) {
+    const raw = String(cfg?.a_cardPreviewSlotOrder || "")
+      .replace(/\s+/g, "")
+      .trim();
+    const fallback = ["slot1", "slot2", "slot3", "slot4", "slot5", "slot6"];
+    if (!raw) return fallback;
+    if (!/^[1-6]{6}$/.test(raw)) return fallback;
+    const digits = raw.split("");
+    if (new Set(digits).size !== 6) return fallback;
+    return digits.map((digit) => `slot${digit}`);
+  }
+
+  function getPanelWidth(cfg) {
+    return getConfigNumber(
+      cfg?.a_panelWidth,
+      PANEL_DEFAULT_WIDTH,
+      PANEL_MIN_WIDTH,
+      1400
+    );
+  }
+
+  function shouldAutoFitSlotCrops(cfg) {
+    return getConfigBoolean(cfg?.a_autoFitSlotCrops, true);
   }
 
   function getOverlayBackgroundOpacity(cfg) {
@@ -746,6 +910,7 @@
   function applyPanelVariables(panel, cfg) {
     const panelOpacity = getPanelOpacity(cfg);
     const backgroundColor = getPanelBackgroundColor(cfg);
+    const cardPreviewBackgroundColor = getCardPreviewBackgroundColor(cfg);
     const overlayOpacity = getOverlayBackgroundOpacity(cfg);
     const overlayBackgroundColor = getOverlayBackgroundColor(cfg);
     const transitionMs = getSlotTransitionMs(cfg);
@@ -754,6 +919,10 @@
     panel.style.setProperty("--ptbsi-panel-opacity", panelOpacity);
     panel.style.setProperty("--ptbsi-font-color", getPanelFontColor(cfg));
     panel.style.setProperty("--ptbsi-panel-bg-color", backgroundColor);
+    panel.style.setProperty(
+      "--ptbsi-card-preview-bg-color",
+      cardPreviewBackgroundColor
+    );
     panel.style.setProperty(
       "--ptbsi-panel-surface-03",
       makeSurfaceColor(backgroundColor, panelOpacity, 0.88)
@@ -1081,6 +1250,32 @@
       .filter(Boolean);
   }
 
+  async function fetchImageDetails(imageId) {
+    const data = await gqlRequest(
+      `
+        query PerformerSupportingImagesImageDetails($id: ID!) {
+          findImage(id: $id) {
+            id
+            title
+            files {
+              path
+              width
+              height
+            }
+            paths {
+              image
+              preview
+              thumbnail
+            }
+          }
+        }
+      `,
+      { id: imageId }
+    );
+
+    return data?.findImage || null;
+  }
+
   async function updateImageTagIds(imageId, tagIds) {
     const data = await gqlRequest(
       `
@@ -1328,6 +1523,31 @@
     };
   }
 
+  function selectionFromPointsWithAspect(start, end, aspectRatio) {
+    if (!start || !end) return null;
+    const ratio = Number(aspectRatio);
+    if (!(ratio > 0)) {
+      return selectionFromPoints(start, end);
+    }
+
+    const deltaX = end.x - start.x;
+    const deltaY = end.y - start.y;
+    const widthFromX = Math.abs(deltaX);
+    const widthFromY = Math.abs(deltaY) * ratio;
+    const width = Math.min(widthFromX, widthFromY);
+    const height = width / ratio;
+
+    const horizontalSign = deltaX < 0 ? -1 : 1;
+    const verticalSign = deltaY < 0 ? -1 : 1;
+
+    const target = {
+      x: start.x + width * horizontalSign,
+      y: start.y + height * verticalSign,
+    };
+
+    return selectionFromPoints(start, target);
+  }
+
   function selectionToCrop(selectionRect, imageRect) {
     if (!selectionRect || !imageRect) return null;
     return normalizeCropRect({
@@ -1389,6 +1609,175 @@
     });
   }
 
+  function getSlotTargetAspectMode(slot) {
+    return normalizeSlotAspectMode(
+      slot?.aspectMode || getStoredSlotAspectMode(slot?.key) || "square"
+    );
+  }
+
+  function getSlotFittedCrop(slot, image) {
+    const dimensions = getImageDimensions(image);
+    if (!slot || !image || !dimensions) return null;
+    const aspectMode = getSlotTargetAspectMode(slot);
+    const existingCrop = getSavedCrop(slot.key, image.id);
+    const baseCrop = existingCrop || { x: 0, y: 0, width: 1, height: 1 };
+    return snapCropToAspectMode(baseCrop, dimensions, aspectMode);
+  }
+
+  function areCropsEquivalent(leftCrop, rightCrop, tolerance = 0.0005) {
+    const left = normalizeCropRect(leftCrop);
+    const right = normalizeCropRect(rightCrop);
+    if (!left && !right) return true;
+    if (!left || !right) return false;
+    return (
+      Math.abs(left.x - right.x) <= tolerance &&
+      Math.abs(left.y - right.y) <= tolerance &&
+      Math.abs(left.width - right.width) <= tolerance &&
+      Math.abs(left.height - right.height) <= tolerance
+    );
+  }
+
+  function doesImageCropFitSlot(slot, image, tolerance = 0.025) {
+    const dimensions = getImageDimensions(image);
+    const crop = getSavedCrop(slot?.key, image?.id);
+    if (!slot || !image || !dimensions || !crop) return false;
+    const targetRatio = getAspectRatioForMode(getSlotTargetAspectMode(slot));
+    const cropRatio = getCropAspectRatio(dimensions, crop);
+    if (!(targetRatio > 0) || !(cropRatio > 0)) return false;
+    return Math.abs(Math.log(cropRatio / targetRatio)) <= tolerance;
+  }
+
+  function applyFittedCropToSlotImage(slot, image, options = {}) {
+    if (!slot?.key || !image?.id) return false;
+    const fittedCrop = getSlotFittedCrop(slot, image);
+    if (!fittedCrop) return false;
+    const existingCrop = getSavedCrop(slot.key, image.id);
+    if (areCropsEquivalent(existingCrop, fittedCrop)) {
+      return false;
+    }
+    setSavedCrop(slot.key, image.id, fittedCrop, options);
+    return true;
+  }
+
+  function autoFitSlotImages(slot, images, cfg) {
+    if (!shouldAutoFitSlotCrops(cfg)) return false;
+    const normalizedImages = Array.isArray(images) ? images : [];
+    let didChange = false;
+    normalizedImages.forEach((image) => {
+      if (applyFittedCropToSlotImage(slot, image, { skipSave: true })) {
+        didChange = true;
+      }
+    });
+    if (didChange) {
+      saveCropStore();
+    }
+    return didChange;
+  }
+
+  async function loadSlotMatches(slot, performerId, tagMap) {
+    const resolvedTags = resolveSlotTagGroups(
+      slot,
+      tagMap,
+      slot?.includeDescendantTags
+    );
+    const missingTags = resolvedTags.missingTags;
+    const images =
+      missingTags.length === 0 && resolvedTags.groups.length
+        ? await findImagesForSlot(performerId, resolvedTags.groups)
+        : [];
+
+    return {
+      resolvedTags,
+      missingTags,
+      images,
+    };
+  }
+
+  function getInitialSlotImageIndex(slotKey, images, selectionMode, options = {}) {
+    const imageCount = Array.isArray(images) ? images.length : 0;
+    if (!imageCount) return 0;
+    if (options.randomize) {
+      return Math.floor(Math.random() * imageCount);
+    }
+    if (options.preserveState === false) {
+      return 0;
+    }
+    return normalizeSlotIndex(slotKey, imageCount, selectionMode);
+  }
+
+  function resolveSlotAspectMode(slot, currentImage) {
+    const storedAspectMode = getStoredSlotAspectMode(slot?.key);
+    if (storedAspectMode) return storedAspectMode;
+    if (slot?.aspectMode) return normalizeSlotAspectMode(slot.aspectMode);
+    return inferSlotAspectMode(slot?.key, currentImage);
+  }
+
+  function buildLoadedSlotViewState(slot, performerId, images, selectionMode, cfg, options = {}) {
+    const { autoFit = true } = options;
+    const currentIndex = getInitialSlotImageIndex(slot.key, images, selectionMode, options);
+    const currentImage = images[currentIndex] || images[0] || null;
+    const aspectMode = resolveSlotAspectMode(slot, currentImage);
+
+    if (autoFit) {
+      autoFitSlotImages(
+        {
+          ...slot,
+          performerId,
+          aspectMode,
+        },
+        images,
+        cfg
+      );
+    }
+
+    return {
+      currentIndex,
+      aspectMode,
+    };
+  }
+
+  async function resolveAutoFitSlot(slot, performerId, cfg, options = {}) {
+    if (!slot?.key) return null;
+
+    const storedAspectMode = getStoredSlotAspectMode(slot.key);
+    if (storedAspectMode) {
+      return {
+        ...slot,
+        aspectMode: storedAspectMode,
+      };
+    }
+
+    if (!performerId) {
+      return {
+        ...slot,
+        aspectMode: getSlotTargetAspectMode(slot),
+      };
+    }
+
+    const tagMap = options.tagMap || (await ensureTagMap());
+    const selectionMode = getSelectionMode(cfg);
+    const { images } = await loadSlotMatches(slot, performerId, tagMap);
+    const { aspectMode } = buildLoadedSlotViewState(slot, performerId, images, selectionMode, cfg, {
+      autoFit: false,
+      preserveState: false,
+      randomize: selectionMode === "random",
+    });
+
+    return {
+      ...slot,
+      aspectMode,
+    };
+  }
+
+  async function autoFitImageForSlotAssignment(imageId, slot, cfg, performerId, options = {}) {
+    if (!shouldAutoFitSlotCrops(cfg) || !imageId || !slot?.key) return false;
+    const image = options.image || (await fetchImageDetails(imageId));
+    if (!image) return false;
+    const resolvedSlot = await resolveAutoFitSlot(slot, performerId, cfg, options);
+    if (!resolvedSlot) return false;
+    return applyFittedCropToSlotImage(resolvedSlot, image);
+  }
+
   function clampSelectionToRect(selectionRect, deltaX, deltaY, imageRect) {
     if (!selectionRect || !imageRect) return null;
     const width = Number(selectionRect.width) || 0;
@@ -1405,10 +1794,12 @@
     };
   }
 
-  function getSnappedSelectionState(selectionRect, imageRect, dimensions) {
+  function getSnappedSelectionState(selectionRect, imageRect, dimensions, forcedMode = "") {
     const crop = selectionToCrop(selectionRect, imageRect);
     if (!crop || !dimensions) return null;
-    const mode = inferSlotAspectModeFromRatio(selectionRect.width / selectionRect.height);
+    const mode = forcedMode
+      ? normalizeSlotAspectMode(forcedMode)
+      : inferSlotAspectModeFromRatio(selectionRect.width / selectionRect.height);
     const snappedCrop = snapCropToAspectMode(crop, dimensions, mode);
     const snappedSelection = cropToSelection(snappedCrop, imageRect);
     if (!snappedSelection) return null;
@@ -1459,6 +1850,7 @@
     closeCropEditor();
 
     const existingCrop = getSavedCrop(slot.key, image.id);
+    const lockedAspectMode = getSlotCropAspectMode(slot);
     const backdrop = document.createElement("div");
     backdrop.className = "performer-tag-based-supporting-images__crop-backdrop";
 
@@ -1581,9 +1973,13 @@
       selection.style.top = `${currentSelection.top - stageRect.top}px`;
       selection.style.width = `${currentSelection.width}px`;
       selection.style.height = `${currentSelection.height}px`;
-      const liveRatio = currentSelection.width / currentSelection.height;
-      const liveMode = inferSlotAspectModeFromRatio(liveRatio);
+      const liveMode = lockedAspectMode
+        ? normalizeSlotAspectMode(lockedAspectMode)
+        : inferSlotAspectModeFromRatio(
+            currentSelection.width / currentSelection.height
+          );
       selectionLabel.textContent = getSlotAspectDisplayName(liveMode);
+      selectionLabel.title = getSlotAspectLockTitle(liveMode, !!lockedAspectMode);
       applyButton.disabled = false;
     }
 
@@ -1646,7 +2042,13 @@
       const imageRect = getImageRect();
       const point = clampPointToRect(event.clientX, event.clientY, imageRect);
       if (!point) return;
-      currentSelection = selectionFromPoints(pointerStart, point);
+      currentSelection = lockedAspectMode
+        ? selectionFromPointsWithAspect(
+            pointerStart,
+            point,
+            getAspectRatioForMode(lockedAspectMode)
+          )
+        : selectionFromPoints(pointerStart, point);
       renderSelection();
     }
 
@@ -1667,7 +2069,8 @@
         const snappedState = getSnappedSelectionState(
           currentSelection,
           imageRect,
-          dimensions
+          dimensions,
+          lockedAspectMode
         );
         if (snappedState) {
           currentSelection = snappedState.selection;
@@ -1684,9 +2087,11 @@
       const crop = selectionToCrop(currentSelection, getImageRect());
       if (!crop) return;
       const dimensions = getImageDimensions(image);
-      const mode = dimensions
-        ? inferSlotAspectModeFromRatio(getCropAspectRatio(dimensions, crop))
-        : "square";
+      const mode = lockedAspectMode
+        ? normalizeSlotAspectMode(lockedAspectMode)
+        : dimensions
+          ? inferSlotAspectModeFromRatio(getCropAspectRatio(dimensions, crop))
+          : "square";
       const snappedCrop = dimensions
         ? snapCropToAspectMode(crop, dimensions, mode)
         : crop;
@@ -1789,6 +2194,14 @@
     return match ? match[1] : "";
   }
 
+  function getPerformerIdFromCard(card) {
+    if (!(card instanceof Element)) return "";
+    const link = card.querySelector('a[href*="/performers/"]');
+    const href = String(link?.getAttribute("href") || "");
+    const match = href.match(/\/performers\/(\d+)/);
+    return match ? match[1] : "";
+  }
+
   function getQuickTagSlotCacheKey(cfg) {
     return getSlotConfigs(cfg)
       .map((slot) =>
@@ -1826,7 +2239,7 @@
         .filter(Boolean);
 
       return {
-        key: slot.key,
+        ...slot,
         label: `${getSlotDisplayName(slot)}: ${slot.tagNames.join(", ")}`,
         title: slot.customLabel || slot.tagNames.join(", "),
         tagIds,
@@ -1959,6 +2372,7 @@
   async function toggleSlotTagsOnImage(imageId, slot, menu, slots) {
     if (!imageId || !slot?.tagIds?.length) return;
     setQuickTagMenuStatus(menu, "saving", "Saving...");
+    const cfg = state.config || (await loadConfig());
 
     try {
       const syncedTagIds = await syncQuickTagMenuSelectionState(imageId, slots, menu);
@@ -1976,6 +2390,10 @@
       }
 
       await updateImageTagIds(imageId, nextTagIds);
+      if (!isApplied) {
+        const performerId = getPerformerFromPath(window.location.pathname)?.id || "";
+        await autoFitImageForSlotAssignment(imageId, slot, cfg, performerId);
+      }
       setCachedQuickTagImageTags(imageId, nextTagIds);
       applyQuickTagMenuSelectionState(menu, nextTagIds, slots);
       setQuickTagMenuStatus(menu, "saved", isApplied ? "Removed" : "Added");
@@ -2331,6 +2749,918 @@
     });
   }
 
+  function shouldEnablePerformerCardPreview() {
+    return (
+      getCardPreviewHoverBehavior(state.config || {}) !== "disabled" &&
+      !isPerformerPage() &&
+      document.querySelector(".performer-card") !== null
+    );
+  }
+
+  function getCardPreviewCacheKey(cfg) {
+    return `${getQuickTagSlotCacheKey(cfg)}|${getSelectionMode(cfg)}|${getCardPreviewSlotOrder(cfg).join("")}|${shouldShowEmptyCardPreviewSlots(cfg) ? "show-empty" : "hide-empty"}`;
+  }
+
+  function getCardPreviewInitialIndex(slot, cfg) {
+    const total = Number(slot?.images?.length || 0);
+    if (!(total > 0)) return 0;
+    if (getSelectionMode(cfg) === "random") {
+      return Math.floor(Math.random() * total);
+    }
+    return 0;
+  }
+
+  function createPerformerCardPreviewSessionData(data, cfg) {
+    const slots = Array.isArray(data?.slots)
+      ? data.slots.map((slot) => ({
+          ...slot,
+          currentIndex: getCardPreviewInitialIndex(slot, cfg),
+        }))
+      : [];
+    return {
+      performerId: String(data?.performerId || ""),
+      slots,
+    };
+  }
+
+  function syncExistingPerformerCardPreviewIndices(nextSessionData, existingSessionData) {
+    if (
+      !nextSessionData ||
+      !existingSessionData ||
+      String(nextSessionData.performerId || "") !==
+        String(existingSessionData.performerId || "")
+    ) {
+      return nextSessionData;
+    }
+
+    const existingSlotMap = new Map(
+      (existingSessionData.slots || []).map((slot) => [String(slot?.key || ""), slot])
+    );
+
+    nextSessionData.slots = (nextSessionData.slots || []).map((slot) => {
+      const existingSlot = existingSlotMap.get(String(slot?.key || ""));
+      const total = Number(slot?.images?.length || 0);
+      if (!existingSlot || total <= 0) return slot;
+
+      const existingIndex = Number(existingSlot.currentIndex || 0);
+      const nextIndex = ((existingIndex % total) + total) % total;
+      return {
+        ...slot,
+        currentIndex: nextIndex,
+      };
+    });
+
+    return nextSessionData;
+  }
+
+  function buildEmptyPerformerCardPreviewSlot(slot, performerId, options = {}) {
+    const { missingTags = [] } = options;
+    return {
+      ...slot,
+      performerId: String(performerId || ""),
+      images: [],
+      currentIndex: 0,
+      missingTags: Array.isArray(missingTags) ? missingTags : [],
+      isPlaceholder: true,
+      aspectMode: getSavedSlotAspectMode(slot.key),
+    };
+  }
+
+  async function buildPerformerCardPreviewData(performerId, cfg) {
+    let tagMap = await ensureTagMap();
+    const selectionMode = getSelectionMode(cfg);
+    const slots = getSlotConfigs(cfg);
+    const showEmptySlots = shouldShowEmptyCardPreviewSlots(cfg);
+    const slotOrder = getCardPreviewSlotOrder(cfg);
+    const slotOrderMap = new Map(
+      slotOrder.map((slotKey, index) => [slotKey, index])
+    );
+    const configuredTagNames = slots.flatMap((slot) => slot.tagNames);
+
+    const hasMissingConfiguredTags = configuredTagNames.some(
+      (name) => !hasTagName(tagMap, name)
+    );
+    if (hasMissingConfiguredTags) {
+      tagMap = await ensureTagMap({ forceRefresh: true });
+    }
+
+    const slotResults = await Promise.all(
+      slots.map(async (slot) => {
+        try {
+          const { missingTags, images } = await loadSlotMatches(slot, performerId, tagMap);
+
+          if (!images.length) {
+            return showEmptySlots
+              ? buildEmptyPerformerCardPreviewSlot(slot, performerId, {
+                  missingTags,
+                })
+              : null;
+          }
+
+          const { currentIndex, aspectMode } = buildLoadedSlotViewState(
+            slot,
+            performerId,
+            images,
+            selectionMode,
+            cfg,
+            {
+              preserveState: false,
+              randomize: selectionMode === "random",
+            }
+          );
+
+          return {
+            ...slot,
+            performerId,
+            images,
+            currentIndex,
+            aspectMode,
+            isPlaceholder: false,
+          };
+        } catch (err) {
+          console.error(
+            `[PerformerTagBasedSupportingImages] card preview load failed for ${slot.key}`,
+            err
+          );
+          return showEmptySlots
+            ? buildEmptyPerformerCardPreviewSlot(slot, performerId)
+            : null;
+        }
+      })
+    );
+
+    return {
+      performerId: String(performerId),
+      slots: slotResults
+        .filter((slot) => slot && (showEmptySlots || slot.images.length > 0))
+        .sort((left, right) => {
+          const leftIndex = slotOrderMap.get(left.key);
+          const rightIndex = slotOrderMap.get(right.key);
+          return (leftIndex ?? Number.MAX_SAFE_INTEGER) - (rightIndex ?? Number.MAX_SAFE_INTEGER);
+        }),
+    };
+  }
+
+  async function getPerformerCardPreviewData(performerId) {
+    const cfg = state.config || (await loadConfig());
+    const cacheKey = getCardPreviewCacheKey(cfg);
+    const cached = state.cardPreviewDataCache.get(String(performerId));
+    if (cached && cached.cacheKey === cacheKey) {
+      return cached.data;
+    }
+
+    const data = await buildPerformerCardPreviewData(String(performerId), cfg);
+    state.cardPreviewDataCache.set(String(performerId), {
+      cacheKey,
+      data,
+    });
+    return data;
+  }
+
+  function ensurePerformerCardPreviewRoot() {
+    if (state.cardPreviewRoot?.isConnected) {
+      return state.cardPreviewRoot;
+    }
+
+    const root = document.createElement("div");
+    root.id = "ptbsi-performer-card-preview-root";
+    root.className = "performer-tag-based-supporting-images__card-preview-root";
+    document.body.appendChild(root);
+    state.cardPreviewRoot = root;
+    return root;
+  }
+
+  function clearPerformerCardPreviewRoot() {
+    const root = state.cardPreviewRoot;
+    if (!root) return;
+    root.replaceChildren();
+  }
+
+  function clearPerformerCardPreviewCloseTimer() {
+    if (state.cardPreviewCloseTimer) {
+      window.clearTimeout(state.cardPreviewCloseTimer);
+      state.cardPreviewCloseTimer = 0;
+    }
+  }
+
+  function stopPerformerCardPreviewSlideshow() {
+    if (state.cardPreviewSlideshowTimer) {
+      window.clearInterval(state.cardPreviewSlideshowTimer);
+      state.cardPreviewSlideshowTimer = null;
+    }
+  }
+
+  function unbindPerformerCardPreviewViewportEvents() {
+    if (!state.cardPreviewViewportBound) return;
+    state.cardPreviewViewportBound = false;
+    window.removeEventListener("resize", handlePerformerCardPreviewViewportChange);
+    window.removeEventListener("scroll", handlePerformerCardPreviewViewportChange, true);
+  }
+
+  function closePerformerCardPreviewImmediate(options = {}) {
+    const { preserveActiveCard = false } = options;
+    const activeCard = state.cardPreviewActiveCard;
+    clearPerformerCardPreviewCloseTimer();
+    stopPerformerCardPreviewSlideshow();
+    clearPerformerCardPreviewRoot();
+    unbindPerformerCardPreviewViewportEvents();
+    state.cardPreviewOpenToken += 1;
+    state.cardPreviewSessionData = null;
+    if (activeCard instanceof HTMLElement) {
+      const trigger = activeCard.querySelector(
+        ".performer-tag-based-supporting-images__card-preview-trigger"
+      );
+      if (trigger instanceof HTMLElement) {
+        trigger.setAttribute("aria-expanded", "false");
+      }
+    }
+    if (!preserveActiveCard) {
+      state.cardPreviewActiveCard = null;
+      state.cardPreviewActivePerformerId = "";
+    }
+  }
+
+  function queuePerformerCardPreviewClose() {
+    clearPerformerCardPreviewCloseTimer();
+    state.cardPreviewCloseTimer = window.setTimeout(() => {
+      closePerformerCardPreviewImmediate();
+    }, CARD_PREVIEW_CLOSE_DELAY_MS);
+  }
+
+  function createPerformerCardPreviewCardCleanup(card) {
+    function handleMouseEnter() {
+      openPerformerCardPreview(card);
+    }
+
+    function handleMouseLeave() {
+      queuePerformerCardPreviewClose();
+    }
+
+    function handleFocusIn() {
+      openPerformerCardPreview(card);
+    }
+
+    function handleFocusOut(event) {
+      const nextTarget = event.relatedTarget;
+      if (
+        nextTarget instanceof Element &&
+        state.cardPreviewRoot?.contains(nextTarget)
+      ) {
+        return;
+      }
+      queuePerformerCardPreviewClose();
+    }
+
+    card.addEventListener("mouseenter", handleMouseEnter);
+    card.addEventListener("mouseleave", handleMouseLeave);
+    card.addEventListener("focusin", handleFocusIn);
+    card.addEventListener("focusout", handleFocusOut);
+
+    return () => {
+      card.removeEventListener("mouseenter", handleMouseEnter);
+      card.removeEventListener("mouseleave", handleMouseLeave);
+      card.removeEventListener("focusin", handleFocusIn);
+      card.removeEventListener("focusout", handleFocusOut);
+    };
+  }
+
+  function createPerformerCardPreviewTrigger(card) {
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "performer-tag-based-supporting-images__card-preview-trigger";
+    trigger.title = "Preview supporting images / next preview image";
+    trigger.textContent = "[]";
+    trigger.setAttribute("aria-haspopup", "dialog");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.setAttribute("data-ptbsi-card-preview-trigger", "true");
+    trigger.setAttribute(
+      "aria-label",
+      "Preview supporting images and advance preview images"
+    );
+
+    trigger.addEventListener("mouseenter", () => {
+      openPerformerCardPreview(card);
+    });
+    trigger.addEventListener("mouseleave", () => {
+      queuePerformerCardPreviewClose();
+    });
+    trigger.addEventListener("focusin", () => {
+      openPerformerCardPreview(card);
+    });
+    trigger.addEventListener("focusout", (event) => {
+      const nextTarget = event.relatedTarget;
+      if (
+        nextTarget instanceof Element &&
+        state.cardPreviewRoot?.contains(nextTarget)
+      ) {
+        return;
+      }
+      queuePerformerCardPreviewClose();
+    });
+    trigger.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        await cyclePerformerCardPreviewFromTrigger(card);
+      } catch (err) {
+        console.error(
+          "[PerformerTagBasedSupportingImages] performer card preview cycle failed",
+          err
+        );
+      }
+    });
+
+    return trigger;
+  }
+
+  function resetPerformerCardPreviewCardDecoration(card, options = {}) {
+    const { removeClass = false } = options;
+    const cleanup = cardPreviewCleanupMap.get(card);
+    if (typeof cleanup === "function") {
+      cleanup();
+      cardPreviewCleanupMap.delete(card);
+    }
+    card
+      .querySelectorAll(".performer-tag-based-supporting-images__card-preview-trigger")
+      .forEach((trigger) => trigger.remove());
+    card.removeAttribute("data-ptbsi-card-preview-bound");
+    card.removeAttribute("data-ptbsi-card-preview-mode");
+    if (removeClass) {
+      card.classList.remove("ptbsi-card-preview-card");
+    }
+  }
+
+  function cleanupPerformerCardPreviewTriggers() {
+    document.querySelectorAll(".performer-card").forEach((card) => {
+      if (!(card instanceof HTMLElement)) return;
+      resetPerformerCardPreviewCardDecoration(card, { removeClass: true });
+    });
+  }
+
+  function bindPerformerCardPreviewViewportEvents() {
+    if (state.cardPreviewViewportBound) return;
+    state.cardPreviewViewportBound = true;
+    window.addEventListener("resize", handlePerformerCardPreviewViewportChange);
+    window.addEventListener("scroll", handlePerformerCardPreviewViewportChange, true);
+  }
+
+  function getCardPreviewPanelPlacement(cardRect, cfg) {
+    const viewportWidth = Math.max(
+      180,
+      window.innerWidth - CARD_PREVIEW_VIEWPORT_PAD * 2
+    );
+    const viewportHeight = Math.max(
+      180,
+      window.innerHeight - CARD_PREVIEW_VIEWPORT_PAD * 2
+    );
+    const desiredWidth = getCardPreviewPanelWidth(cfg);
+    const desiredHeight = getCardPreviewPanelHeight(cfg);
+    const spaceLeft = Math.max(
+      0,
+      cardRect.left - CARD_PREVIEW_GUTTER - CARD_PREVIEW_VIEWPORT_PAD
+    );
+    const spaceRight = Math.max(
+      0,
+      window.innerWidth - cardRect.right - CARD_PREVIEW_GUTTER - CARD_PREVIEW_VIEWPORT_PAD
+    );
+    const side = spaceRight >= spaceLeft ? "right" : "left";
+    const sideSpace = side === "right" ? spaceRight : spaceLeft;
+
+    let width;
+    if (sideSpace > 0) {
+      width = Math.min(desiredWidth, sideSpace);
+      width = Math.max(Math.min(CARD_PREVIEW_MIN_PANEL_WIDTH, sideSpace), width);
+    } else {
+      width = Math.min(desiredWidth, viewportWidth);
+    }
+
+    const height = Math.min(desiredHeight, viewportHeight);
+    const leftBase =
+      side === "left"
+        ? cardRect.left - width - CARD_PREVIEW_GUTTER
+        : cardRect.right + CARD_PREVIEW_GUTTER;
+    const left = Math.max(
+      CARD_PREVIEW_VIEWPORT_PAD,
+      Math.min(
+        Math.round(leftBase),
+        window.innerWidth - width - CARD_PREVIEW_VIEWPORT_PAD
+      )
+    );
+    const top = Math.max(
+      CARD_PREVIEW_VIEWPORT_PAD,
+      Math.min(
+        Math.round(cardRect.top),
+        window.innerHeight - height - CARD_PREVIEW_VIEWPORT_PAD
+      )
+    );
+
+    return { side, left, top, width, height };
+  }
+
+  function getCardPreviewSlotAspectRatio(slot) {
+    return Math.max(0.35, getAspectRatioForMode(slot?.aspectMode));
+  }
+
+  function getCardPreviewJustifiedRowHeight(totalAspectRatio, itemCount, usableWidth) {
+    if (!(totalAspectRatio > 0) || !(usableWidth > 0) || !(itemCount > 0)) {
+      return CARD_PREVIEW_MIN_ROW_HEIGHT;
+    }
+    const widthAfterGaps =
+      usableWidth - Math.max(0, itemCount - 1) * CARD_PREVIEW_TILE_GAP;
+    if (!(widthAfterGaps > 0)) return CARD_PREVIEW_MIN_ROW_HEIGHT;
+    return widthAfterGaps / totalAspectRatio;
+  }
+
+  function buildCardPreviewJustifiedRow(items, usableWidth) {
+    const totalAspectRatio = items.reduce(
+      (sum, item) => sum + item.aspectRatio,
+      0
+    );
+    const rawRowHeight = getCardPreviewJustifiedRowHeight(
+      totalAspectRatio,
+      items.length,
+      usableWidth
+    );
+    const rowHeight = Math.max(72, Math.round(rawRowHeight));
+    const preferredPenalty =
+      Math.max(0, CARD_PREVIEW_MIN_ROW_HEIGHT - rawRowHeight) +
+      Math.max(0, rawRowHeight - CARD_PREVIEW_MAX_ROW_HEIGHT);
+
+    return {
+      height: rowHeight,
+      preferredPenalty,
+      items: items.map(({ slot, aspectRatio }) => ({
+        slot,
+        aspectRatio,
+        height: rowHeight,
+        width: Math.max(72, Math.round(rowHeight * aspectRatio)),
+      })),
+    };
+  }
+
+  function buildCardPreviewPreparedItems(slots) {
+    return (Array.isArray(slots) ? slots : []).map((slot) => ({
+      slot,
+      aspectRatio: getCardPreviewSlotAspectRatio(slot),
+    }));
+  }
+
+  function enumerateCardPreviewPartitions(items) {
+    if (!items.length) return [[]];
+
+    const partitions = [];
+
+    function visit(startIndex, currentRows) {
+      if (startIndex >= items.length) {
+        partitions.push(currentRows.slice());
+        return;
+      }
+
+      for (let endIndex = startIndex + 1; endIndex <= items.length; endIndex += 1) {
+        currentRows.push(items.slice(startIndex, endIndex));
+        visit(endIndex, currentRows);
+        currentRows.pop();
+      }
+    }
+
+    visit(0, []);
+    return partitions;
+  }
+
+  function getCardPreviewLayoutTotalHeight(rows) {
+    return (
+      rows.reduce((sum, row) => sum + row.height, 0) +
+      Math.max(0, rows.length - 1) * CARD_PREVIEW_TILE_GAP
+    );
+  }
+
+  function buildCardPreviewJustifiedLayout(slots, panelWidth, panelHeight) {
+    const preparedItems = buildCardPreviewPreparedItems(slots);
+    const usableWidth = Math.max(120, panelWidth - CARD_PREVIEW_PANEL_PADDING * 2);
+    const usableHeight = Math.max(120, panelHeight - CARD_PREVIEW_PANEL_PADDING * 2);
+    const partitions = enumerateCardPreviewPartitions(preparedItems);
+
+    let bestLayout = null;
+
+    partitions.forEach((partition) => {
+      const rows = partition.map((rowItems) =>
+        buildCardPreviewJustifiedRow(rowItems, usableWidth)
+      );
+      const totalHeight = getCardPreviewLayoutTotalHeight(rows);
+      const overflow = Math.max(0, totalHeight - usableHeight);
+      const unusedHeight = Math.max(0, usableHeight - totalHeight);
+      const heightDelta = Math.abs(totalHeight - usableHeight);
+      const preferredPenalty = rows.reduce(
+        (sum, row) => sum + row.preferredPenalty,
+        0
+      );
+      const averageRowHeight = rows.length
+        ? rows.reduce((sum, row) => sum + row.height, 0) / rows.length
+        : 0;
+      const candidate = {
+        rows,
+        overflow,
+        unusedHeight,
+        heightDelta,
+        preferredPenalty,
+        averageRowHeight,
+      };
+
+      if (!bestLayout) {
+        bestLayout = candidate;
+        return;
+      }
+
+      if (!!candidate.overflow !== !!bestLayout.overflow) {
+        if (candidate.overflow < bestLayout.overflow) bestLayout = candidate;
+        return;
+      }
+
+      if (candidate.heightDelta !== bestLayout.heightDelta) {
+        if (candidate.heightDelta < bestLayout.heightDelta) bestLayout = candidate;
+        return;
+      }
+
+      if (candidate.preferredPenalty !== bestLayout.preferredPenalty) {
+        if (candidate.preferredPenalty < bestLayout.preferredPenalty) {
+          bestLayout = candidate;
+        }
+        return;
+      }
+
+      if (candidate.overflow !== bestLayout.overflow) {
+        if (candidate.overflow < bestLayout.overflow) bestLayout = candidate;
+        return;
+      }
+
+      if (candidate.averageRowHeight > bestLayout.averageRowHeight) {
+        bestLayout = candidate;
+      }
+    });
+
+    if (!bestLayout) {
+      return { rows: [] };
+    }
+
+    return bestLayout;
+  }
+
+  function hasPerformerCardPreviewMultiImageSlots(data) {
+    return Array.isArray(data?.slots) && data.slots.some((slot) => (slot?.images?.length || 0) > 1);
+  }
+
+  function getPerformerCardPreviewTransitionClass(cfg) {
+    return getSlotTransitionMs(cfg) > 0 ? "has-slot-transition" : "";
+  }
+
+  function advancePerformerCardPreviewSlots(delta) {
+    const data = state.cardPreviewSessionData;
+    if (!Array.isArray(data?.slots)) return false;
+
+    let changed = false;
+    data.slots.forEach((slot) => {
+      const total = Number(slot?.images?.length || 0);
+      if (total <= 1) return;
+      const currentIndex = Number(slot.currentIndex || 0);
+      const nextIndex = ((currentIndex + delta) % total + total) % total;
+      if (nextIndex === currentIndex) return;
+      slot.currentIndex = nextIndex;
+      changed = true;
+    });
+    return changed;
+  }
+
+  function rerenderPerformerCardPreview() {
+    const card = state.cardPreviewActiveCard;
+    const data = state.cardPreviewSessionData;
+    const cfg = state.config || {};
+    if (!(card instanceof HTMLElement) || !card.isConnected || !data?.slots?.length) {
+      closePerformerCardPreviewImmediate();
+      return;
+    }
+    renderPerformerCardPreview(card, data, cfg);
+  }
+
+  function advancePerformerCardPreviewSlideshow() {
+    if (document.hidden) return;
+    if (advancePerformerCardPreviewSlots(1)) {
+      rerenderPerformerCardPreview();
+    }
+  }
+
+  function syncPerformerCardPreviewPlayback(cfg = state.config || {}) {
+    stopPerformerCardPreviewSlideshow();
+    const seconds = getSlotSlideshowSeconds(cfg);
+    if (!(seconds > 0) || !hasPerformerCardPreviewMultiImageSlots(state.cardPreviewSessionData)) {
+      return;
+    }
+    state.cardPreviewSlideshowTimer = window.setInterval(() => {
+      advancePerformerCardPreviewSlideshow();
+    }, seconds * 1000);
+  }
+
+  function createPerformerCardPreviewTile(slot, cfg, layoutMetrics = {}) {
+    const image = slot.images[slot.currentIndex] || slot.images[0];
+    const tile = document.createElement("div");
+    tile.className = "performer-tag-based-supporting-images__card-preview-tile";
+    if ((slot?.images?.length || 0) > 1) {
+      tile.classList.add("performer-tag-based-supporting-images__card-preview-tile--multi-image");
+    }
+
+    const labelText = slot.customLabel || getSlotDisplayName(slot);
+    const placeholderReason = slot?.missingTags?.length
+      ? `Missing tag(s): ${slot.missingTags.join(", ")}`
+      : "No matching supporting image";
+    tile.title = slot?.isPlaceholder
+      ? `${labelText}: ${placeholderReason}`
+      : `${labelText}: ${slot.tagNames.join(", ") || "Supporting image"}`;
+
+    const frame = document.createElement("div");
+    frame.className =
+      "performer-tag-based-supporting-images__card-preview-frame performer-tag-based-supporting-images__image-frame";
+    if (slot?.isPlaceholder) {
+      frame.classList.add("performer-tag-based-supporting-images__card-preview-frame--placeholder");
+    }
+    if (layoutMetrics.width > 0) {
+      tile.style.width = `${layoutMetrics.width}px`;
+    }
+    if (layoutMetrics.height > 0) {
+      frame.style.height = `${layoutMetrics.height}px`;
+    }
+
+    if (!image || slot?.isPlaceholder) {
+      const placeholder = document.createElement("div");
+      placeholder.className =
+        "performer-tag-based-supporting-images__card-preview-placeholder";
+      placeholder.setAttribute("aria-hidden", "true");
+      frame.appendChild(placeholder);
+      tile.appendChild(frame);
+      return tile;
+    }
+
+    const img = document.createElement("img");
+    img.className =
+      "performer-tag-based-supporting-images__card-preview-image performer-tag-based-supporting-images__image";
+    img.src = getImageUrl(image);
+    img.alt = image.title || labelText || "Supporting image";
+
+    const dimensions = getImageDimensions(image);
+    const crop = getSavedCrop(slot.key, image.id);
+    if (crop && dimensions) {
+      frame.classList.add("performer-tag-based-supporting-images__image-frame--cropped");
+      img.classList.add("performer-tag-based-supporting-images__image--cropped");
+      const cropViewport = document.createElement("div");
+      cropViewport.className =
+        "performer-tag-based-supporting-images__image-crop-viewport";
+      const cropAspectRatio = getCropAspectRatio(dimensions, crop);
+      const viewportSize = getContainedCropViewportSize(
+        cropAspectRatio,
+        getAspectRatioForMode(slot.aspectMode)
+      );
+      cropViewport.style.width = viewportSize.width;
+      cropViewport.style.height = viewportSize.height;
+      applyCropPreview(img, crop);
+      cropViewport.appendChild(img);
+      frame.appendChild(cropViewport);
+    } else {
+      if (crop) {
+        applyCropPreview(img, crop);
+      }
+      frame.appendChild(img);
+    }
+    tile.appendChild(frame);
+
+    return tile;
+  }
+
+  function createPerformerCardPreviewPanel(slots, cfg, cardRect) {
+    const descriptor = getCardPreviewPanelPlacement(cardRect, cfg);
+    const layout = buildCardPreviewJustifiedLayout(
+      slots,
+      descriptor.width,
+      descriptor.height
+    );
+    const panel = document.createElement("div");
+    panel.className = "performer-tag-based-supporting-images__card-preview-panel";
+    const transitionClass = getPerformerCardPreviewTransitionClass(cfg);
+    if (transitionClass) {
+      panel.classList.add(transitionClass);
+    }
+    panel.setAttribute("data-placement", descriptor.side);
+    panel.style.left = `${descriptor.left}px`;
+    panel.style.top = `${descriptor.top}px`;
+    panel.style.width = `${descriptor.width}px`;
+    panel.style.height = `${descriptor.height}px`;
+    applyPanelVariables(panel, cfg);
+
+    const slotsWrap = document.createElement("div");
+    slotsWrap.className = "performer-tag-based-supporting-images__card-preview-slots";
+    slotsWrap.style.rowGap = `${CARD_PREVIEW_TILE_GAP}px`;
+
+    layout.rows.forEach((row) => {
+      const rowEl = document.createElement("div");
+      rowEl.className = "performer-tag-based-supporting-images__card-preview-row";
+      rowEl.style.columnGap = `${CARD_PREVIEW_TILE_GAP}px`;
+      row.items.forEach(({ slot, width, height }) => {
+        const tile = createPerformerCardPreviewTile(slot, cfg, { width, height });
+        tile.style.flex = `0 0 ${width}px`;
+        rowEl.appendChild(tile);
+      });
+      slotsWrap.appendChild(rowEl);
+    });
+
+    panel.appendChild(slotsWrap);
+    return panel;
+  }
+
+  function renderPerformerCardPreview(card, data, cfg) {
+    if (!(card instanceof HTMLElement) || !data?.slots?.length) {
+      closePerformerCardPreviewImmediate({ preserveActiveCard: true });
+      return;
+    }
+
+    const root = ensurePerformerCardPreviewRoot();
+    root.replaceChildren();
+
+    const cardRect = card.getBoundingClientRect();
+    const panel = createPerformerCardPreviewPanel(data.slots, cfg, cardRect);
+    panel.addEventListener("mouseenter", () => {
+      closePerformerCardPreviewImmediate({ preserveActiveCard: true });
+    });
+    root.appendChild(panel);
+
+    bindPerformerCardPreviewViewportEvents();
+    syncPerformerCardPreviewPlayback(cfg);
+  }
+
+  async function cyclePerformerCardPreviewFromTrigger(card) {
+    if (!(card instanceof HTMLElement)) return;
+    const cfg = state.config || (await loadConfig());
+    if (getSlotSlideshowSeconds(cfg) > 0) {
+      await openPerformerCardPreview(card);
+      return;
+    }
+
+    const performerId = getPerformerIdFromCard(card);
+    if (!performerId) return;
+
+    const needsPreviewLoad =
+      state.cardPreviewActiveCard !== card ||
+      state.cardPreviewActivePerformerId !== performerId ||
+      !Array.isArray(state.cardPreviewSessionData?.slots);
+
+    if (needsPreviewLoad) {
+      await openPerformerCardPreview(card);
+    }
+
+    if (!hasPerformerCardPreviewMultiImageSlots(state.cardPreviewSessionData)) {
+      return;
+    }
+
+    clearPerformerCardPreviewCloseTimer();
+    if (advancePerformerCardPreviewSlots(1)) {
+      rerenderPerformerCardPreview();
+    }
+  }
+
+  async function openPerformerCardPreview(card, options = {}) {
+    const { forceRefresh = false } = options;
+    if (!(card instanceof HTMLElement)) return;
+
+    const performerId = getPerformerIdFromCard(card);
+    if (!performerId) {
+      closePerformerCardPreviewImmediate();
+      return;
+    }
+
+    clearPerformerCardPreviewCloseTimer();
+    state.cardPreviewActiveCard = card;
+    state.cardPreviewActivePerformerId = performerId;
+    const trigger = card.querySelector(
+      ".performer-tag-based-supporting-images__card-preview-trigger"
+    );
+    if (trigger instanceof HTMLElement) {
+      trigger.setAttribute("aria-expanded", "true");
+    }
+    const token = ++state.cardPreviewOpenToken;
+
+    try {
+      const cfg = state.config || (await loadConfig());
+      if (forceRefresh) {
+        state.cardPreviewDataCache.delete(String(performerId));
+      }
+      const data = await getPerformerCardPreviewData(performerId);
+      if (
+        token !== state.cardPreviewOpenToken ||
+        state.cardPreviewActiveCard !== card ||
+        !card.isConnected
+      ) {
+        return;
+      }
+
+      if (!data?.slots?.length) {
+        closePerformerCardPreviewImmediate({ preserveActiveCard: true });
+        return;
+      }
+
+      const nextSessionData = createPerformerCardPreviewSessionData(data, cfg);
+      state.cardPreviewSessionData = syncExistingPerformerCardPreviewIndices(
+        nextSessionData,
+        state.cardPreviewSessionData
+      );
+      renderPerformerCardPreview(card, state.cardPreviewSessionData, cfg);
+    } catch (err) {
+      console.error("[PerformerTagBasedSupportingImages] performer card preview failed", err);
+      closePerformerCardPreviewImmediate({ preserveActiveCard: true });
+    }
+  }
+
+  function handlePerformerCardPreviewViewportChange() {
+    const card = state.cardPreviewActiveCard;
+    if (!(card instanceof HTMLElement) || !card.isConnected || !state.cardPreviewSessionData?.slots?.length) {
+      closePerformerCardPreviewImmediate();
+      return;
+    }
+
+    const cfg = state.config || {};
+    renderPerformerCardPreview(card, state.cardPreviewSessionData, cfg);
+  }
+
+  function decoratePerformerCards() {
+    state.cardPreviewRefreshHandle = 0;
+
+    if (state.config === null) {
+      loadConfig().then(() => {
+        schedulePerformerCardPreviewRefresh();
+      });
+      return;
+    }
+
+    if (!shouldEnablePerformerCardPreview()) {
+      closePerformerCardPreviewImmediate();
+      cleanupPerformerCardPreviewTriggers();
+      return;
+    }
+
+    const hoverBehavior = getCardPreviewHoverBehavior(state.config || {});
+    document.querySelectorAll(".performer-card").forEach((card) => {
+      if (!(card instanceof HTMLElement)) return;
+      if (card.closest(`#${PANEL_ID}`)) return;
+      card.classList.add("ptbsi-card-preview-card");
+
+      const desiredMode = hoverBehavior;
+      const currentMode = card.getAttribute("data-ptbsi-card-preview-mode");
+      const hasTrigger =
+        card.querySelector(".performer-tag-based-supporting-images__card-preview-trigger") !==
+        null;
+      if (
+        card.getAttribute("data-ptbsi-card-preview-bound") === "true" &&
+        currentMode === desiredMode &&
+        (desiredMode === "disabled" || hasTrigger)
+      ) {
+        return;
+      }
+
+      resetPerformerCardPreviewCardDecoration(card);
+
+      const triggerHost =
+        card.querySelector(".thumbnail-section") ||
+        card.querySelector(".card-section") ||
+        card;
+      if (desiredMode === "badge" || desiredMode === "performer-card") {
+        triggerHost.appendChild(createPerformerCardPreviewTrigger(card));
+      }
+      if (desiredMode === "performer-card") {
+        cardPreviewCleanupMap.set(card, createPerformerCardPreviewCardCleanup(card));
+      }
+      card.setAttribute("data-ptbsi-card-preview-bound", "true");
+      card.setAttribute("data-ptbsi-card-preview-mode", desiredMode);
+    });
+  }
+
+  function schedulePerformerCardPreviewRefresh() {
+    if (state.cardPreviewRefreshHandle) return;
+    state.cardPreviewRefreshHandle = window.requestAnimationFrame(() => {
+      decoratePerformerCards();
+    });
+  }
+
+  function installPerformerCardPreviewObserver() {
+    if (state.cardPreviewObserver || typeof MutationObserver !== "function") return;
+    state.cardPreviewObserver = new MutationObserver(() => {
+      if (
+        shouldEnablePerformerCardPreview() ||
+        (state.cardPreviewRoot && state.cardPreviewRoot.childElementCount > 0)
+      ) {
+        schedulePerformerCardPreviewRefresh();
+      }
+    });
+    state.cardPreviewObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+  }
+
   async function buildPanelData(performer, cfg) {
     let tagMap = await ensureTagMap();
     const performerInfo = await fetchPerformerName(performer.id);
@@ -2349,29 +3679,20 @@
     const slotResults = await Promise.all(
       slots.map(async (slot) => {
         try {
-          const resolvedTags = resolveSlotTagGroups(
+          const { resolvedTags, missingTags, images } = await loadSlotMatches(
             slot,
-            tagMap,
-            slot.includeDescendantTags
+            performer.id,
+            tagMap
           );
           const tagIds = resolvedTags.resolvedTagIds;
-          const missingTags = resolvedTags.missingTags;
 
-          const images =
-            missingTags.length === 0 && resolvedTags.groups.length
-              ? await findImagesForSlot(performer.id, resolvedTags.groups)
-              : [];
-
-          const currentIndex = normalizeSlotIndex(
-            slot.key,
-            images.length,
-            selectionMode
+          const { currentIndex, aspectMode } = buildLoadedSlotViewState(
+            slot,
+            performer.id,
+            images,
+            selectionMode,
+            cfg
           );
-          const currentImage = images[currentIndex] || images[0] || null;
-          const savedAspectMode = state.slotAspectStore?.[slot.key];
-          const aspectMode = savedAspectMode
-            ? normalizeSlotAspectMode(savedAspectMode)
-            : inferSlotAspectMode(slot.key, currentImage);
 
           return {
             ...slot,
@@ -2542,13 +3863,45 @@
     return button;
   }
 
+  function createCropFitAction(slot, image) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className =
+      "performer-tag-based-supporting-images__crop-action performer-tag-based-supporting-images__crop-fit-action";
+    button.setAttribute("data-ptbsi-crop-fit", "apply");
+    button.setAttribute("data-ptbsi-slot-key", slot.key);
+    button.setAttribute("data-ptbsi-image-id", String(image.id));
+    button.setAttribute("aria-label", "Fit crop to slot aspect ratio");
+    button.textContent = "Fit";
+
+    if (doesImageCropFitSlot(slot, image)) {
+      button.classList.add("is-active");
+      button.title = "Crop already fits slot aspect";
+    } else if (getSavedCrop(slot.key, image.id)) {
+      button.title = "Fit existing crop to slot aspect";
+    } else {
+      button.title = "Create crop from slot aspect";
+    }
+
+    return button;
+  }
+
   function createAspectAction(slot) {
     const mode = normalizeSlotAspectMode(slot.aspectMode);
-    const label = document.createElement("div");
+    const locked = isSlotAspectLocked(slot.key);
+    const label = document.createElement("button");
+    label.type = "button";
     label.className = "performer-tag-based-supporting-images__aspect-action";
+    if (locked) {
+      label.classList.add("is-locked");
+    }
+    label.setAttribute("data-ptbsi-aspect-toggle", "lock");
+    label.setAttribute("data-ptbsi-slot-key", slot.key);
     label.setAttribute("data-ptbsi-aspect-mode", mode);
-    label.setAttribute("aria-label", getSlotAspectTitle(mode));
-    label.title = getSlotAspectTitle(mode);
+    label.setAttribute("data-ptbsi-aspect-locked", locked ? "true" : "false");
+    label.setAttribute("aria-pressed", locked ? "true" : "false");
+    label.setAttribute("aria-label", getSlotAspectLockTitle(mode, locked));
+    label.title = getSlotAspectLockTitle(mode, locked);
     label.textContent = getSlotAspectLabel(mode);
     return label;
   }
@@ -2736,6 +4089,11 @@
       leftGroup.appendChild(prev);
       leftGroup.appendChild(next);
       if (dimensions) {
+        const cropFitAction = createCropFitAction(slot, image);
+        cropFitAction.classList.add(
+          "performer-tag-based-supporting-images__slot-controls-crop"
+        );
+        leftGroup.appendChild(cropFitAction);
         const cropAction = createCropAction(slot, image);
         cropAction.classList.add(
           "performer-tag-based-supporting-images__slot-controls-crop"
@@ -2762,6 +4120,11 @@
       controls.appendChild(prev);
       controls.appendChild(next);
       if (dimensions) {
+        const cropFitAction = createCropFitAction(slot, image);
+        cropFitAction.classList.add(
+          "performer-tag-based-supporting-images__slot-controls-crop"
+        );
+        controls.appendChild(cropFitAction);
         const cropAction = createCropAction(slot, image);
         cropAction.classList.add(
           "performer-tag-based-supporting-images__slot-controls-crop"
@@ -3203,6 +4566,39 @@
         return;
       }
 
+      const cropFitAction = event.target.closest("[data-ptbsi-crop-fit]");
+      if (cropFitAction) {
+        event.preventDefault();
+        event.stopPropagation();
+        const slotKey = cropFitAction.getAttribute("data-ptbsi-slot-key");
+        const imageId = cropFitAction.getAttribute("data-ptbsi-image-id");
+        const target = findSlotAndImage(slotKey, imageId);
+        if (!target) return;
+        const fittedCrop = getSlotFittedCrop(target.slot, target.image);
+        if (!fittedCrop) return;
+        const existingCrop = getSavedCrop(target.slot.key, target.image.id);
+        if (!areCropsEquivalent(existingCrop, fittedCrop)) {
+          setSavedCrop(target.slot.key, target.image.id, fittedCrop);
+        }
+        rerenderSlot(target.slot.key, {
+          anchorElement: cropFitAction.closest("[data-ptbsi-slot-key]"),
+        });
+        return;
+      }
+
+      const aspectAction = event.target.closest("[data-ptbsi-aspect-toggle]");
+      if (aspectAction) {
+        event.preventDefault();
+        event.stopPropagation();
+        const slotKey = aspectAction.getAttribute("data-ptbsi-slot-key");
+        if (!slotKey) return;
+        toggleSlotAspectLocked(slotKey);
+        rerenderSlot(slotKey, {
+          anchorElement: aspectAction.closest("[data-ptbsi-slot-key]"),
+        });
+        return;
+      }
+
       const nav = event.target.closest("[data-ptbsi-nav]");
       if (!nav) return;
       event.preventDefault();
@@ -3428,10 +4824,12 @@
     state.lastPath = path;
     closeCropEditor();
     closeOtherQuickTagMenus(null);
+    closePerformerCardPreviewImmediate();
     state.scheduledLayoutToken += 1;
     refreshObservedElements();
     scheduleRouteInjection();
     scheduleQuickTagRefresh();
+    schedulePerformerCardPreviewRefresh();
   }
 
   function init() {
@@ -3439,6 +4837,7 @@
     installObserver();
     installResizeObserver();
     installQuickTagObserver();
+    installPerformerCardPreviewObserver();
     installDetailInteractionHook();
     installLayoutHandlers();
     state.lastPath = window.location.pathname;
@@ -3447,6 +4846,7 @@
       scheduleRouteInjection();
     }
     scheduleQuickTagRefresh();
+    schedulePerformerCardPreviewRefresh();
   }
 
   if (document.readyState === "loading") {
