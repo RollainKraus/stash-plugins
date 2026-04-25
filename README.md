@@ -362,10 +362,10 @@ Simple menu to add tags or performers to images/scenes/performers directly from 
   <img src="/pluginPreviews/SimpleRightClickTaggingPreview.gif" alt="SimpleRightClickTagging preview" width="600">
 </p>
 <p>
-  <img src="/pluginPreviews/SimpleRightClickTaggingPerformersPreview.png" alt="SimpleRightClickTaggingPerformers preview" width="600">
+  <img src="/pluginPreviews/SimpleRightClickTaggingPerformerPreview.png" alt="SimpleRightClickTaggingPerformers preview" width="600">
 </p>
 <p>
-  <img src="/pluginPreviews/SimpleRightClickTaggingTagsPreview.png" alt="SimpleRightClickTaggingTags preview" width="600">
+  <img src="/pluginPreviews/SimpleRightClickTaggingTagsPreview.png.png" alt="SimpleRightClickTaggingTags preview" width="600">
 </p>
 
 ## License
