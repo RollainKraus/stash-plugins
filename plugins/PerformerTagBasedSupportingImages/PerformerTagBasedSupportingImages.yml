@@ -1,6 +1,6 @@
 name: Performer Tag Based Supporting Images
 description: Supporting performer images selected by performer plus slot tag rules
-version: 1.2.0
+version: 0.2.0
 url: https://github.com/RollainKraus/stash-plugins
 
 settings:
@@ -39,10 +39,15 @@ settings:
     type: STRING
     description: "Sets the minimum height of slots and influences how tall slots can grow (Default: 210)"
 
-  a_panelWidthScale:
-    displayName: Panel Width Scale
+  a_panelWidth:
+    displayName: Panel Width
     type: STRING
-    description: "Panel width percentage from 100 to 150 (Default: 100)"
+    description: "Panel width in pixels for the performer page panel (Default: 300)"
+
+  a_autoFitSlotCrops:
+    displayName: Auto Fit Slot Crops
+    type: BOOLEAN
+    description: "Automatically fit images to their slot aspect ratio (Default: true)"
 
   a_panelBackgroundColor:
     displayName: Background Panel Color
@@ -78,6 +83,36 @@ settings:
     displayName: Open Images In New Tab
     type: BOOLEAN
     description: "Open the image page in a new tab when clicking a supporting image (Default: true)"
+
+  a_cardPreviewHoverBehavior:
+    displayName: Performer Card Preview Hover Behavior
+    type: STRING
+    description: "How the performer card preview opens: performer card, badge, or disabled (Default: badge)"
+
+  a_cardPreviewPanelWidth:
+    displayName: Performer Card Preview Width
+    type: STRING
+    description: "Width in pixels for the hover preview panel shown on performer cards (Default: 500)"
+
+  a_cardPreviewPanelHeight:
+    displayName: Performer Card Preview Height
+    type: STRING
+    description: "Height in pixels for the hover preview panel shown on performer cards (Default: 500)"
+
+  a_cardPreviewBackgroundColor:
+    displayName: Performer Card Preview Background Color
+    type: STRING
+    description: "Background color for the hover preview panel shown on performer cards (Default: #000000)"
+
+  a_cardPreviewShowEmptySlots:
+    displayName: Show Empty Preview Slots
+    type: BOOLEAN
+    description: "Show blank placeholders for missing performer card preview slots so slot order and gaps stay visible (Default: false)"
+
+  a_cardPreviewSlotOrder:
+    displayName: Performer Card Preview Slot Order
+    type: STRING
+    description: "Six digits using each slot number once to control preview order, for example 123456 or 145623 (Default: 123456)"
 
   b_slot1Tags:
     displayName: Slot 1 Tags
