@@ -1,5 +1,5 @@
 name: "Plugin: Background Images Slideshow"
-description: "Displays randomized background images with optional slideshow cycling, crossfades, and column layouts."
+description: "Fork of Background Images, credit goes to original uploader. Displays background images with optional slideshow."
 version: 1.1.0
 ui:
   css:
@@ -29,11 +29,11 @@ settings:
     type: BOOLEAN
   slideshowDuration:
     displayName: Slideshow Duration Seconds
-    description: Seconds to hold each slideshow image. Set 0 to disable slideshow mode. Positive values below 1 are treated as 1. Default 0.
+    description: Seconds to hold each slideshow image. Set 0 to disable slideshow mode. Default 0.
     type: NUMBER
   slideshowTransitionDuration:
     displayName: Slideshow Transition Milliseconds
-    description: Crossfade duration in milliseconds. Set 0 to disable fades. When slideshow is active, this is capped below the slideshow duration. Default 2000.
+    description: Crossfade duration in milliseconds. Set 0 to disable fades. Default 2000.
     type: NUMBER
   backgroundColumns:
     displayName: Background Columns
@@ -41,7 +41,7 @@ settings:
     type: NUMBER
   backgroundColumnWidths:
     displayName: Column Widths
-    description: Optional comma-separated column widths as percentages, or auto. Use x,x for two columns or x,x,x for three. Leave blank for equal widths.
+    description: column widths as percentages, or auto. x,x for two columns or x,x,x for three. Default blank
     type: STRING
   backgroundColumnBlendWidth:
     displayName: Column Blend Width Pixels
