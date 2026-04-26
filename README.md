@@ -10,6 +10,7 @@
 - [Organize Images By Performer](#Organize-Images-By-Performer)
 - [Visage](#Visage)
 - [Simple Right Click Tagging](#Simple-Right-Click-Tagging)
+- [Background Images Slideshow](#Background-Images-Slideshow)
 
 ## Installation
 
@@ -366,6 +367,18 @@ Simple menu to add tags or performers to images/scenes/performers directly from 
 </p>
 <p>
   <img src="/pluginPreviews/SimpleRightClickTaggingTagsPreview.png.png" alt="SimpleRightClickTaggingTags preview" width="600">
+</p>
+
+# Background Images Slideshow
+
+Fork of the original background images plugin. all credit goes to original uploader: https://github.com/ed36080666/stashapp_plugin_background_images/tree/main/src
+
+- Added a slideshow mode
+- Background can be split into up to 3 columns with customizable widths as a percentage or auto (best fit based on aspect ratio) and blending between columns
+
+<h2>Preview</h2>
+<p>
+  <img src="/pluginPreviews/SimpleRightClickTaggingPreview.gif" alt="SimpleRightClickTagging preview" width="600">
 </p>
 
 ## License
