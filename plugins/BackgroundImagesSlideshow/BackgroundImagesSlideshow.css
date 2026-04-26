@@ -1,0 +1,55 @@
+/******************************
+ * Background Images Slideshow
+ ******************************/
+:root {
+    --background-opacity: 0.3;
+    --background-images-slideshow-transition-duration: 2s;
+    --background-images-slideshow-column-blend-width: 160px;
+}
+
+#background-images-slideshow-background {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.background-images-slideshow__layer {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity var(--background-images-slideshow-transition-duration) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.background-images-slideshow__column {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background-repeat: no-repeat;
+    background-size: cover;
+    background-position: center 10%;
+}
+
+.background-images-slideshow__column--fade-right {
+    -webkit-mask-image: linear-gradient(
+        to right,
+        #000 0,
+        #000 calc(100% - var(--background-images-slideshow-column-blend-width)),
+        transparent 100%
+    );
+    mask-image: linear-gradient(
+        to right,
+        #000 0,
+        #000 calc(100% - var(--background-images-slideshow-column-blend-width)),
+        transparent 100%
+    );
+}
+
+/* styles the view background button in nav */
+.background-images-slideshow__view {
+    filter: grayscale(1);
+    opacity: 0.8;
+    transform: translateY(-1px);
+    cursor: pointer;
+}
