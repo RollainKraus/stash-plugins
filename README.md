@@ -378,7 +378,7 @@ Fork of the original background images plugin. all credit goes to original uploa
 
 <h2>Preview</h2>
 <p>
-  <img src="/pluginPreviews/SimpleRightClickTaggingPreview.gif" alt="SimpleRightClickTagging preview" width="600">
+  <img src="/pluginPreviews/BackgroundImagesSlideshow.gif" alt="BackgroundImagesSlideshow preview" width="600">
 </p>
 
 ## License
