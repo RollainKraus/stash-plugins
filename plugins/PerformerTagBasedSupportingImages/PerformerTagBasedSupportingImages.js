@@ -18,6 +18,7 @@
   const SLOT_ASPECT_STORAGE_KEY = "ptbsi-slot-aspect-modes-v1";
   const SLOT_ASPECT_LOCK_STORAGE_KEY = "ptbsi-slot-aspect-locks-v1";
   const COLLAPSED_STORAGE_KEY = "ptbsi-panel-collapsed-v1";
+  const BACKUP_VERSION = 1;
   const SLOT_ASPECT_MODES = ["tall", "portrait", "square", "landscape", "widescreen"];
   const LOOP_REPEAT_COUNT = 3;
   const LAYOUT_REFRESH_DELAYS = [0, 80, 180, 320];
@@ -222,6 +223,205 @@
     }
   }
 
+  function getStoredCollapsedStateValue() {
+    try {
+      return window.localStorage.getItem(COLLAPSED_STORAGE_KEY);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function normalizeBackupObject(value) {
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : {};
+  }
+
+  function normalizeCropBackupStore(value) {
+    const source = normalizeBackupObject(value);
+    return Object.entries(source).reduce((store, [key, crop]) => {
+      const normalizedCrop = normalizeCropRect(crop);
+      if (key && normalizedCrop) {
+        store[String(key)] = normalizedCrop;
+      }
+      return store;
+    }, {});
+  }
+
+  function normalizeSlotAspectBackupStore(value) {
+    const source = normalizeBackupObject(value);
+    return Object.entries(source).reduce((store, [key, mode]) => {
+      const rawMode = String(mode || "").trim().toLowerCase();
+      const normalizedMode = SLOT_ASPECT_MODES.includes(rawMode) ? rawMode : "";
+      if (key && normalizedMode) {
+        store[String(key)] = normalizedMode;
+      }
+      return store;
+    }, {});
+  }
+
+  function normalizeSlotAspectLockBackupStore(value) {
+    const source = normalizeBackupObject(value);
+    return Object.entries(source).reduce((store, [key, locked]) => {
+      if (key && locked) {
+        store[String(key)] = true;
+      }
+      return store;
+    }, {});
+  }
+
+  function buildLocalStateBackupPayload() {
+    const crops = normalizeCropBackupStore(state.cropStore);
+    const slotAspectModes = normalizeSlotAspectBackupStore(state.slotAspectStore);
+    const slotAspectLocks = normalizeSlotAspectLockBackupStore(state.slotAspectLockStore);
+    const panelCollapsed = getStoredCollapsedStateValue();
+
+    return {
+      plugin: PLUGIN_ID,
+      type: "ptbsi-local-state-backup",
+      version: BACKUP_VERSION,
+      exportedAt: new Date().toISOString(),
+      storageKeys: {
+        crops: CROP_STORAGE_KEY,
+        slotAspectModes: SLOT_ASPECT_STORAGE_KEY,
+        slotAspectLocks: SLOT_ASPECT_LOCK_STORAGE_KEY,
+        panelCollapsed: COLLAPSED_STORAGE_KEY,
+      },
+      counts: {
+        crops: Object.keys(crops).length,
+        slotAspectModes: Object.keys(slotAspectModes).length,
+        slotAspectLocks: Object.keys(slotAspectLocks).length,
+      },
+      data: {
+        crops,
+        slotAspectModes,
+        slotAspectLocks,
+        panelCollapsed,
+      },
+    };
+  }
+
+  function getBackupFileName() {
+    const stamp = new Date()
+      .toISOString()
+      .replace(/\.\d{3}Z$/, "Z")
+      .replace(/[:]/g, "-");
+    return `PerformerTagBasedSupportingImages-backup-${stamp}.json`;
+  }
+
+  function downloadJsonBackup(payload) {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = getBackupFileName();
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function exportLocalStateBackup() {
+    downloadJsonBackup(buildLocalStateBackupPayload());
+  }
+
+  function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(reader.error || new Error("Could not read backup file."));
+      reader.readAsText(file);
+    });
+  }
+
+  function parseLocalStateBackup(rawText) {
+    const parsed = JSON.parse(String(rawText || ""));
+    const data = normalizeBackupObject(parsed?.data || parsed);
+    return {
+      crops: normalizeCropBackupStore(data.crops),
+      slotAspectModes: normalizeSlotAspectBackupStore(data.slotAspectModes),
+      slotAspectLocks: normalizeSlotAspectLockBackupStore(data.slotAspectLocks),
+      panelCollapsed:
+        data.panelCollapsed === true ||
+        data.panelCollapsed === "true" ||
+        data.panelCollapsed === false ||
+        data.panelCollapsed === "false"
+          ? String(data.panelCollapsed) === "true"
+          : null,
+    };
+  }
+
+  function mergeImportedLocalStateBackup(backup) {
+    const crops = normalizeCropBackupStore(backup?.crops);
+    const slotAspectModes = normalizeSlotAspectBackupStore(backup?.slotAspectModes);
+    const slotAspectLocks = normalizeSlotAspectLockBackupStore(backup?.slotAspectLocks);
+
+    state.cropStore = {
+      ...state.cropStore,
+      ...crops,
+    };
+    state.slotAspectStore = {
+      ...state.slotAspectStore,
+      ...slotAspectModes,
+    };
+    state.slotAspectLockStore = {
+      ...state.slotAspectLockStore,
+      ...slotAspectLocks,
+    };
+
+    saveCropStore();
+    saveSlotAspectStore();
+    saveSlotAspectLockStore();
+
+    if (backup?.panelCollapsed != null) {
+      state.isCollapsed = !!backup.panelCollapsed;
+      saveCollapsedState();
+    }
+
+    return {
+      crops: Object.keys(crops).length,
+      slotAspectModes: Object.keys(slotAspectModes).length,
+      slotAspectLocks: Object.keys(slotAspectLocks).length,
+    };
+  }
+
+  async function importLocalStateBackupFile(file) {
+    if (!file) return;
+    try {
+      const backup = parseLocalStateBackup(await readFileAsText(file));
+      const counts = mergeImportedLocalStateBackup(backup);
+      rerenderPanel();
+      window.alert(
+        [
+          "Performer Tag Based Supporting Images backup imported.",
+          `Crops: ${counts.crops}`,
+          `Slot aspect modes: ${counts.slotAspectModes}`,
+          `Slot aspect locks: ${counts.slotAspectLocks}`,
+        ].join("\n")
+      );
+    } catch (err) {
+      console.error("[PerformerTagBasedSupportingImages] backup import failed", err);
+      window.alert("Could not import this backup JSON file.");
+    }
+  }
+
+  function promptImportLocalStateBackup() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json,.json";
+    input.addEventListener(
+      "change",
+      () => {
+        const file = input.files?.[0] || null;
+        importLocalStateBackupFile(file);
+      },
+      { once: true }
+    );
+    input.click();
+  }
+
   function setCollapsedState(nextValue) {
     state.isCollapsed = !!nextValue;
     saveCollapsedState();
@@ -316,7 +516,7 @@
     if (!image?.id) return "square";
     const dimensions = getImageDimensions(image);
     if (!dimensions) return "square";
-    const crop = getSavedCrop(slotKey, image.id);
+    const crop = getSavedCrop(slotKey, image);
     return inferSlotAspectModeFromRatio(getCropAspectRatio(dimensions, crop));
   }
 
@@ -369,6 +569,43 @@
     return `${String(slotKey)}:${String(imageId)}`;
   }
 
+  function normalizeCropIdentityValue(value) {
+    return String(value || "")
+      .trim()
+      .replace(/\\/g, "/")
+      .replace(/\/+/g, "/");
+  }
+
+  function getImageStableIdentity(image) {
+    if (!image || typeof image !== "object") return "";
+    const path =
+      image?.files?.find((file) => String(file?.path || "").trim())?.path ||
+      image?.file?.path ||
+      image?.path ||
+      "";
+    const normalizedPath = normalizeCropIdentityValue(path);
+    return normalizedPath ? `path:${normalizedPath}` : "";
+  }
+
+  function getCropStoreKeys(slotKey, imageOrId) {
+    const keyPrefix = String(slotKey || "");
+    if (!keyPrefix) return [];
+
+    const keys = [];
+    const imageId =
+      imageOrId && typeof imageOrId === "object" ? imageOrId.id : imageOrId;
+    if (imageId !== undefined && imageId !== null && String(imageId).trim()) {
+      keys.push(getCropStoreKey(keyPrefix, imageId));
+    }
+
+    const stableIdentity = getImageStableIdentity(imageOrId);
+    if (stableIdentity) {
+      keys.push(getCropStoreKey(keyPrefix, stableIdentity));
+    }
+
+    return Array.from(new Set(keys));
+  }
+
   function normalizeCropRect(rect) {
     if (!rect || typeof rect !== "object") return null;
     const x = Math.max(0, Math.min(1, Number(rect.x) || 0));
@@ -392,19 +629,40 @@
     };
   }
 
-  function getSavedCrop(slotKey, imageId) {
-    const crop = state.cropStore[getCropStoreKey(slotKey, imageId)];
-    return normalizeCropRect(crop);
+  function getSavedCrop(slotKey, imageOrId) {
+    const keys = getCropStoreKeys(slotKey, imageOrId);
+    for (const key of keys) {
+      const crop = normalizeCropRect(state.cropStore[key]);
+      if (!crop) continue;
+
+      const missingKeys = keys.filter(
+        (candidateKey) => !normalizeCropRect(state.cropStore[candidateKey])
+      );
+      if (missingKeys.length) {
+        missingKeys.forEach((candidateKey) => {
+          state.cropStore[candidateKey] = crop;
+        });
+        saveCropStore();
+      }
+
+      return crop;
+    }
+    return null;
   }
 
-  function setSavedCrop(slotKey, imageId, crop, options = {}) {
+  function setSavedCrop(slotKey, imageOrId, crop, options = {}) {
     const { skipSave = false } = options;
-    const key = getCropStoreKey(slotKey, imageId);
+    const keys = getCropStoreKeys(slotKey, imageOrId);
+    if (!keys.length) return;
     const normalized = normalizeCropRect(crop);
     if (normalized) {
-      state.cropStore[key] = normalized;
+      keys.forEach((key) => {
+        state.cropStore[key] = normalized;
+      });
     } else {
-      delete state.cropStore[key];
+      keys.forEach((key) => {
+        delete state.cropStore[key];
+      });
     }
     if (!skipSave) {
       saveCropStore();
@@ -1619,7 +1877,7 @@
     const dimensions = getImageDimensions(image);
     if (!slot || !image || !dimensions) return null;
     const aspectMode = getSlotTargetAspectMode(slot);
-    const existingCrop = getSavedCrop(slot.key, image.id);
+    const existingCrop = getSavedCrop(slot.key, image);
     const baseCrop = existingCrop || { x: 0, y: 0, width: 1, height: 1 };
     return snapCropToAspectMode(baseCrop, dimensions, aspectMode);
   }
@@ -1639,7 +1897,7 @@
 
   function doesImageCropFitSlot(slot, image, tolerance = 0.025) {
     const dimensions = getImageDimensions(image);
-    const crop = getSavedCrop(slot?.key, image?.id);
+    const crop = getSavedCrop(slot?.key, image);
     if (!slot || !image || !dimensions || !crop) return false;
     const targetRatio = getAspectRatioForMode(getSlotTargetAspectMode(slot));
     const cropRatio = getCropAspectRatio(dimensions, crop);
@@ -1651,11 +1909,11 @@
     if (!slot?.key || !image?.id) return false;
     const fittedCrop = getSlotFittedCrop(slot, image);
     if (!fittedCrop) return false;
-    const existingCrop = getSavedCrop(slot.key, image.id);
+    const existingCrop = getSavedCrop(slot.key, image);
     if (areCropsEquivalent(existingCrop, fittedCrop)) {
       return false;
     }
-    setSavedCrop(slot.key, image.id, fittedCrop, options);
+    setSavedCrop(slot.key, image, fittedCrop, options);
     return true;
   }
 
@@ -1849,7 +2107,7 @@
 
     closeCropEditor();
 
-    const existingCrop = getSavedCrop(slot.key, image.id);
+    const existingCrop = getSavedCrop(slot.key, image);
     const lockedAspectMode = getSlotCropAspectMode(slot);
     const backdrop = document.createElement("div");
     backdrop.className = "performer-tag-based-supporting-images__crop-backdrop";
@@ -2095,7 +2353,7 @@
       const snappedCrop = dimensions
         ? snapCropToAspectMode(crop, dimensions, mode)
         : crop;
-      setSavedCrop(slot.key, image.id, snappedCrop);
+      setSavedCrop(slot.key, image, snappedCrop);
       if (dimensions) {
         updateStoredSlotAspectMode(slot.key, mode);
       }
@@ -2104,7 +2362,7 @@
     }
 
     function handleReset() {
-      setSavedCrop(slot.key, image.id, null);
+      setSavedCrop(slot.key, image, null);
       closeCropEditor();
       rerenderPanel();
     }
@@ -3405,7 +3663,7 @@
     img.alt = image.title || labelText || "Supporting image";
 
     const dimensions = getImageDimensions(image);
-    const crop = getSavedCrop(slot.key, image.id);
+    const crop = getSavedCrop(slot.key, image);
     if (crop && dimensions) {
       frame.classList.add("performer-tag-based-supporting-images__image-frame--cropped");
       img.classList.add("performer-tag-based-supporting-images__image--cropped");
@@ -3791,6 +4049,30 @@
     return button;
   }
 
+  function createBackupButton(action, label, title) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "performer-tag-based-supporting-images__backup-button";
+    button.setAttribute("data-ptbsi-backup", action);
+    button.setAttribute("aria-label", title);
+    button.title = title;
+    button.textContent = label;
+    return button;
+  }
+
+  function createPanelToolbar() {
+    const toolbar = document.createElement("div");
+    toolbar.className = "performer-tag-based-supporting-images__toolbar";
+    toolbar.appendChild(createCollapseToggleButton());
+    toolbar.appendChild(
+      createBackupButton("export", "Export", "Export crop and aspect backup JSON")
+    );
+    toolbar.appendChild(
+      createBackupButton("import", "Import", "Import crop and aspect backup JSON")
+    );
+    return toolbar;
+  }
+
   function createEmptyState(message) {
     const empty = document.createElement("div");
     empty.className = "performer-tag-based-supporting-images__empty";
@@ -3853,7 +4135,7 @@
     button.setAttribute("aria-label", "Crop slot preview");
     button.textContent = "▣";
 
-    if (getSavedCrop(slot.key, image.id)) {
+    if (getSavedCrop(slot.key, image)) {
       button.classList.add("is-active");
       button.title = "Edit saved crop";
     } else {
@@ -3877,7 +4159,7 @@
     if (doesImageCropFitSlot(slot, image)) {
       button.classList.add("is-active");
       button.title = "Crop already fits slot aspect";
-    } else if (getSavedCrop(slot.key, image.id)) {
+    } else if (getSavedCrop(slot.key, image)) {
       button.title = "Fit existing crop to slot aspect";
     } else {
       button.title = "Create crop from slot aspect";
@@ -4012,7 +4294,7 @@
     next.disabled = !canNavigate;
 
     const image = slot.images[slot.currentIndex] || slot.images[0];
-    const crop = getSavedCrop(slot.key, image.id);
+    const crop = getSavedCrop(slot.key, image);
     const imageLink = document.createElement("a");
     imageLink.className = "performer-tag-based-supporting-images__image-link";
     imageLink.classList.add("performer-tag-based-supporting-images__image-link--ratio");
@@ -4168,7 +4450,7 @@
     if (getSlotTransitionMs(cfg) > 0) {
       panel.classList.add("has-slot-transition");
     }
-    panel.appendChild(createCollapseToggleButton());
+    panel.appendChild(createPanelToolbar());
     const slotsWrap = document.createElement("div");
     slotsWrap.className = "performer-tag-based-supporting-images__slots";
 
@@ -4536,6 +4818,19 @@
         return;
       }
 
+      const backupAction = event.target.closest("[data-ptbsi-backup]");
+      if (backupAction) {
+        event.preventDefault();
+        event.stopPropagation();
+        const action = backupAction.getAttribute("data-ptbsi-backup");
+        if (action === "export") {
+          exportLocalStateBackup();
+        } else if (action === "import") {
+          promptImportLocalStateBackup();
+        }
+        return;
+      }
+
       const tagLink = event.target.closest("[data-ptbsi-tag-filter-href]");
       if (tagLink) {
         const href = tagLink.getAttribute("data-ptbsi-tag-filter-href");
@@ -4576,9 +4871,9 @@
         if (!target) return;
         const fittedCrop = getSlotFittedCrop(target.slot, target.image);
         if (!fittedCrop) return;
-        const existingCrop = getSavedCrop(target.slot.key, target.image.id);
+        const existingCrop = getSavedCrop(target.slot.key, target.image);
         if (!areCropsEquivalent(existingCrop, fittedCrop)) {
-          setSavedCrop(target.slot.key, target.image.id, fittedCrop);
+          setSavedCrop(target.slot.key, target.image, fittedCrop);
         }
         rerenderSlot(target.slot.key, {
           anchorElement: cropFitAction.closest("[data-ptbsi-slot-key]"),
