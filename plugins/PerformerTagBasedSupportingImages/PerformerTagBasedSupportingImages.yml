@@ -47,7 +47,7 @@ settings:
   a_autoFitSlotCrops:
     displayName: Auto Fit Slot Crops
     type: BOOLEAN
-    description: "Automatically fit images to their slot aspect ratio (Default: true)"
+    description: "Automatically fit images to their slot aspect ratio when added to slots or loaded in the panel (Default: true)"
 
   a_panelBackgroundColor:
     displayName: Background Panel Color
