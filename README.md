@@ -381,8 +381,16 @@ Fork of the original background images plugin. all credit goes to original uploa
   <img src="/pluginPreviews/BackgroundImagesSlideshow.gif" alt="BackgroundImagesSlideshow preview" width="600">
 </p>
 
+# Studio Dashboard
+
+Adds a dashboard tab to studio pages to view top performers, top tags, scene release timelines and highlighted scenes
+
+- Hovering over studio badges from other pages optionally shows a popout panel of a condensed dashboard or the full dashboard
+
 ## License
 
 The default license is set to [AGPL-3.0](/LICENCE). Before publishing any plugins you can change it.
 
-Most of these made with AI
+## AI Disclaimer
+
+Heavy use of AI for everything
