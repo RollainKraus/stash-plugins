@@ -1,0 +1,97 @@
+name: Studio Dashboard
+description: Adds a dashboard tab to studio pages to view top performers, top tags, scene release timelines and highlighted scenes
+version: 0.1.0
+ui:
+  css:
+    - StudioDashboard.css
+  javascript:
+    - StudioDashboard.js
+settings:
+  a01ShowOnStudioPages:
+    displayName: Show Studio Dashboard Tab
+    type: BOOLEAN
+    description: Add a Dashboard tab to native studio pages. The dashboard loads when selected. Default true.
+  a02ShowOnBrowserPages:
+    displayName: Show On Browser Pages
+    type: BOOLEAN
+    description: Show studio hover popouts on scene, image, and gallery browser cards. Default false.
+  a03DisplayProfile:
+    displayName: Display Profile
+    type: STRING
+    description: "Popout size: compact, standard, or rich. Rich shows more cards and the release timeline. Default standard."
+  b01ShowHoverPopout:
+    displayName: Show Hover Popout
+    type: BOOLEAN
+    description: Show the studio hover popout. Default true.
+  b02ShowCountStats:
+    displayName: Show Count Stats
+    type: BOOLEAN
+    description: Show scene, image, gallery, performer, and O-count stats. Default true.
+  b03ShowTopPerformers:
+    displayName: Show Performer Highlights
+    type: BOOLEAN
+    description: Show dashboard performer highlight cards for scenes, ratings, and O-count. Default true.
+  b04ShowTopTags:
+    displayName: Show Top Tags
+    type: BOOLEAN
+    description: Show top tag cards for scenes by this studio. Compact and standard show 5; rich shows 10. Default true.
+  b05ShowReleaseTimeline:
+    displayName: Show Release Timeline
+    type: BOOLEAN
+    description: Show a labeled release activity chart in rich profile. Default true.
+  b06ShowTopScene:
+    displayName: Show Top Scene
+    type: BOOLEAN
+    description: Show the highest rated scene card. Default true.
+  b07ShowRecentRelease:
+    displayName: Show Most Recent Release
+    type: BOOLEAN
+    description: Show the most recent release scene card. Default true.
+  b08ShowTopOCountScene:
+    displayName: Show Most O's Scene
+    type: BOOLEAN
+    description: Show the scene card with the highest O's. Default true.
+  c01TopTagCategories:
+    displayName: Top Tag Categories
+    type: STRING
+    description: Comma-separated parent tag names or IDs to show as separate dashboard top tag rows. Empty shows one overall top tags row.
+  c02TopTagCategoryLayout:
+    displayName: Top Tag Category Layout
+    type: STRING
+    description: "Dashboard category layout: rows, columns, or flow. Default rows."
+  c03TopTagsPerCategory:
+    displayName: Top Tags Per Category
+    type: STRING
+    description: Number of top tags to show per dashboard category, from 1 to 10. Default 10.
+  c04TopTagWhitelist:
+    displayName: Top Tag Whitelist
+    type: STRING
+    description: Comma-separated tag names or IDs to consider for top tags, including descendants. Empty allows all tags.
+  c05TopTagBlacklist:
+    displayName: Top Tag Blacklist
+    type: STRING
+    description: Comma-separated tag names or IDs to exclude from top tags, including descendants. Default empty.
+  z01DashboardHeaderFontSize:
+    displayName: Dashboard Header Font Size
+    type: STRING
+    description: Dashboard-only main section header font size in pixels. Default 26.
+  z02DashboardSubheaderFontSize:
+    displayName: Dashboard Subheader Font Size
+    type: STRING
+    description: Dashboard-only card labels, names, titles, tag groups, and timeline year font size in pixels. Default 18.
+  z03DashboardContentFontSize:
+    displayName: Dashboard Content Font Size
+    type: STRING
+    description: Dashboard-only counts, metadata, secondary text, and timeline count font size in pixels. Default 15.
+  z04DashboardTagWidth:
+    displayName: Dashboard Tag Width
+    type: STRING
+    description: Dashboard-only fixed tag card width in pixels. Values below 100 are treated as 100. Default 200.
+  z05DashboardSurfaceBackgroundColor:
+    displayName: Dashboard Surface Background Color
+    type: STRING
+    description: Dashboard-only section/card background color. Default 000000.
+  z06DashboardSurfaceOpacity:
+    displayName: Dashboard Surface Background Opacity
+    type: STRING
+    description: Dashboard-only section/card background opacity, from 0 to 1. Default 0.15.
