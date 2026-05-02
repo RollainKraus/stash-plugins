@@ -11,6 +11,7 @@
 - [Visage](#Visage)
 - [Simple Right Click Tagging](#Simple-Right-Click-Tagging)
 - [Background Images Slideshow](#Background-Images-Slideshow)
+- [Studio Dashboard](#Studio-Dashboard)
 
 ## Installation
 
@@ -386,6 +387,10 @@ Fork of the original background images plugin. all credit goes to original uploa
 Adds a dashboard tab to studio pages to view top performers, top tags, scene release timelines and highlighted scenes
 
 - Hovering over studio badges from other pages optionally shows a popout panel of a condensed dashboard or the full dashboard
+- Customize which tags to show by group (works best with tag hierarchies) with black/whitelist and exclusion rules
+- Compares performer stats from studio content to all content
+
+Adds nothing new functionally, just an at-a-glance popout for studio content summaries and a more in depth dashboard tab.
 
 ## License
 
