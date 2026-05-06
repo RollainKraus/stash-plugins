@@ -2,17 +2,137 @@
   "use strict";
 
   const PLUGIN_ID = "StudioDashboard";
-  const LEGACY_PLUGIN_ID = "StudioBadges";
   const ROUTE_EVENT = "studio-dashboard:navigation";
   const TOP_PERFORMER_MAX = 6;
   const TOP_TAG_MAX = 10;
   const TOP_TAG_CATEGORY_MAX = 12;
+  const DEMOGRAPHIC_PIE_TOP_COUNTRIES = 10;
+  const DEMOGRAPHIC_AGE_GROUP_MAX = 10;
+  const DASHBOARD_ROW_CARD_LIMIT = 8;
+  const DASHBOARD_SCENE_ROW_LIMIT = 5;
   const STATS_PAGE_SIZE = 250;
   const GRAPHQL_TIMEOUT_MS = 60000;
   const STUDIO_DASHBOARD_TAB_KEY = "studio-dashboard-tab";
+  const DEFAULT_DASHBOARD_SECTION_ORDER = [
+    "performerHighlights",
+    "topTags",
+    "releaseTimeline",
+    "sceneHighlights",
+    "performerDemographics",
+    "sceneCharts",
+  ];
+  const DASHBOARD_SECTION_ALIASES = {
+    performers: "performerHighlights",
+    performer: "performerHighlights",
+    performerhighlights: "performerHighlights",
+    topperformers: "performerHighlights",
+    performersmostscenes: "performersMostScenes",
+    mostscenesperformers: "performersMostScenes",
+    performersmostos: "performersMostOs",
+    mostosperformers: "performersMostOs",
+    performershighestrating: "performersHighestRating",
+    highestratingperformers: "performersHighestRating",
+    performershighestratedscenes: "performersHighestRatedScenes",
+    performerswithhighestratedscenes: "performersHighestRatedScenes",
+    tags: "topTags",
+    toptags: "topTags",
+    timeline: "releaseTimeline",
+    releasetimeline: "releaseTimeline",
+    scenes: "sceneHighlights",
+    scenehighlights: "sceneHighlights",
+    topratedscenes: "topRatedScenes",
+    recentreleases: "recentReleases",
+    scenesmostos: "scenesMostOs",
+    sceneswithmostos: "scenesMostOs",
+    demographics: "performerDemographics",
+    performerdemographics: "performerDemographics",
+    scenecharts: "sceneCharts",
+    charts: "sceneCharts",
+  };
   const DISPLAY_PROFILES = new Set(["compact", "standard", "rich"]);
   const TOP_TAG_LAYOUTS = new Set(["rows", "columns", "flow"]);
   const MONTH_ABBREVIATIONS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const DEMOGRAPHIC_COLORS = ["#8ec5ff", "#ffd680", "#9af0c8", "#ff9eb3", "#d4a8ff", "#f5a267", "#8fe1e7", "#c7e86b", "#f08ee6", "#8d98a8"];
+  const O_COUNT_ICON = "\u{1F4A6}";
+  const AGE_BUCKETS = [
+    { label: "18-20", min: 18, max: 20 },
+    { label: "21-24", min: 21, max: 24 },
+    { label: "25-29", min: 25, max: 29 },
+    { label: "30-34", min: 30, max: 34 },
+    { label: "35-39", min: 35, max: 39 },
+    { label: "40-44", min: 40, max: 44 },
+    { label: "45+", min: 45, max: 120 },
+  ];
+  const RATING_BUCKETS = [
+    { label: "0-0.9", min: 0, max: 0.9 },
+    { label: "1-1.9", min: 1, max: 1.9 },
+    { label: "2-2.9", min: 2, max: 2.9 },
+    { label: "3-3.9", min: 3, max: 3.9 },
+    { label: "4-4.9", min: 4, max: 4.9 },
+    { label: "5-5.9", min: 5, max: 5.9 },
+    { label: "6-6.9", min: 6, max: 6.9 },
+    { label: "7-7.9", min: 7, max: 7.9 },
+    { label: "8-8.9", min: 8, max: 8.9 },
+    { label: "9-9.9", min: 9, max: 9.9 },
+    { label: "10", min: 10, max: 10 },
+  ];
+  const RESOLUTION_BUCKETS = [
+    { label: "144p", enumValue: "VERY_LOW", max: 144 },
+    { label: "240p", enumValue: "LOW", max: 240 },
+    { label: "360p", enumValue: "R360P", max: 360 },
+    { label: "480p", enumValue: "STANDARD", max: 480 },
+    { label: "540p", enumValue: "WEB_HD", max: 540 },
+    { label: "720p", enumValue: "STANDARD_HD", max: 720 },
+    { label: "1080p", enumValue: "FULL_HD", max: 1080 },
+    { label: "1440p", enumValue: "QUAD_HD", max: 1440 },
+    { label: "4K", enumValue: "FOUR_K", max: 2160 },
+    { label: "5K", enumValue: "FIVE_K", max: 2880 },
+    { label: "6K", enumValue: "SIX_K", max: 3240 },
+    { label: "7K", enumValue: "SEVEN_K", max: 3780 },
+    { label: "8K", enumValue: "EIGHT_K", max: 4320 },
+    { label: "8K+", enumValue: "HUGE", max: null },
+  ];
+  const DURATION_BUCKETS = [
+    { label: "<5m", min: null, max: 5 },
+    { label: "5-15m", min: 5, max: 15 },
+    { label: "15-30m", min: 15, max: 30 },
+    { label: "30-45m", min: 30, max: 45 },
+    { label: "45-60m", min: 45, max: 60 },
+    { label: "60-90m", min: 60, max: 90 },
+    { label: "90-120m", min: 90, max: 120 },
+    { label: "120m+", min: 120, max: null },
+  ];
+  const COUNTRY_NAMES = {
+    AD: "Andorra", AE: "United Arab Emirates", AF: "Afghanistan", AG: "Antigua and Barbuda", AI: "Anguilla",
+    AL: "Albania", AM: "Armenia", AO: "Angola", AR: "Argentina", AT: "Austria", AU: "Australia",
+    BA: "Bosnia and Herzegovina", BB: "Barbados", BD: "Bangladesh", BE: "Belgium", BF: "Burkina Faso",
+    BG: "Bulgaria", BH: "Bahrain", BI: "Burundi", BJ: "Benin", BM: "Bermuda", BN: "Brunei", BO: "Bolivia",
+    BR: "Brazil", BS: "Bahamas", BT: "Bhutan", BW: "Botswana", BY: "Belarus", BZ: "Belize", CA: "Canada",
+    CD: "Democratic Republic of the Congo", CF: "Central African Republic", CG: "Republic of the Congo",
+    CH: "Switzerland", CI: "Cote d'Ivoire", CL: "Chile", CM: "Cameroon", CN: "China", CO: "Colombia",
+    CR: "Costa Rica", CU: "Cuba", CV: "Cape Verde", CY: "Cyprus", CZ: "Czech Republic", DE: "Germany",
+    DJ: "Djibouti", DK: "Denmark", DM: "Dominica", DO: "Dominican Republic", DZ: "Algeria", EC: "Ecuador",
+    EE: "Estonia", EG: "Egypt", ES: "Spain", ET: "Ethiopia", FI: "Finland", FJ: "Fiji", FR: "France",
+    GB: "United Kingdom", GD: "Grenada", GE: "Georgia", GH: "Ghana", GM: "Gambia", GN: "Guinea",
+    GR: "Greece", GT: "Guatemala", GY: "Guyana", HK: "Hong Kong", HN: "Honduras", HR: "Croatia",
+    HT: "Haiti", HU: "Hungary", ID: "Indonesia", IE: "Ireland", IL: "Israel", IN: "India", IQ: "Iraq",
+    IR: "Iran", IS: "Iceland", IT: "Italy", JM: "Jamaica", JO: "Jordan", JP: "Japan", KE: "Kenya",
+    KG: "Kyrgyzstan", KH: "Cambodia", KR: "South Korea", KW: "Kuwait", KZ: "Kazakhstan", LA: "Laos",
+    LB: "Lebanon", LC: "Saint Lucia", LK: "Sri Lanka", LR: "Liberia", LS: "Lesotho", LT: "Lithuania",
+    LU: "Luxembourg", LV: "Latvia", LY: "Libya", MA: "Morocco", MC: "Monaco", MD: "Moldova",
+    ME: "Montenegro", MG: "Madagascar", MK: "North Macedonia", ML: "Mali", MM: "Myanmar", MN: "Mongolia",
+    MO: "Macau", MR: "Mauritania", MT: "Malta", MU: "Mauritius", MV: "Maldives", MW: "Malawi",
+    MX: "Mexico", MY: "Malaysia", MZ: "Mozambique", NA: "Namibia", NE: "Niger", NG: "Nigeria",
+    NI: "Nicaragua", NL: "Netherlands", NO: "Norway", NP: "Nepal", NZ: "New Zealand", OM: "Oman",
+    PA: "Panama", PE: "Peru", PG: "Papua New Guinea", PH: "Philippines", PK: "Pakistan", PL: "Poland",
+    PR: "Puerto Rico", PS: "Palestine", PT: "Portugal", PY: "Paraguay", QA: "Qatar", RO: "Romania",
+    RS: "Serbia", RU: "Russia", RW: "Rwanda", SA: "Saudi Arabia", SC: "Seychelles", SD: "Sudan",
+    SE: "Sweden", SG: "Singapore", SI: "Slovenia", SK: "Slovakia", SN: "Senegal", SO: "Somalia",
+    SR: "Suriname", SV: "El Salvador", SY: "Syria", TD: "Chad", TH: "Thailand", TJ: "Tajikistan",
+    TN: "Tunisia", TR: "Turkey", TT: "Trinidad and Tobago", TW: "Taiwan", TZ: "Tanzania", UA: "Ukraine",
+    UG: "Uganda", US: "United States", UY: "Uruguay", UZ: "Uzbekistan", VE: "Venezuela", VN: "Vietnam",
+    ZA: "South Africa", ZM: "Zambia", ZW: "Zimbabwe",
+  };
 
   const state = {
     config: {},
@@ -116,6 +236,28 @@
     return getConfigNumber(getSetting("z06DashboardSurfaceOpacity", "dashboardSurfaceOpacity"), 0.15, 0, 1);
   }
 
+  function normalizeDashboardSectionKey(value) {
+    const key = String(value || "").trim().replace(/[\s_-]+/g, "").toLowerCase();
+    if (!key) return "";
+    return DASHBOARD_SECTION_ALIASES[key] || "";
+  }
+
+  function getDashboardSectionOrder() {
+    const raw = String(getSetting("a03DashboardSectionOrder", "dashboardSectionOrder") ?? "").trim();
+    if (!raw) return DEFAULT_DASHBOARD_SECTION_ORDER.slice();
+    if (/^(none|off|disabled)$/i.test(raw)) return [];
+    const seen = new Set();
+    const order = raw
+      .split(",")
+      .map(normalizeDashboardSectionKey)
+      .filter((key) => {
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    return order.length ? order : DEFAULT_DASHBOARD_SECTION_ORDER.slice();
+  }
+
   function getDashboardTopTagLimit() {
     return Math.round(getConfigNumber(getSetting("c03TopTagsPerCategory", "topTagsPerCategory"), 10, 1, TOP_TAG_MAX));
   }
@@ -125,8 +267,69 @@
     return TOP_TAG_LAYOUTS.has(layout) ? layout : "rows";
   }
 
+  function getPieSliceMax() {
+    const value = Number(getSetting("c06PieChartSliceMax", "pieChartSliceMax") ?? 0);
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.round(value));
+  }
+
+  function getDemographicTooltipImageHeight() {
+    const value = getSetting("d02DemographicTooltipImageHeight", "d02ShowDemographicTooltipImages", "showDemographicTooltipImages");
+    if (typeof value === "boolean") return value ? 78 : 0;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 78;
+    return Math.max(0, Math.min(240, Math.round(numeric)));
+  }
+
+  function getAgeBuckets() {
+    const configured = getConfigString(getSetting("d03AgeGroups", "ageGroups"), "");
+    const buckets = parseAgeBuckets(configured);
+    return (buckets.length ? buckets : AGE_BUCKETS).slice(0, DEMOGRAPHIC_AGE_GROUP_MAX);
+  }
+
+  function getRatingBuckets() {
+    const configured = getConfigString(getSetting("d04RatingGroups", "ratingGroups"), "");
+    const buckets = parseRatingBuckets(configured);
+    return buckets.length ? buckets : RATING_BUCKETS;
+  }
+
+  function getResolutionBuckets() {
+    const configured = getConfigString(getSetting("e01SceneResolutionGroups", "sceneResolutionGroups"), "");
+    const buckets = parseMetricBuckets(configured, { unit: "p" });
+    return buckets.length ? buckets : RESOLUTION_BUCKETS;
+  }
+
+  function getDurationBuckets() {
+    const configured = getConfigString(getSetting("e02SceneDurationGroups", "sceneDurationGroups"), "");
+    const buckets = parseMetricBuckets(configured, { unit: "m" });
+    return buckets.length ? buckets : DURATION_BUCKETS;
+  }
+
+  function getPerformerPieChartTagRef(index) {
+    const keyNumber = { 1: "d05", 2: "d07", 3: "d09" }[index] || "d05";
+    return getConfigString(getSetting(`${keyNumber}PerformerPieChart${index}Tag`), "");
+  }
+
+  function getPerformerPieChartLabel(index) {
+    const keyNumber = { 1: "d06", 2: "d08", 3: "d10" }[index] || "d06";
+    return getConfigString(getSetting(`${keyNumber}PerformerPieChart${index}Label`), `Performer pie ${index}`);
+  }
+
+  function getScenePieChartTagRef(index) {
+    const keyNumber = { 1: "e03", 2: "e05", 3: "e07" }[index] || "e03";
+    return getConfigString(getSetting(`${keyNumber}ScenePieChart${index}Tag`, `scenePieChart${index}Tag`), "");
+  }
+
+  function getScenePieChartLabel(index) {
+    const keyNumber = { 1: "e04", 2: "e06", 3: "e08" }[index] || "e04";
+    return getConfigString(getSetting(`${keyNumber}ScenePieChart${index}Label`, `scenePieChart${index}Label`), `Scene pie ${index}`);
+  }
+
   function getDisplayProfile() {
-    const profile = getConfigString(getSetting("a03DisplayProfile", "displayProfile"), "standard").toLowerCase();
+    const value = getSetting("a02DisplayProfile", "displayProfile");
+    if (value == null) return "standard";
+    const profile = String(value).trim().toLowerCase();
+    if (!profile) return "";
     return DISPLAY_PROFILES.has(profile) ? profile : "standard";
   }
 
@@ -148,7 +351,7 @@
       }
     `);
     const plugins = data?.configuration?.plugins || {};
-    const nextConfig = plugins[PLUGIN_ID] || plugins[LEGACY_PLUGIN_ID] || {};
+    const nextConfig = plugins[PLUGIN_ID] || {};
     const nextKey = JSON.stringify(nextConfig);
     if (state.configKey && state.configKey !== nextKey) {
       state.statsCache.clear();
@@ -425,8 +628,25 @@
       .sort(sorter)[0] || null;
   }
 
-  function performerMetricCard(performer, metricKey, metricTitle) {
+  function pickPerformers(performers, sorter, filter = () => true, limit = DASHBOARD_ROW_CARD_LIMIT) {
+    return performers
+      .filter(filter)
+      .slice()
+      .sort(sorter)
+      .slice(0, limit);
+  }
+
+  function performerMetricValue(performer, metricKey) {
+    if (metricKey === "mostScenes" || metricKey === "leastScenes") return String(Number(performer?.count || 0));
+    if (metricKey === "mostOCount" || metricKey === "leastOCount") return String(Number(performer?.oCount || 0));
+    if (metricKey === "highestRating" || metricKey === "lowestRating") return formatRating(performer?.performerRating);
+    if (metricKey === "highestStudioContentRating" || metricKey === "lowestStudioContentRating") return formatContentRating(performer?.studioTopRating);
+    return "";
+  }
+
+  function performerMetricCard(performer, metricKey, metricTitle, options = {}) {
     if (!performer) return null;
+    const title = options.useMetricValue ? performerMetricValue(performer, metricKey) : metricTitle;
     return {
       id: performer.id,
       name: performer.name,
@@ -439,8 +659,14 @@
       performerRating: performer.performerRating,
       studioTopRating: performer.studioTopRating,
       metricKey,
-      metricTitle,
+      metricTitle: title,
     };
+  }
+
+  function performerMetricCards(performers, metricKey, metricTitle, options = {}) {
+    return (performers || [])
+      .map((performer) => performerMetricCard(performer, metricKey, metricTitle, options))
+      .filter(Boolean);
   }
 
   function buildPerformerHighlights(performers) {
@@ -521,6 +747,51 @@
         "Lowest rated scene"
       ),
     ].filter(Boolean);
+  }
+
+  function buildPerformerHighlightRows(performers) {
+    const byMostScenes = (left, right) => {
+      if (right.count !== left.count) return right.count - left.count;
+      return left.name.localeCompare(right.name);
+    };
+    const byMostOCount = (left, right) => {
+      if (right.oCount !== left.oCount) return right.oCount - left.oCount;
+      return byMostScenes(left, right);
+    };
+    const byHighestRating = (left, right) => {
+      if (right.performerRating !== left.performerRating) return right.performerRating - left.performerRating;
+      return byMostScenes(left, right);
+    };
+    const byHighestStudioContentRating = (left, right) => {
+      if (right.studioTopRating !== left.studioTopRating) return right.studioTopRating - left.studioTopRating;
+      return byMostScenes(left, right);
+    };
+    return {
+      performersMostScenes: performerMetricCards(
+        pickPerformers(performers, byMostScenes),
+        "mostScenes",
+        "Most scenes",
+        { useMetricValue: true }
+      ),
+      performersMostOs: performerMetricCards(
+        pickPerformers(performers, byMostOCount, (performer) => Number(performer.oCount || 0) > 0),
+        "mostOCount",
+        "Most O's",
+        { useMetricValue: true }
+      ),
+      performersHighestRating: performerMetricCards(
+        pickPerformers(performers, byHighestRating, (performer) => Number(performer.performerRating || 0) > 0),
+        "highestRating",
+        "Highest rating",
+        { useMetricValue: true }
+      ),
+      performersHighestRatedScenes: performerMetricCards(
+        pickPerformers(performers, byHighestStudioContentRating, (performer) => Number(performer.studioTopRating || 0) > 0),
+        "highestStudioContentRating",
+        "Top rated scene",
+        { useMetricValue: true }
+      ),
+    };
   }
 
   function attachStudioToPerformers(performers, studio) {
@@ -650,12 +921,14 @@
       return {
         performers: 6,
         tags: 10,
-        showTimeline: getConfigBoolean(getSetting("b05ShowReleaseTimeline", "showReleaseTimeline"), true),
+        scenes: 5,
+        showTimeline: true,
       };
     }
     return {
       performers: 3,
       tags: 5,
+      scenes: 3,
       showTimeline: false,
     };
   }
@@ -711,6 +984,850 @@
     return groups;
   }
 
+  async function buildPerformerDemographics(performers, scenes) {
+    const countryGroups = new Map();
+    (performers || []).forEach((performer) => {
+      const key = normalizeCountryKey(performer?.country);
+      const group = countryGroups.get(key) || {
+        key,
+        raw: String(performer?.country || ""),
+        performerIds: [],
+        performers: [],
+        count: 0,
+      };
+      group.count += 1;
+      group.performerIds.push(String(performer?.id || ""));
+      group.performers.push(normalizeDemographicPerformer(performer));
+      countryGroups.set(key, group);
+    });
+
+    const ageBuckets = getAgeBuckets();
+    const ageCounts = new Map(ageBuckets.map((bucket) => [bucket.label, 0]));
+    const agePerformers = new Map(ageBuckets.map((bucket) => [bucket.label, new Map()]));
+    let otherAgeCount = 0;
+    const otherAgePerformers = new Map();
+    let unknownAgeCount = 0;
+    const unknownAgePerformers = new Map();
+    (scenes || []).forEach((scene) => {
+      const sceneDate = String(scene?.date || "");
+      (scene?.performers || []).forEach((performer) => {
+        const age = calculateAgeAtDate(performer?.birthdate, sceneDate);
+        if (age == null) {
+          unknownAgeCount += 1;
+          const id = String(performer?.id || "");
+          if (id) unknownAgePerformers.set(id, normalizeDemographicPerformer(performer));
+          return;
+        }
+        const bucket = ageBuckets.find((item) => ageMatchesBucket(age, item));
+        if (bucket) {
+          ageCounts.set(bucket.label, (ageCounts.get(bucket.label) || 0) + 1);
+          addDemographicPerformer(agePerformers.get(bucket.label), performer);
+        } else {
+          otherAgeCount += 1;
+          const id = String(performer?.id || "");
+          if (id) otherAgePerformers.set(id, normalizeDemographicPerformer(performer));
+        }
+      });
+    });
+    const knownAgeTotal = Array.from(ageCounts.values()).reduce((total, count) => total + count, 0) + otherAgeCount;
+    const ratingDistribution = buildRatingDistribution(performers, {
+      getRating: (performer) => Number(performer?.performerRating || 0),
+      getEntity: normalizeDemographicPerformer,
+      entityKey: "performers",
+    });
+    const customDistributions = await buildCustomPerformerPieDistributions(performers);
+
+    return {
+      countries: buildCountryDistributionItems(countryGroups, Infinity, Math.max(0, performers?.length || 0)),
+      ages: buildAgeDistributionItems(
+        ageBuckets,
+        ageCounts,
+        agePerformers,
+        knownAgeTotal + unknownAgeCount,
+        otherAgeCount,
+        otherAgePerformers,
+        unknownAgeCount,
+        unknownAgePerformers
+      ),
+      ratings: ratingDistribution.items,
+      customPies: customDistributions,
+      ageUnknown: unknownAgeCount,
+      countryTotal: Math.max(0, performers?.length || 0),
+      ageTotal: knownAgeTotal + unknownAgeCount,
+      ratingTotal: ratingDistribution.total,
+    };
+  }
+
+  function buildCountryDistributionItems(groups, limit = Infinity, totalOverride = null) {
+    const entries = Array.from(groups.values())
+      .filter((group) => Number(group.count || 0) > 0)
+      .sort((left, right) => {
+        if (right.count !== left.count) return right.count - left.count;
+        return getCountryDisplayName(left.key).localeCompare(getCountryDisplayName(right.key));
+      })
+      .slice(0, limit);
+    const total = Number(totalOverride || 0) || entries.reduce((sum, group) => sum + Number(group.count || 0), 0);
+    return entries.map((group) => ({
+      key: group.key,
+      label: formatCountryLabel(group.key),
+      filterLabel: getCountryDisplayName(group.key),
+      countryValue: group.key,
+      countryValues: group.key === "Unknown" ? [] : [group.key],
+      count: Number(group.count || 0),
+      percent: formatPercent(Number(group.count || 0), total),
+      performerIds: uniqueValues(group.performerIds).filter(Boolean),
+      performers: group.performers || [],
+      filterable: group.key !== "Unknown" || uniqueValues(group.performerIds).filter(Boolean).length > 0,
+    }));
+  }
+
+  function buildAgeDistributionItems(
+    buckets,
+    counts,
+    performerGroups = new Map(),
+    totalOverride = null,
+    otherCount = 0,
+    otherPerformers = new Map(),
+    unknownCount = 0,
+    unknownPerformers = new Map()
+  ) {
+    const entries = buckets.map((bucket) => [bucket, Number(counts.get(bucket.label) || 0)])
+      .filter(([, count]) => count > 0);
+    const total = Number(totalOverride || 0) || entries.reduce((sum, [, count]) => sum + count, 0);
+    const items = entries.map(([bucket, count]) => ({
+      ...bucket,
+      count,
+      percent: formatPercent(count, total),
+      performers: Array.from(performerGroups.get(bucket.label)?.values() || []),
+      performerIds: Array.from(performerGroups.get(bucket.label)?.keys() || []),
+    }));
+    if (otherCount > 0) {
+      items.push({
+        label: "Other",
+        count: Number(otherCount || 0),
+        percent: formatPercent(Number(otherCount || 0), total),
+        otherAge: true,
+        performers: Array.from(otherPerformers.values()),
+        performerIds: Array.from(otherPerformers.keys()),
+      });
+    }
+    if (unknownCount > 0) {
+      items.push({
+        label: "Unknown",
+        count: Number(unknownCount || 0),
+        percent: formatPercent(Number(unknownCount || 0), total),
+        unknownAge: true,
+        performers: Array.from(unknownPerformers.values()),
+        performerIds: Array.from(unknownPerformers.keys()),
+      });
+    }
+    return items;
+  }
+
+  function buildRatingDistribution(items, options = {}) {
+    const buckets = getRatingBuckets();
+    const counts = new Map(buckets.map((bucket) => [bucket.label, 0]));
+    const entityGroups = new Map(buckets.map((bucket) => [bucket.label, []]));
+    const otherEntities = [];
+    const unknownEntities = [];
+    (items || []).forEach((item) => {
+      const rating100 = Number(options.getRating ? options.getRating(item) : item?.rating100 || 0);
+      if (!Number.isFinite(rating100) || rating100 <= 0) {
+        unknownEntities.push(options.getEntity ? options.getEntity(item) : item);
+        return;
+      }
+      const rating = rating100 / 10;
+      const bucket = buckets.find((candidate) => ratingMatchesBucket(rating, candidate));
+      if (bucket) {
+        counts.set(bucket.label, (counts.get(bucket.label) || 0) + 1);
+        entityGroups.get(bucket.label)?.push(options.getEntity ? options.getEntity(item) : item);
+      } else {
+        otherEntities.push(options.getEntity ? options.getEntity(item) : item);
+      }
+    });
+    const knownTotal = Array.from(counts.values()).reduce((total, count) => total + count, 0) + otherEntities.length;
+    const total = knownTotal + unknownEntities.length;
+    const itemsOut = buckets
+      .map((bucket) => {
+        const count = Number(counts.get(bucket.label) || 0);
+        return {
+          ...bucket,
+          count,
+          percent: formatPercent(count, total),
+          [options.entityKey || "entities"]: (entityGroups.get(bucket.label) || []).filter(Boolean),
+        };
+      })
+      .filter((item) => item.count > 0);
+    if (otherEntities.length) {
+      itemsOut.push({
+        label: "Other",
+        count: otherEntities.length,
+        percent: formatPercent(otherEntities.length, total),
+        otherRating: true,
+        filterable: options.entityKey !== "scenes",
+        [options.entityKey || "entities"]: otherEntities.filter(Boolean),
+      });
+    }
+    if (unknownEntities.length) {
+      itemsOut.push({
+        label: "Unknown",
+        count: unknownEntities.length,
+        percent: formatPercent(unknownEntities.length, total),
+        unknownRating: true,
+        [options.entityKey || "entities"]: unknownEntities.filter(Boolean),
+      });
+    }
+    return { total, items: itemsOut };
+  }
+
+  function buildMetricDistribution(items, buckets, options = {}) {
+    const counts = new Map(buckets.map((bucket) => [bucket.label, 0]));
+    const entityGroups = new Map(buckets.map((bucket) => [bucket.label, []]));
+    const otherEntities = [];
+    const unknownEntities = [];
+    (items || []).forEach((item) => {
+      const metric = Number(options.getMetric ? options.getMetric(item) : NaN);
+      const entity = options.getEntity ? options.getEntity(item) : item;
+      if (!Number.isFinite(metric) || metric <= 0) {
+        unknownEntities.push(entity);
+        return;
+      }
+      const bucket = buckets.find((candidate) => metricMatchesBucket(metric, candidate));
+      if (bucket) {
+        counts.set(bucket.label, (counts.get(bucket.label) || 0) + 1);
+        entityGroups.get(bucket.label)?.push(entity);
+      } else {
+        otherEntities.push(entity);
+      }
+    });
+    const knownTotal = Array.from(counts.values()).reduce((total, count) => total + count, 0) + otherEntities.length;
+    const total = knownTotal + unknownEntities.length;
+    const entityKey = options.entityKey || "entities";
+    const itemsOut = buckets
+      .map((bucket) => {
+        const count = Number(counts.get(bucket.label) || 0);
+        return {
+          ...bucket,
+          count,
+          percent: formatPercent(count, total),
+          filterable: options.metricType !== "resolution" || Boolean(bucket.enumValue),
+          metricType: options.metricType || "",
+          [entityKey]: (entityGroups.get(bucket.label) || []).filter(Boolean),
+        };
+      })
+      .filter((item) => item.count > 0);
+    if (otherEntities.length) {
+      itemsOut.push({
+        label: "Other",
+        count: otherEntities.length,
+        percent: formatPercent(otherEntities.length, total),
+        filterable: false,
+        metricType: options.metricType || "",
+        metricOther: true,
+        [entityKey]: otherEntities.filter(Boolean),
+      });
+    }
+    if (unknownEntities.length) {
+      itemsOut.push({
+        label: "Unknown",
+        count: unknownEntities.length,
+        percent: formatPercent(unknownEntities.length, total),
+        filterable: false,
+        metricType: options.metricType || "",
+        metricUnknown: true,
+        [entityKey]: unknownEntities.filter(Boolean),
+      });
+    }
+    return { total, items: itemsOut };
+  }
+
+  async function buildCustomPerformerPieDistributions(performers) {
+    const charts = [];
+    for (let index = 1; index <= 3; index += 1) {
+      const tagRef = getPerformerPieChartTagRef(index);
+      if (!tagRef) continue;
+      const distribution = await buildCustomTagPieDistribution(performers, tagRef);
+      const hasItems = distribution.items.length || distribution.subcharts?.some((subchart) => subchart.items?.length);
+      if (!hasItems) continue;
+      charts.push({
+        ...distribution,
+        title: getPerformerPieChartLabel(index),
+      });
+    }
+    return charts;
+  }
+
+  async function buildCustomScenePieDistributions(scenes) {
+    const charts = [];
+    for (let index = 1; index <= 3; index += 1) {
+      const tagRef = getScenePieChartTagRef(index);
+      if (!tagRef) continue;
+      const distribution = await buildCustomSceneTagPieDistribution(scenes, tagRef);
+      const hasItems = distribution.items.length || distribution.subcharts?.some((subchart) => subchart.items?.length);
+      if (!hasItems) continue;
+      charts.push({
+        ...distribution,
+        title: getScenePieChartLabel(index),
+      });
+    }
+    return charts;
+  }
+
+  async function buildCustomTagPieDistribution(performers, tagRef) {
+    try {
+      const allTags = await fetchAllTags();
+      const customGroups = parseCustomPieGroups(tagRef).slice(0, 4);
+      if (customGroups.length > 1) {
+        const subcharts = customGroups
+          .map((group, index) => buildCustomTagPieSubchart(performers, allTags, group, index + 1))
+          .filter((subchart) => subchart.items.length);
+        return {
+          total: Math.max(0, performers?.length || 0),
+          items: [],
+          subcharts,
+        };
+      }
+      const subchart = buildCustomTagPieSubchart(performers, allTags, customGroups[0] || tagRef, 1);
+      return {
+        total: subchart.total,
+        items: subchart.items,
+      };
+    } catch (err) {
+      console.warn("[StudioDashboard] Custom tag pie failed", err);
+      return { total: 0, items: [] };
+    }
+  }
+
+  function buildCustomTagPieSubchart(performers, allTags, tagRef, index) {
+    const group = normalizeCustomPieGroup(tagRef, index);
+    const selectedTags = resolveCustomPieSliceTags(allTags, group.value);
+    const sliceTags = selectedTags.sort((left, right) => left.name.localeCompare(right.name));
+    if (!sliceTags.length) return { title: `Group ${index}`, total: 0, items: [] };
+    const groups = new Map(sliceTags.map((tag) => [tag.id, {
+      key: tag.id,
+      label: tag.name,
+      filterLabel: tag.name,
+      count: 0,
+      performers: new Map(),
+      performerIds: [],
+      tag,
+    }]));
+    const unknownPerformers = new Map();
+    (performers || []).forEach((performer) => {
+      const performerTags = performer?.tags || [];
+      const matchingTags = sliceTags.filter((tag) => performerTags.some((performerTag) => String(performerTag?.id || "") === tag.id));
+      if (!matchingTags.length) {
+        addDemographicPerformer(unknownPerformers, performer);
+        return;
+      }
+      matchingTags.forEach((tag) => {
+        const group = groups.get(tag.id);
+        if (!group) return;
+        group.count += 1;
+        addDemographicPerformer(group.performers, performer);
+        if (performer?.id) group.performerIds.push(String(performer.id));
+      });
+    });
+    const total = Math.max(0, performers?.length || 0);
+    const items = Array.from(groups.values())
+      .filter((group) => group.count > 0)
+      .sort((left, right) => left.label.localeCompare(right.label))
+      .map((group) => ({
+        key: group.key,
+        label: group.label,
+        filterLabel: group.filterLabel,
+        count: group.count,
+        percent: formatPercent(group.count, total),
+        performers: Array.from(group.performers.values()),
+        performerIds: uniqueValues(group.performerIds),
+        customTag: group.tag,
+      }));
+    if (unknownPerformers.size > 0) {
+      items.push({
+        key: "Unknown",
+        label: "Unknown",
+        filterLabel: "Unknown",
+        count: unknownPerformers.size,
+        percent: formatPercent(unknownPerformers.size, total),
+        performers: Array.from(unknownPerformers.values()),
+        performerIds: Array.from(unknownPerformers.keys()),
+        customTagUnknown: true,
+      });
+    }
+    return {
+      title: group.title || getCustomPieGroupTitle(allTags, group.value, index),
+      total,
+      items,
+    };
+  }
+
+  async function buildCustomSceneTagPieDistribution(scenes, tagRef) {
+    try {
+      const allTags = await fetchAllTags();
+      const customGroups = parseCustomPieGroups(tagRef).slice(0, 4);
+      if (customGroups.length > 1) {
+        const subcharts = customGroups
+          .map((group, index) => buildCustomSceneTagPieSubchart(scenes, allTags, group, index + 1))
+          .filter((subchart) => subchart.items.length);
+        return {
+          total: Math.max(0, scenes?.length || 0),
+          items: [],
+          subcharts,
+        };
+      }
+      const subchart = buildCustomSceneTagPieSubchart(scenes, allTags, customGroups[0] || tagRef, 1);
+      return {
+        total: subchart.total,
+        items: subchart.items,
+      };
+    } catch (err) {
+      console.warn("[StudioDashboard] Custom scene tag pie failed", err);
+      return { total: 0, items: [] };
+    }
+  }
+
+  function buildCustomSceneTagPieSubchart(scenes, allTags, tagRef, index) {
+    const group = normalizeCustomPieGroup(tagRef, index);
+    const selectedTags = resolveCustomPieSliceTags(allTags, group.value);
+    const sliceTags = selectedTags.sort((left, right) => left.name.localeCompare(right.name));
+    if (!sliceTags.length) return { title: `Group ${index}`, total: 0, items: [] };
+    const groups = new Map(sliceTags.map((tag) => [tag.id, {
+      key: tag.id,
+      label: tag.name,
+      filterLabel: tag.name,
+      count: 0,
+      sceneIds: [],
+      tag,
+    }]));
+    let unknownSceneCount = 0;
+    (scenes || []).forEach((scene) => {
+      const sceneTags = scene?.tags || [];
+      const matchingTags = sliceTags.filter((tag) => sceneTags.some((sceneTag) => String(sceneTag?.id || "") === tag.id));
+      if (!matchingTags.length) {
+        unknownSceneCount += 1;
+        return;
+      }
+      matchingTags.forEach((tag) => {
+        const group = groups.get(tag.id);
+        if (!group) return;
+        group.count += 1;
+        if (scene?.id) group.sceneIds.push(String(scene.id));
+      });
+    });
+    const total = Math.max(0, scenes?.length || 0);
+    const items = Array.from(groups.values())
+      .filter((group) => group.count > 0)
+      .sort((left, right) => left.label.localeCompare(right.label))
+      .map((group) => ({
+        key: group.key,
+        label: group.label,
+        filterLabel: group.filterLabel,
+        count: group.count,
+        percent: formatPercent(group.count, total),
+        sceneIds: uniqueValues(group.sceneIds),
+        customTag: group.tag,
+      }));
+    if (unknownSceneCount > 0) {
+      items.push({
+        key: "Unknown",
+        label: "Unknown",
+        filterLabel: "Unknown",
+        count: unknownSceneCount,
+        percent: formatPercent(unknownSceneCount, total),
+        customExcludeTags: sliceTags,
+        customTagUnknown: true,
+        filterable: true,
+      });
+    }
+    return {
+      title: group.title || getCustomPieGroupTitle(allTags, group.value, index),
+      total,
+      items,
+    };
+  }
+
+  function parseCustomPieGroups(value) {
+    const text = String(value || "").trim();
+    const groups = Array.from(text.matchAll(/([^(),]*)\(([^()]+)\)/g))
+      .map((match) => {
+        const label = String(match[1] || "").trim().replace(/^,+|,+$/g, "").trim();
+        const group = String(match[2] || "").trim();
+        return group ? { title: label, value: group } : null;
+      })
+      .filter(Boolean);
+    return groups.length ? groups : [text].filter(Boolean);
+  }
+
+  function normalizeCustomPieGroup(group, index) {
+    if (typeof group === "string") return { title: "", value: group, index };
+    return {
+      title: String(group?.title || "").trim(),
+      value: String(group?.value || "").trim(),
+      index,
+    };
+  }
+
+  function resolveCustomPieSliceTags(allTags, tagRef) {
+    const refs = parseList(tagRef);
+    if (refs.length > 1) {
+      return refs
+        .map((ref) => allTags.find((tag) => isTagRefMatch(tag, ref)))
+        .filter(Boolean)
+        .filter((tag, index, tags) => tags.findIndex((item) => item.id === tag.id) === index);
+    }
+    return getCustomPieChildTags(allTags, tagRef);
+  }
+
+  function getCustomPieGroupTitle(allTags, tagRef, index) {
+    const refs = parseList(tagRef);
+    if (refs.length === 1) {
+      const parent = allTags.find((tag) => isTagRefMatch(tag, tagRef));
+      if (parent) return parent.name;
+    }
+    return `Group ${index}`;
+  }
+
+  function getCustomPieChildTags(allTags, tagRef) {
+    const parent = allTags.find((tag) => isTagRefMatch(tag, tagRef));
+    if (!parent) return [];
+    return (parent.childIds || [])
+      .map((id) => allTags.find((tag) => tag.id === id))
+      .filter(Boolean);
+  }
+
+  function addDemographicPerformer(map, performer) {
+    if (!(map instanceof Map)) return;
+    const normalized = normalizeDemographicPerformer(performer);
+    if (!normalized.id) return;
+    const existing = map.get(normalized.id);
+    if (!existing || normalized.performerRating > Number(existing.performerRating || 0)) {
+      map.set(normalized.id, normalized);
+    }
+  }
+
+  function normalizeDemographicPerformer(performer) {
+    return {
+      id: String(performer?.id || ""),
+      name: String(performer?.name || "Performer"),
+      imagePath: String(performer?.imagePath || performer?.image_path || ""),
+      performerRating: Number(performer?.performerRating || performer?.rating100 || 0),
+    };
+  }
+
+  function mergePerformerTags(existingTags = [], nextTags = []) {
+    const map = new Map();
+    [...existingTags, ...nextTags].forEach((tag) => {
+      const id = String(tag?.id || "");
+      if (!id || map.has(id)) return;
+      map.set(id, {
+        id,
+        name: String(tag?.name || "Tag"),
+        imagePath: String(tag?.imagePath || tag?.image_path || ""),
+      });
+    });
+    return Array.from(map.values());
+  }
+
+  function formatPercent(count, total) {
+    const numericTotal = Number(total || 0);
+    if (!numericTotal) return "";
+    const value = (Number(count || 0) / numericTotal) * 100;
+    if (value > 0 && value < 0.1) return value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+    if (value > 0 && value < 1) return value.toFixed(1);
+    if (value < 10 && !Number.isInteger(value)) return value.toFixed(1);
+    return String(Math.round(value));
+  }
+
+  function normalizeCountryKey(country) {
+    const value = String(country || "").trim();
+    if (!value) return "Unknown";
+    if (/^[a-z]{2,3}$/i.test(value)) return value.toUpperCase();
+    return value
+      .split(/\s+/)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(" ");
+  }
+
+  function getCountryDisplayName(countryKey) {
+    const key = String(countryKey || "").trim();
+    if (!key || key === "Unknown") return "Unknown";
+    return COUNTRY_NAMES[key.toUpperCase()] || key;
+  }
+
+  function formatCountryLabel(countryKey) {
+    const key = String(countryKey || "").trim();
+    const flag = getCountryFlag(key);
+    const name = getCountryDisplayName(key);
+    return `${flag ? `${flag} ` : ""}${name}`;
+  }
+
+  function getCountryFlag(countryKey) {
+    const key = String(countryKey || "").trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(key)) return "";
+    return String.fromCodePoint(...Array.from(key).map((char) => 127397 + char.charCodeAt(0)));
+  }
+
+  function parseAgeBuckets(value) {
+    return String(value || "")
+      .split(",")
+      .map((item) => parseAgeBucket(item.trim()))
+      .filter(Boolean);
+  }
+
+  function parseRatingBuckets(value) {
+    return String(value || "")
+      .split(",")
+      .map((item) => parseRatingBucket(item.trim()))
+      .filter(Boolean);
+  }
+
+  function parseMetricBuckets(value, options = {}) {
+    return String(value || "")
+      .split(",")
+      .map((item) => parseMetricBucket(item.trim(), options))
+      .filter(Boolean);
+  }
+
+  function parseMetricBucket(value, options = {}) {
+    if (!value) return null;
+    const unit = String(options.unit || "").trim();
+    const normalized = value.replace(/\s+/g, "").toLowerCase().replace(/minutes?|mins?/g, "m");
+    if (unit === "p") {
+      const nativeResolution = RESOLUTION_BUCKETS.find((bucket) => {
+        return normalized === bucket.label.toLowerCase() ||
+          normalized === bucket.enumValue.toLowerCase() ||
+          normalized === bucket.label.toLowerCase().replace("k", "k");
+      });
+      if (nativeResolution) return { ...nativeResolution };
+    }
+    let match = normalized.match(/^<(\d+(?:\.\d+)?)(?:[pmk])?$/);
+    if (match) {
+      const max = normalizeMetricValue(match[1], normalized, unit);
+      return { label: `<${formatBucketNumber(max)}${unit}`, min: null, max };
+    }
+    match = normalized.match(/^<=?(\d+(?:\.\d+)?)(?:[pmk])?$/);
+    if (match) {
+      const max = normalizeMetricValue(match[1], normalized, unit);
+      return { label: `<=${formatBucketNumber(max)}${unit}`, min: null, max };
+    }
+    match = normalized.match(/^(\d+(?:\.\d+)?)(?:[pmk])?-(\d+(?:\.\d+)?)(?:[pmk])?$/);
+    if (match) {
+      const min = normalizeMetricValue(match[1], normalized, unit);
+      const max = normalizeMetricValue(match[2], normalized, unit);
+      if (min < max) return { label: `${formatBucketNumber(min)}-${formatBucketNumber(max)}${unit}`, min, max };
+    }
+    match = normalized.match(/^(\d+(?:\.\d+)?)(?:[pmk])?\+$/);
+    if (match) {
+      const min = normalizeMetricValue(match[1], normalized, unit);
+      return { label: `${formatBucketNumber(min)}${unit}+`, min, max: null };
+    }
+    match = normalized.match(/^>=?(\d+(?:\.\d+)?)(?:[pmk])?$/);
+    if (match) {
+      const min = normalizeMetricValue(match[1], normalized, unit);
+      return { label: `${formatBucketNumber(min)}${unit}+`, min, max: null };
+    }
+    match = normalized.match(/^(\d+(?:\.\d+)?)(?:[pmk])?$/);
+    if (match) {
+      const exact = normalizeMetricValue(match[1], normalized, unit);
+      return { label: `${formatBucketNumber(exact)}${unit}`, min: exact, max: exact, exact: true };
+    }
+    return null;
+  }
+
+  function normalizeMetricValue(value, source, unit) {
+    const numeric = Number(value);
+    if (unit === "p" && /k/.test(source)) return numeric * 540;
+    return numeric;
+  }
+
+  function getResolutionEnumForHeight(height) {
+    const value = Number(height);
+    if (!Number.isFinite(value) || value <= 0) return "";
+    const bucket = RESOLUTION_BUCKETS.find((item) => item.max == null || value <= item.max);
+    return bucket?.enumValue || "";
+  }
+
+  function parseRatingBucket(value) {
+    if (!value) return null;
+    const normalized = value.replace(/\s+/g, "");
+    let match = normalized.match(/^(\d{1,2}(?:\.\d+)?)-(\d{1,2}(?:\.\d+)?)$/);
+    if (match) {
+      const min = Number(match[1]);
+      const max = Number(match[2]);
+      if (min <= max) return { label: `${formatBucketNumber(min)}-${formatBucketNumber(max)}`, min, max, modifier: "BETWEEN" };
+    }
+    match = normalized.match(/^(\d{1,2}(?:\.\d+)?)\+$/);
+    if (match) return { label: `${formatBucketNumber(Number(match[1]))}+`, min: Number(match[1]), max: null, modifier: "GREATER_THAN" };
+    match = normalized.match(/^>=?(\d{1,2}(?:\.\d+)?)$/);
+    if (match) return { label: `${formatBucketNumber(Number(match[1]))}+`, min: Number(match[1]), max: null, modifier: "GREATER_THAN" };
+    match = normalized.match(/^<=?(\d{1,2}(?:\.\d+)?)$/);
+    if (match) return { label: `<=${formatBucketNumber(Number(match[1]))}`, min: null, max: Number(match[1]), modifier: "LESS_THAN" };
+    match = normalized.match(/^=?(\d{1,2}(?:\.\d+)?)$/);
+    if (match) {
+      const exact = Number(match[1]);
+      return { label: formatBucketNumber(exact), min: exact, max: exact, modifier: "EQUALS" };
+    }
+    return null;
+  }
+
+  function formatBucketNumber(value) {
+    return String(Number(value));
+  }
+
+  function parseAgeBucket(value) {
+    if (!value) return null;
+    const normalized = value.replace(/\s+/g, "");
+    let match = normalized.match(/^(\d{1,3})-(\d{1,3})$/);
+    if (match) {
+      const min = Number(match[1]);
+      const max = Number(match[2]);
+      if (min <= max) return { label: `${min}-${max}`, min, max, modifier: "BETWEEN" };
+    }
+    match = normalized.match(/^(\d{1,3})\+$/);
+    if (match) return { label: `${Number(match[1])}+`, min: Number(match[1]), max: null, modifier: "GREATER_THAN" };
+    match = normalized.match(/^>=?(\d{1,3})$/);
+    if (match) return { label: `${Number(match[1])}+`, min: Number(match[1]), max: null, modifier: "GREATER_THAN" };
+    match = normalized.match(/^<=?(\d{1,3})$/);
+    if (match) return { label: `<=${Number(match[1])}`, min: null, max: Number(match[1]), modifier: "LESS_THAN" };
+    match = normalized.match(/^=(\d{1,3})$/);
+    if (match) return { label: `${Number(match[1])}`, min: Number(match[1]), max: Number(match[1]), modifier: "EQUALS" };
+    return null;
+  }
+
+  function ageMatchesBucket(age, bucket) {
+    const value = Number(age);
+    if (!Number.isFinite(value)) return false;
+    if (bucket.min != null && value < bucket.min) return false;
+    if (bucket.max != null && value > bucket.max) return false;
+    return true;
+  }
+
+  function ratingMatchesBucket(rating, bucket) {
+    const value = Number(rating);
+    if (!Number.isFinite(value)) return false;
+    if (bucket.min != null && value < bucket.min) return false;
+    if (bucket.max != null && value > bucket.max) return false;
+    return true;
+  }
+
+  function metricMatchesBucket(metric, bucket) {
+    const value = Number(metric);
+    if (!Number.isFinite(value)) return false;
+    if (bucket.exact) return value === Number(bucket.min);
+    if (bucket.min != null && value < bucket.min) return false;
+    if (bucket.max != null && value >= bucket.max) return false;
+    return true;
+  }
+
+  function uniqueValues(values) {
+    return Array.from(new Set((values || []).filter(Boolean)));
+  }
+
+  function calculateAgeAtDate(birthdate, date) {
+    const birth = parseDateValue(birthdate);
+    const sceneDate = parseDateValue(date);
+    if (!birth || !sceneDate || sceneDate < birth) return null;
+    let age = sceneDate.getUTCFullYear() - birth.getUTCFullYear();
+    const monthDiff = sceneDate.getUTCMonth() - birth.getUTCMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && sceneDate.getUTCDate() < birth.getUTCDate())) age -= 1;
+    return age >= 18 && age <= 120 ? age : null;
+  }
+
+  function getSceneResolutionHeight(scene) {
+    const heights = (scene?.files || [])
+      .map((file) => Number(file?.height || 0))
+      .filter((height) => Number.isFinite(height) && height > 0);
+    return heights.length ? Math.max(...heights) : 0;
+  }
+
+  function getSceneDurationMinutes(scene) {
+    const fileDurations = (scene?.files || [])
+      .map((file) => Number(file?.duration || 0))
+      .filter((duration) => Number.isFinite(duration) && duration > 0);
+    if (fileDurations.length) {
+      return fileDurations.reduce((total, duration) => total + duration, 0) / 60;
+    }
+    const duration = Number(scene?.duration || 0);
+    return Number.isFinite(duration) && duration > 0 ? duration / 60 : 0;
+  }
+
+  function buildResolutionDistribution(scenes) {
+    const buckets = getResolutionBuckets();
+    const usesNativeBuckets = buckets.every((bucket) => bucket.enumValue);
+    if (usesNativeBuckets) {
+      return buildResolutionEnumDistribution(scenes, buckets);
+    }
+    return buildMetricDistribution(scenes, buckets, {
+      getMetric: getSceneResolutionHeight,
+      getEntity: normalizeSceneSummary,
+      entityKey: "scenes",
+      metricType: "resolution",
+    });
+  }
+
+  function buildResolutionEnumDistribution(scenes, buckets) {
+    const counts = new Map(buckets.map((bucket) => [bucket.enumValue, 0]));
+    const sceneGroups = new Map(buckets.map((bucket) => [bucket.enumValue, []]));
+    const unknownScenes = [];
+    (scenes || []).forEach((scene) => {
+      const enumValue = getResolutionEnumForHeight(getSceneResolutionHeight(scene));
+      const summary = normalizeSceneSummary(scene);
+      if (!enumValue || !counts.has(enumValue)) {
+        unknownScenes.push(summary);
+        return;
+      }
+      counts.set(enumValue, (counts.get(enumValue) || 0) + 1);
+      if (summary) sceneGroups.get(enumValue)?.push(summary);
+    });
+    const knownTotal = Array.from(counts.values()).reduce((total, count) => total + count, 0);
+    const total = knownTotal + unknownScenes.filter(Boolean).length;
+    const items = buckets
+      .map((bucket) => {
+        const count = Number(counts.get(bucket.enumValue) || 0);
+        return {
+          ...bucket,
+          key: bucket.enumValue,
+          count,
+          percent: formatPercent(count, total),
+          filterable: true,
+          metricType: "resolution",
+          scenes: (sceneGroups.get(bucket.enumValue) || []).filter(Boolean),
+        };
+      })
+      .filter((item) => item.count > 0);
+    if (unknownScenes.filter(Boolean).length) {
+      items.push({
+        label: "Unknown",
+        key: "Unknown",
+        count: unknownScenes.filter(Boolean).length,
+        percent: formatPercent(unknownScenes.filter(Boolean).length, total),
+        metricType: "resolution",
+        metricUnknown: true,
+        filterable: false,
+        scenes: unknownScenes.filter(Boolean),
+      });
+    }
+    return { total, items };
+  }
+
+  function buildDurationDistribution(scenes) {
+    return buildMetricDistribution(scenes, getDurationBuckets(), {
+      getMetric: getSceneDurationMinutes,
+      getEntity: normalizeSceneSummary,
+      entityKey: "scenes",
+      metricType: "duration",
+    });
+  }
+
+  function parseDateValue(value) {
+    const text = String(value || "").trim();
+    if (!text) return null;
+    const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!match) return null;
+    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
   async function fetchStudioStats(studio, options = {}) {
     const studioId = String(studio?.id || "");
     if (!studioId) return null;
@@ -751,9 +1868,10 @@
               date
               rating100
               o_counter
-              performers { id name image_path rating100 }
+              performers { id name image_path rating100 country birthdate tags { id name image_path } }
               tags { id name image_path }
               paths { screenshot preview }
+              files { width height duration }
             }
           }
           findImages(image_filter: $imageFilter, filter: { per_page: 1 }) {
@@ -793,9 +1911,10 @@
                 date
                 rating100
                 o_counter
-                performers { id name image_path rating100 }
+                performers { id name image_path rating100 country birthdate tags { id name image_path } }
                 tags { id name image_path }
                 paths { screenshot preview }
+                files { width height duration }
               }
             }
           }
@@ -814,12 +1933,8 @@
       }
     }
 
-    const tagFilters = getConfigBoolean(getSetting("b04ShowTopTags", "showTopTags"), true)
-      ? await buildTopTagFilters()
-      : { blacklist: new Set(), whitelist: null };
-    const topTagCategories = getConfigBoolean(getSetting("b04ShowTopTags", "showTopTags"), true)
-      ? await getConfiguredTopTagCategories()
-      : [];
+    const tagFilters = await buildTopTagFilters();
+    const topTagCategories = await getConfiguredTopTagCategories();
     const performerCounts = new Map();
     let oCount = 0;
     scenes.forEach((scene) => {
@@ -835,6 +1950,9 @@
           id,
           name,
           imagePath: String(performer?.image_path || ""),
+          country: String(performer?.country || ""),
+          birthdate: String(performer?.birthdate || ""),
+          tags: [],
           count: 0,
           oCount: 0,
           performerRating,
@@ -845,6 +1963,9 @@
         };
         existing.count += 1;
         existing.oCount += sceneOCount;
+        existing.country = existing.country || String(performer?.country || "");
+        existing.birthdate = existing.birthdate || String(performer?.birthdate || "");
+        existing.tags = mergePerformerTags(existing.tags, performer?.tags || []);
         existing.performerRating = Math.max(existing.performerRating || 0, performerRating);
         existing.studioTopRating = Math.max(existing.studioTopRating || 0, sceneRating);
         performerCounts.set(id, existing);
@@ -861,6 +1982,9 @@
     const performerHighlights = buildPerformerHighlights(performers);
     attachStudioToPerformers(performerHighlights, studio);
     await hydratePerformerGlobalStats(performerHighlights);
+    const performerHighlightRows = buildPerformerHighlightRows(performers);
+    Object.values(performerHighlightRows).forEach((row) => attachStudioToPerformers(row, studio));
+    await hydratePerformerGlobalStats(Object.values(performerHighlightRows).flat());
 
     const topScene = scenes
       .slice()
@@ -874,6 +1998,14 @@
       .slice()
       .filter((scene) => String(scene?.date || "").trim())
       .sort((left, right) => String(right?.date || "").localeCompare(String(left?.date || "")))[0];
+    const lowestRatedScene = scenes
+      .slice()
+      .filter((scene) => Number(scene?.rating100 || 0) > 0)
+      .sort((left, right) => {
+        const ratingDiff = Number(left?.rating100 || 0) - Number(right?.rating100 || 0);
+        if (ratingDiff) return ratingDiff;
+        return String(left?.title || "").localeCompare(String(right?.title || ""));
+      })[0];
     const topOCountScene = scenes
       .slice()
       .filter((scene) => Number(scene?.o_counter || 0) > 0)
@@ -882,6 +2014,21 @@
         if (oDiff) return oDiff;
         return String(left?.title || "").localeCompare(String(right?.title || ""));
       })[0];
+    const leastOCountScene = scenes
+      .slice()
+      .filter((scene) => Number(scene?.o_counter || 0) > 0)
+      .sort((left, right) => {
+        const oDiff = Number(left?.o_counter || 0) - Number(right?.o_counter || 0);
+        if (oDiff) return oDiff;
+        return String(left?.title || "").localeCompare(String(right?.title || ""));
+      })[0];
+    const sceneRatingDistribution = buildRatingDistribution(scenes, {
+      getRating: (scene) => Number(scene?.rating100 || 0),
+      getEntity: normalizeSceneSummary,
+      entityKey: "scenes",
+    });
+    const sceneResolutionDistribution = buildResolutionDistribution(scenes);
+    const sceneDurationDistribution = buildDurationDistribution(scenes);
 
     const stats = {
       studio,
@@ -894,12 +2041,43 @@
       },
       topPerformers,
       performerHighlights,
+      performerHighlightRows,
       topTags: buildTopTags(scenes, tagFilters),
       topTagGroups: buildTopTagGroups(scenes, tagFilters, topTagCategories),
+      performerDemographics: await buildPerformerDemographics(performers, scenes),
+      sceneRatings: sceneRatingDistribution,
+      sceneResolutions: sceneResolutionDistribution,
+      sceneDurations: sceneDurationDistribution,
+      sceneCharts: await buildCustomScenePieDistributions(scenes),
       timeline: buildReleaseTimeline(scenes),
       topScene: normalizeSceneSummary(topScene),
+      topRatedScenes: normalizeSceneSummaries(
+        scenes
+          .filter((scene) => Number(scene?.rating100 || 0) > 0)
+          .sort((left, right) => {
+            const ratingDiff = Number(right?.rating100 || 0) - Number(left?.rating100 || 0);
+            if (ratingDiff) return ratingDiff;
+            return String(left?.title || "").localeCompare(String(right?.title || ""));
+          })
+      ),
       recentScene: normalizeSceneSummary(recentScene),
+      recentReleases: normalizeSceneSummaries(
+        scenes
+          .filter((scene) => String(scene?.date || "").trim())
+          .sort((left, right) => String(right?.date || "").localeCompare(String(left?.date || "")))
+      ),
+      lowestRatedScene: normalizeSceneSummary(lowestRatedScene),
       topOCountScene: normalizeSceneSummary(topOCountScene),
+      scenesMostOs: normalizeSceneSummaries(
+        scenes
+          .filter((scene) => Number(scene?.o_counter || 0) > 0)
+          .sort((left, right) => {
+            const oDiff = Number(right?.o_counter || 0) - Number(left?.o_counter || 0);
+            if (oDiff) return oDiff;
+            return String(left?.title || "").localeCompare(String(right?.title || ""));
+          })
+      ),
+      leastOCountScene: normalizeSceneSummary(leastOCountScene),
     };
     return stats;
   }
@@ -915,6 +2093,13 @@
       screenshot: String(scene.paths?.screenshot || ""),
       preview: String(scene.paths?.preview || ""),
     };
+  }
+
+  function normalizeSceneSummaries(scenes, limit = DASHBOARD_SCENE_ROW_LIMIT) {
+    return (scenes || [])
+      .slice(0, limit)
+      .map(normalizeSceneSummary)
+      .filter(Boolean);
   }
 
   function getStudioLinks(studioId) {
@@ -956,7 +2141,7 @@
     link.setAttribute("data-studio-dashboard-name", studio.name);
     link.setAttribute("data-studio-dashboard-source", source);
 
-    if (!getConfigBoolean(getSetting("b01ShowHoverPopout", "showHoverPopout"), true)) return;
+    if (!getDisplayProfile()) return;
     if (link.dataset.studioDashboardHoverBound === "true") return;
     link.dataset.studioDashboardHoverBound = "true";
     link.addEventListener("mouseenter", handleHoverEnter);
@@ -1005,66 +2190,48 @@
     const profile = getDisplayProfile();
     const limits = getProfileLimits(profile);
 
-    if (getConfigBoolean(getSetting("b02ShowCountStats", "showCountStats"), true)) {
+    const section = createSection(container);
+    const counts = document.createElement("div");
+    counts.className = "studio-dashboard__counts";
+    const countItems = [
+      ["Scenes", stats.counts.scenes],
+      ["Images", stats.counts.images],
+      ["Galleries", stats.counts.galleries],
+      ["Performers", stats.counts.performers],
+      ["O's", stats.counts.oCount],
+    ];
+    counts.style.gridTemplateColumns = `repeat(${countItems.length}, minmax(0, 1fr))`;
+    countItems.forEach(([label, value]) => {
+      const item = document.createElement("div");
+      item.className = "studio-dashboard__count";
+      item.innerHTML = `
+        <span class="studio-dashboard__count-value">${escapeHtml(value)}</span>
+        <span class="studio-dashboard__count-label">${escapeHtml(label)}</span>
+      `;
+      counts.appendChild(item);
+    });
+    section.appendChild(counts);
+
+    const performerHighlights = getPerformerHighlightsForProfile(stats, profile);
+    if (performerHighlights.length) {
       const section = createSection(container);
-      const counts = document.createElement("div");
-      counts.className = "studio-dashboard__counts";
-      const countItems = [
-        ["Scenes", stats.counts.scenes],
-        ["Images", stats.counts.images],
-        ["Galleries", stats.counts.galleries],
-        ["Performers", stats.counts.performers],
-        ["O's", stats.counts.oCount],
-      ];
-      counts.style.gridTemplateColumns = `repeat(${countItems.length}, minmax(0, 1fr))`;
-      countItems.forEach(([label, value]) => {
-        const item = document.createElement("div");
-        item.className = "studio-dashboard__count";
-        item.innerHTML = `
-          <span class="studio-dashboard__count-value">${escapeHtml(value)}</span>
-          <span class="studio-dashboard__count-label">${escapeHtml(label)}</span>
-        `;
-        counts.appendChild(item);
-      });
-      section.appendChild(counts);
+      renderPerformerCards(section, performerHighlights.slice(0, limits.performers));
     }
 
-    if (getConfigBoolean(getSetting("b03ShowTopPerformers", "showTopPerformers"), true)) {
-      const section = createSection(container);
-      const performerHighlights = getPerformerHighlightsForProfile(stats, profile);
-
-      if (!performerHighlights.length) {
-        const empty = document.createElement("div");
-        empty.className = "studio-dashboard__status";
-        empty.textContent = "No performer data found.";
-        section.appendChild(empty);
-      } else {
-        renderPerformerCards(section, performerHighlights.slice(0, limits.performers));
-      }
-    }
-
-    if (getConfigBoolean(getSetting("b04ShowTopTags", "showTopTags"), true)) {
+    if (stats.topTags.length) {
       const section = createSection(container);
       const title = document.createElement("div");
       title.className = "studio-dashboard__section-title";
       title.textContent = "TOP TAGS";
       section.appendChild(title);
-
-      if (!stats.topTags.length) {
-        const empty = document.createElement("div");
-        empty.className = "studio-dashboard__status";
-        empty.textContent = "No tag data found.";
-        section.appendChild(empty);
-      } else {
-        renderTagCards(section, stats.studio, stats.topTags.slice(0, limits.tags));
-      }
+      renderTagCards(section, stats.studio, stats.topTags.slice(0, limits.tags));
     }
 
     if (limits.showTimeline) {
       renderReleaseTimeline(container, stats.studio, stats.timeline);
     }
 
-    const sceneHighlights = getSceneHighlights(stats);
+    const sceneHighlights = getSceneHighlights(stats).slice(0, limits.scenes);
     if (profile === "rich") {
       renderSceneHighlightGrid(container, sceneHighlights);
     } else {
@@ -1088,22 +2255,39 @@
     body.className = "studio-dashboard__page-body";
     container.appendChild(body);
 
-    const performerHighlights = Array.isArray(stats.performerHighlights) ? stats.performerHighlights : [];
-    if (getConfigBoolean(getSetting("b03ShowTopPerformers", "showTopPerformers"), true) && performerHighlights.length) {
-      const section = createPageSection(body, "PERFORMER HIGHLIGHTS");
-      renderPerformerCards(section, performerHighlights.slice(0, 8));
-    }
-
-    if (getConfigBoolean(getSetting("b04ShowTopTags", "showTopTags"), true) && stats.topTags.length) {
-      const section = createPageSection(body, "TOP TAGS");
-      renderDashboardTopTags(section, stats);
-    }
-
-    if (getConfigBoolean(getSetting("b05ShowReleaseTimeline", "showReleaseTimeline"), true)) {
-      renderReleaseTimeline(body, stats.studio, stats.timeline);
-    }
-
-    renderSceneHighlightGrid(body, getSceneHighlights(stats));
+    const renderers = {
+      performerHighlights: () => {
+        const performerHighlights = Array.isArray(stats.performerHighlights) ? stats.performerHighlights : [];
+        if (!performerHighlights.length) return;
+        const section = createPageSection(body, "PERFORMER HIGHLIGHTS");
+        renderPerformerCards(section, performerHighlights.slice(0, 8));
+      },
+      performersMostScenes: () => renderPerformerRowSection(body, "PERFORMERS WITH MOST SCENES", stats.performerHighlightRows?.performersMostScenes),
+      performersMostOs: () => renderPerformerRowSection(body, "PERFORMERS WITH MOST O'S", stats.performerHighlightRows?.performersMostOs),
+      performersHighestRating: () => renderPerformerRowSection(body, "PERFORMERS WITH HIGHEST RATING", stats.performerHighlightRows?.performersHighestRating),
+      performersHighestRatedScenes: () => renderPerformerRowSection(body, "PERFORMERS WITH HIGHEST RATED SCENES", stats.performerHighlightRows?.performersHighestRatedScenes),
+      topTags: () => {
+        if (!stats.topTags.length) return;
+        const section = createPageSection(body, "TOP TAGS");
+        renderDashboardTopTags(section, stats);
+      },
+      releaseTimeline: () => {
+        renderReleaseTimeline(body, stats.studio, stats.timeline);
+      },
+      sceneHighlights: () => {
+        renderSceneHighlightGrid(body, getSceneHighlights(stats), { title: "SCENE HIGHLIGHTS" });
+      },
+      topRatedScenes: () => renderSceneRowSection(body, "TOP RATED SCENES", stats.topRatedScenes, (scene) => formatRating(scene.rating100)),
+      recentReleases: () => renderSceneRowSection(body, "RECENT RELEASES", stats.recentReleases, (scene) => formatDate(scene.date)),
+      scenesMostOs: () => renderSceneRowSection(body, "SCENES WITH MOST O'S", stats.scenesMostOs, (scene) => `${scene.oCounter} O's`),
+      performerDemographics: () => {
+        renderPerformerDemographics(body, stats);
+      },
+      sceneCharts: () => {
+        renderSceneCharts(body, stats);
+      },
+    };
+    getDashboardSectionOrder().forEach((key) => renderers[key]?.());
   }
 
   function createPageSection(container, titleText) {
@@ -1143,25 +2327,59 @@
     container.appendChild(grouped);
   }
 
+  function renderPerformerRowSection(container, title, performers) {
+    const visible = Array.isArray(performers) ? performers.filter(Boolean) : [];
+    if (!visible.length) return;
+    const section = createPageSection(container, title);
+    renderPerformerCards(section, visible.slice(0, DASHBOARD_ROW_CARD_LIMIT));
+  }
+
+  function renderSceneRowSection(container, title, scenes, metaFormatter) {
+    const visible = Array.isArray(scenes) ? scenes.filter(Boolean) : [];
+    if (!visible.length) return;
+    const section = createPageSection(container, title);
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__scene-grid";
+    visible.slice(0, DASHBOARD_SCENE_ROW_LIMIT).forEach((scene) => {
+      const item = document.createElement("div");
+      item.className = "studio-dashboard__scene-grid-item";
+      renderSceneCard(item, scene, typeof metaFormatter === "function" ? metaFormatter(scene) : "");
+      grid.appendChild(item);
+    });
+    section.appendChild(grid);
+  }
+
   function getSceneHighlights(stats) {
     return [
       {
-        enabled: getConfigBoolean(getSetting("b06ShowTopScene", "showTopScene"), true),
-        title: "Top rated scene",
-        scene: stats.topScene,
-        meta: stats.topScene ? formatRating(stats.topScene.rating100) : "",
-      },
-      {
-        enabled: getConfigBoolean(getSetting("b07ShowRecentRelease", "showRecentRelease"), true),
+        enabled: true,
         title: "Most recent release",
         scene: stats.recentScene,
         meta: stats.recentScene ? formatDate(stats.recentScene.date) : "",
       },
       {
-        enabled: getConfigBoolean(getSetting("b08ShowTopOCountScene", "showTopOCountScene"), true),
+        enabled: true,
+        title: "Top rated scene",
+        scene: stats.topScene,
+        meta: stats.topScene ? formatRating(stats.topScene.rating100) : "",
+      },
+      {
+        enabled: true,
+        title: "Lowest rated scene",
+        scene: stats.lowestRatedScene,
+        meta: stats.lowestRatedScene ? formatRating(stats.lowestRatedScene.rating100) : "",
+      },
+      {
+        enabled: true,
         title: "Most O's",
         scene: stats.topOCountScene,
         meta: stats.topOCountScene ? `${stats.topOCountScene.oCounter} O's` : "",
+      },
+      {
+        enabled: true,
+        title: "Least O's",
+        scene: stats.leastOCountScene,
+        meta: stats.leastOCountScene ? `${stats.leastOCountScene.oCounter} O's` : "",
       },
     ];
   }
@@ -1183,10 +2401,10 @@
     renderSceneCard(section, scene, meta);
   }
 
-  function renderSceneHighlightGrid(container, highlights) {
+  function renderSceneHighlightGrid(container, highlights, options = {}) {
     const visible = highlights.filter((highlight) => highlight.enabled && highlight.scene);
     if (!visible.length) return;
-    const section = createSection(container);
+    const section = options.title ? createPageSection(container, options.title) : createSection(container);
     const grid = document.createElement("div");
     grid.className = "studio-dashboard__scene-grid";
     visible.forEach((highlight) => {
@@ -1200,6 +2418,708 @@
       grid.appendChild(item);
     });
     section.appendChild(grid);
+  }
+
+  function renderPerformerDemographics(container, stats) {
+    const demographics = stats?.performerDemographics;
+    const hasCountries = Array.isArray(demographics?.countries) && demographics.countries.length;
+    const hasAges = Array.isArray(demographics?.ages) && demographics.ages.length;
+    const hasRatings = Array.isArray(demographics?.ratings) && demographics.ratings.length;
+    const customPies = Array.isArray(demographics?.customPies) ? demographics.customPies : [];
+    const hasCustomPie = customPies.some((chart) => {
+      return Array.isArray(chart?.items) && chart.items.length ||
+        Array.isArray(chart?.subcharts) && chart.subcharts.some((subchart) => subchart.items?.length);
+    });
+    if (!hasCountries && !hasAges && !hasRatings && !hasCustomPie && !demographics?.ageUnknown) return;
+
+    const section = createPageSection(container, "PERFORMER DEMOGRAPHICS");
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__demographics";
+    section.appendChild(grid);
+
+    renderDemographicChart(grid, {
+      title: "Nationality",
+      subtitle: `${demographics.countryTotal || 0} unique performer${demographics.countryTotal === 1 ? "" : "s"}`,
+      items: demographics.countries || [],
+      unit: "performers",
+      type: "country",
+      studio: stats.studio,
+    });
+
+    renderDemographicChart(grid, {
+      title: "Age at release",
+      subtitle: `${demographics.ageTotal || 0} performer appearance${demographics.ageTotal === 1 ? "" : "s"}`,
+      items: demographics.ages || [],
+      unit: "appearances",
+      type: "age",
+      studio: stats.studio,
+    });
+
+    renderDemographicChart(grid, {
+      title: "Performer rating",
+      subtitle: `${demographics.ratingTotal || 0} unique performer${demographics.ratingTotal === 1 ? "" : "s"}`,
+      items: demographics.ratings || [],
+      unit: "performers",
+      type: "performer-rating",
+      studio: stats.studio,
+    });
+
+    customPies.forEach((chart, index) => {
+      renderDemographicChart(grid, {
+        title: chart.title || `Performer pie ${index + 1}`,
+        subtitle: `${chart.total || 0} unique performer${chart.total === 1 ? "" : "s"}`,
+        items: chart.items || [],
+        subcharts: chart.subcharts || [],
+        unit: "performers",
+        type: "custom-performer",
+        studio: stats.studio,
+      });
+    });
+  }
+
+  function renderSceneCharts(container, stats) {
+    const sceneCharts = Array.isArray(stats?.sceneCharts) ? stats.sceneCharts : [];
+    const sceneRatings = stats?.sceneRatings || {};
+    const sceneResolutions = stats?.sceneResolutions || {};
+    const sceneDurations = stats?.sceneDurations || {};
+    const visibleCharts = sceneCharts.filter((chart) => {
+      return Array.isArray(chart?.items) && chart.items.length ||
+        Array.isArray(chart?.subcharts) && chart.subcharts.some((subchart) => subchart.items?.length);
+    });
+    const hasSceneRatings = Array.isArray(sceneRatings.items) && sceneRatings.items.length;
+    const hasSceneResolutions = Array.isArray(sceneResolutions.items) && sceneResolutions.items.length;
+    const hasSceneDurations = Array.isArray(sceneDurations.items) && sceneDurations.items.length;
+    if (!visibleCharts.length && !hasSceneRatings && !hasSceneResolutions && !hasSceneDurations) return;
+
+    const section = createPageSection(container, "SCENE CHARTS");
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__demographics";
+    section.appendChild(grid);
+
+    if (hasSceneRatings) {
+      renderDemographicChart(grid, {
+        title: "Scene rating",
+        subtitle: `${sceneRatings.total || 0} scene${sceneRatings.total === 1 ? "" : "s"}`,
+        items: sceneRatings.items || [],
+        unit: "scenes",
+        type: "scene-rating",
+        studio: stats.studio,
+      });
+    }
+
+    if (hasSceneResolutions) {
+      renderDemographicChart(grid, {
+        title: "Video resolution",
+        subtitle: `${sceneResolutions.total || 0} scene${sceneResolutions.total === 1 ? "" : "s"}`,
+        items: sceneResolutions.items || [],
+        unit: "scenes",
+        type: "scene-resolution",
+        studio: stats.studio,
+        footer: "Stash supports filtering by one resolution at a time.",
+      });
+    }
+
+    if (hasSceneDurations) {
+      renderDemographicChart(grid, {
+        title: "Video duration",
+        subtitle: `${sceneDurations.total || 0} scene${sceneDurations.total === 1 ? "" : "s"}`,
+        items: sceneDurations.items || [],
+        unit: "scenes",
+        type: "scene-duration",
+        studio: stats.studio,
+      });
+    }
+
+    visibleCharts.forEach((chart, index) => {
+      renderDemographicChart(grid, {
+        title: chart.title || `Scene pie ${index + 1}`,
+        subtitle: `${chart.total || 0} scene${chart.total === 1 ? "" : "s"}`,
+        items: chart.items || [],
+        subcharts: chart.subcharts || [],
+        unit: "scenes",
+        type: "custom-scene",
+        studio: stats.studio,
+      });
+    });
+  }
+
+  function renderDemographicChart(container, { title, subtitle, items, subcharts, unit, type, studio, footer }) {
+    const hasSubcharts = Array.isArray(subcharts) && subcharts.length;
+    let nextItemIndex = 0;
+    const displayItems = hasSubcharts
+      ? []
+      : getDemographicDisplayItems(items || [], type).map((item) => ({ ...item, sourceIndex: nextItemIndex++ }));
+    const displaySubcharts = hasSubcharts
+      ? subcharts.map((subchart) => ({
+        ...subchart,
+        items: (subchart.items || []).map((item) => ({ ...item, sourceIndex: nextItemIndex++ })),
+      }))
+      : [];
+    const allDisplayItems = hasSubcharts ? displaySubcharts.flatMap((subchart) => subchart.items || []) : displayItems;
+    const chart = document.createElement("div");
+    chart.className = "studio-dashboard__demographic-chart studio-dashboard__demographic-chart--pie";
+    chart.studioDashboardItems = displayItems;
+    chart.studioDashboardSubcharts = displaySubcharts;
+    chart.studioDashboardUnit = unit;
+    chart.studioDashboardType = type;
+    chart.innerHTML = `
+      <div class="studio-dashboard__demographic-heading">
+        <span>${escapeHtml(title)}</span>
+        <small>${escapeHtml(subtitle || "")}</small>
+      </div>
+    `;
+    const body = document.createElement("div");
+    body.className = "studio-dashboard__demographic-body";
+    if (hasSubcharts) {
+      body.classList.add("studio-dashboard__demographic-body--multi");
+      renderDemographicSubcharts(body, displaySubcharts, unit, type);
+    } else {
+    const list = document.createElement("div");
+    list.className = "studio-dashboard__demographic-list";
+    if (type !== "scene-resolution" && displayItems.some((item) => item.filterable !== false)) {
+      const toolbar = document.createElement("div");
+      toolbar.className = "studio-dashboard__demographic-select-all";
+      toolbar.innerHTML = `
+        <span class="studio-dashboard__demographic-actions">
+          <button type="button" data-demo-action="include-all" title="Include all">+</button>
+          <button type="button" data-demo-action="clear" title="Deselect all">-</button>
+        </span>
+        <span></span>
+        <span></span>
+      `;
+      toolbar.querySelector("[data-demo-action='include-all']")?.addEventListener("click", () => {
+        list.querySelectorAll(".studio-dashboard__demographic-row[data-filterable='true']").forEach((row) => setDemographicSelection(row, "include"));
+      });
+      toolbar.querySelector("[data-demo-action='clear']")?.addEventListener("click", () => {
+        list.querySelectorAll(".studio-dashboard__demographic-row").forEach((row) => setDemographicSelection(row, ""));
+      });
+      list.appendChild(toolbar);
+    }
+    displayItems.forEach((item, index) => {
+      const filterable = item.filterable !== false;
+      const row = document.createElement("div");
+      row.className = "studio-dashboard__demographic-row";
+      row.dataset.itemIndex = String(index);
+      row.dataset.filterable = filterable ? "true" : "false";
+      row.style.setProperty("--studio-dashboard-demo-color", DEMOGRAPHIC_COLORS[index % DEMOGRAPHIC_COLORS.length]);
+      row.innerHTML = `
+        <span class="studio-dashboard__demographic-actions">
+          ${filterable ? `
+            <button type="button" data-filter-mode="include" title="Include ${escapeHtml(item.filterLabel || item.label)}">+</button>
+            <button type="button" data-filter-mode="exclude" title="Exclude ${escapeHtml(item.filterLabel || item.label)}">-</button>
+          ` : ""}
+        </span>
+        <span class="studio-dashboard__demographic-label"><span class="studio-dashboard__demographic-swatch"></span>${escapeHtml(item.label)}</span>
+        <span class="studio-dashboard__demographic-value">
+          <strong>${escapeHtml(item.count)}</strong>
+          ${item.percent ? `<small>${escapeHtml(item.percent)}%</small>` : ""}
+        </span>
+      `;
+      row.querySelectorAll("[data-filter-mode]").forEach((button) => {
+        button.addEventListener("click", () => toggleDemographicSelection(row, button.dataset.filterMode));
+      });
+      row.querySelector(".studio-dashboard__demographic-label")?.addEventListener("click", () => {
+        if (row.dataset.filterable === "false") return;
+        toggleDemographicSelection(row, "include");
+      });
+      row.addEventListener("mouseenter", () => setDemographicHoverState(row, true, item, unit, type));
+      row.addEventListener("mouseleave", () => setDemographicHoverState(row, false, item, unit, type));
+      list.appendChild(row);
+    });
+    if (!list.children.length) {
+      const empty = document.createElement("div");
+      empty.className = "studio-dashboard__status";
+      empty.textContent = "No data found.";
+      list.appendChild(empty);
+    }
+    body.appendChild(list);
+    if (items?.length) {
+      renderDemographicPie(body, displayItems, unit, type);
+    }
+    }
+    chart.appendChild(body);
+    if (allDisplayItems.some((item) => item.filterable !== false)) {
+      const controls = document.createElement("div");
+      controls.className = "studio-dashboard__demographic-controls";
+      controls.innerHTML = `
+        <button type="button" data-demo-action="go" disabled>Go to scenes</button>
+        <button type="button" data-demo-action="update" disabled>Update chart</button>
+      `;
+      controls.querySelector("[data-demo-action='go']")?.addEventListener("click", () => {
+        openDemographicScenes(studio, type, allDisplayItems, Array.from(chart.querySelectorAll(".studio-dashboard__demographic-row")));
+      });
+      controls.querySelector("[data-demo-action='update']")?.addEventListener("click", () => {
+        updateDemographicChartView(chart);
+      });
+      chart.appendChild(controls);
+      updateDemographicGoState(chart);
+    }
+    if (footer) {
+      const note = document.createElement("div");
+      note.className = "studio-dashboard__demographic-note";
+      note.textContent = footer;
+      chart.appendChild(note);
+    }
+    container.appendChild(chart);
+  }
+
+  function renderDemographicSubcharts(container, subcharts, unit, type) {
+    const layout = document.createElement("div");
+    layout.className = "studio-dashboard__demographic-multi";
+    const list = document.createElement("div");
+    list.className = "studio-dashboard__demographic-list studio-dashboard__demographic-list--shared";
+    const pies = document.createElement("div");
+    pies.className = `studio-dashboard__demographic-pies studio-dashboard__demographic-pies--${Math.min(4, subcharts.length)}`;
+    subcharts.forEach((subchart) => {
+      const group = document.createElement("div");
+      group.className = "studio-dashboard__demographic-legend-group";
+      group.innerHTML = `<div class="studio-dashboard__demographic-subtitle">${escapeHtml(subchart.title || "Group")}</div>`;
+      (subchart.items || []).forEach((item) => {
+        const filterable = item.filterable !== false;
+        const row = document.createElement("div");
+        row.className = "studio-dashboard__demographic-row";
+        row.dataset.itemIndex = String(item.sourceIndex);
+        row.dataset.filterable = filterable ? "true" : "false";
+        row.style.setProperty("--studio-dashboard-demo-color", DEMOGRAPHIC_COLORS[item.sourceIndex % DEMOGRAPHIC_COLORS.length]);
+        row.innerHTML = `
+          <span class="studio-dashboard__demographic-actions">
+            ${filterable ? `
+              <button type="button" data-filter-mode="include" title="Include ${escapeHtml(item.filterLabel || item.label)}">+</button>
+              <button type="button" data-filter-mode="exclude" title="Exclude ${escapeHtml(item.filterLabel || item.label)}">-</button>
+            ` : ""}
+          </span>
+          <span class="studio-dashboard__demographic-label"><span class="studio-dashboard__demographic-swatch"></span>${escapeHtml(item.label)}</span>
+          <span class="studio-dashboard__demographic-value">
+            <strong>${escapeHtml(item.count)}</strong>
+            ${item.percent ? `<small>${escapeHtml(item.percent)}%</small>` : ""}
+          </span>
+        `;
+        row.querySelectorAll("[data-filter-mode]").forEach((button) => {
+          button.addEventListener("click", () => toggleDemographicSelection(row, button.dataset.filterMode));
+        });
+        row.querySelector(".studio-dashboard__demographic-label")?.addEventListener("click", () => {
+          if (row.dataset.filterable === "false") return;
+          toggleDemographicSelection(row, "include");
+        });
+        row.addEventListener("mouseenter", () => setDemographicHoverState(row, true, item, unit, type));
+        row.addEventListener("mouseleave", () => setDemographicHoverState(row, false, item, unit, type));
+        group.appendChild(row);
+      });
+      list.appendChild(group);
+      const pieWrap = document.createElement("div");
+      pieWrap.className = "studio-dashboard__demographic-pie-wrap";
+      pieWrap.innerHTML = `<div class="studio-dashboard__demographic-subtitle">${escapeHtml(subchart.title || "Group")}</div>`;
+      renderDemographicPie(pieWrap, subchart.items || [], unit, type);
+      pies.appendChild(pieWrap);
+    });
+    layout.appendChild(list);
+    layout.appendChild(pies);
+    container.appendChild(layout);
+  }
+
+  function getDemographicDisplayItems(items, type) {
+    if (type !== "country") return items;
+    return getPieItems(items);
+  }
+
+  function renderDemographicPie(container, items, unit, type) {
+    const pieItems = getPieChartItems(items, type);
+    if (!pieItems.length || (pieItems.length === 1 && isUnknownDemographicItem(pieItems[0]))) {
+      const empty = document.createElement("div");
+      empty.className = "studio-dashboard__demographic-pie studio-dashboard__demographic-pie--empty";
+      empty.textContent = "N/A";
+      container.appendChild(empty);
+      return;
+    }
+    const totalCount = pieItems.reduce((sum, item) => sum + Number(item.count || 0), 0);
+    const total = Math.max(1, totalCount);
+    let cursor = 0;
+    const pie = document.createElement("div");
+    pie.className = "studio-dashboard__demographic-pie";
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 100 100");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", `${type === "country" ? "Nationality" : "Age"} distribution`);
+    pieItems.forEach((item, index) => {
+      const displayItem = {
+        ...item,
+        percent: formatPercent(Number(item.count || 0), totalCount),
+      };
+      const start = cursor;
+      cursor += (Number(displayItem.count || 0) / total) * 360;
+      const end = cursor;
+      const colorIndex = Number(displayItem.sourceIndex ?? index);
+      const slice = end - start >= 359.99
+        ? document.createElementNS("http://www.w3.org/2000/svg", "circle")
+        : document.createElementNS("http://www.w3.org/2000/svg", "path");
+      if (slice.tagName.toLowerCase() === "circle") {
+        slice.setAttribute("cx", "50");
+        slice.setAttribute("cy", "50");
+        slice.setAttribute("r", "47");
+      } else {
+        slice.setAttribute("d", describePieSlice(50, 50, 47, start, end));
+      }
+      slice.setAttribute("fill", DEMOGRAPHIC_COLORS[colorIndex % DEMOGRAPHIC_COLORS.length]);
+      slice.setAttribute("transform-origin", "50 50");
+      slice.dataset.itemIndex = String(displayItem.sourceIndex ?? index);
+      slice.studioDashboardItem = displayItem;
+      slice.classList.add("studio-dashboard__demographic-slice");
+      slice.setAttribute("aria-label", `${displayItem.filterLabel || displayItem.label}: ${displayItem.count} ${unit}${displayItem.percent ? `, ${displayItem.percent}%` : ""}`);
+      slice.addEventListener("click", () => togglePieSliceSelection(pie, displayItem));
+      slice.addEventListener("mouseenter", (event) => {
+        setPieHoverState(pie, displayItem, true);
+        showPieTooltip(pie, displayItem, unit, type, event);
+      });
+      slice.addEventListener("mousemove", (event) => positionPieTooltip(pie, event));
+      slice.addEventListener("mouseleave", () => {
+        setPieHoverState(pie, displayItem, false);
+        hidePieTooltip(pie);
+      });
+      svg.appendChild(slice);
+    });
+    const tooltip = document.createElement("div");
+    tooltip.className = "studio-dashboard__demographic-tooltip";
+    pie.appendChild(svg);
+    pie.appendChild(tooltip);
+    container.appendChild(pie);
+  }
+
+  function getPieChartItems(items, type) {
+    const sorted = (items || [])
+      .map((item, index) => ({ ...item, sourceIndex: item.sourceIndex ?? index }))
+      .sort((left, right) => {
+        if (right.count !== left.count) return Number(right.count || 0) - Number(left.count || 0);
+        return Number(left.sourceIndex) - Number(right.sourceIndex);
+      });
+    if (type === "country") return sorted;
+    return applyPieSliceLimit(sorted);
+  }
+
+  function applyPieSliceLimit(items) {
+    const max = getPieSliceMax();
+    if (!max || items.length <= max) return items;
+    const knownItems = items.filter((item) => !isUnknownDemographicItem(item));
+    const unknownItems = items.filter(isUnknownDemographicItem);
+    if (knownItems.length <= max) return items;
+    const visible = knownItems.slice(0, max);
+    const overflow = knownItems.slice(max);
+    const otherCount = overflow.reduce((total, item) => total + Number(item.count || 0), 0);
+    const firstOverflowIndex = Math.min(...overflow.map((item) => Number(item.sourceIndex ?? max)));
+    const other = {
+      key: "Other",
+      label: "Other",
+      filterLabel: "Other",
+      count: otherCount,
+      sourceIndex: Number.isFinite(firstOverflowIndex) ? firstOverflowIndex : max,
+      performers: overflow.flatMap((item) => item.performers || []),
+      performerIds: uniqueValues(overflow.flatMap((item) => item.performerIds || [])),
+      filterable: false,
+    };
+    return [...visible, other, ...unknownItems].filter((item) => Number(item.count || 0) > 0);
+  }
+
+  function isUnknownDemographicItem(item) {
+    return item?.key === "Unknown" ||
+      item?.countryValue === "Unknown" ||
+      item?.unknownAge ||
+      item?.unknownRange ||
+      item?.unknownRating ||
+      item?.metricUnknown ||
+      item?.customTagUnknown;
+  }
+
+  function setPieHoverState(pie, item, active) {
+    const chart = pie.closest(".studio-dashboard__demographic-chart");
+    const index = String(item.sourceIndex ?? "");
+    chart?.querySelectorAll(`[data-item-index="${escapeSelectorValue(index)}"]`).forEach((element) => {
+      element.classList.toggle("is-hovered", active);
+    });
+  }
+
+  function showPieTooltip(pie, item, unit, type, event) {
+    const tooltip = pie.querySelector(".studio-dashboard__demographic-tooltip");
+    if (!(tooltip instanceof HTMLElement)) return;
+    const colorIndex = Number(item.sourceIndex ?? 0);
+    const performer = getRepresentativePerformer(item);
+    const imageHeight = getDemographicTooltipImageHeight();
+    const showImage = imageHeight > 0 && performer?.imagePath;
+    tooltip.style.setProperty("--studio-dashboard-demo-color", DEMOGRAPHIC_COLORS[colorIndex % DEMOGRAPHIC_COLORS.length]);
+    tooltip.style.setProperty("--studio-dashboard-tooltip-image-height", `${imageHeight}px`);
+    tooltip.innerHTML = `
+      ${showImage ? `
+        <span class="studio-dashboard__demographic-tooltip-image">
+          <img src="${escapeHtml(performer.imagePath)}" alt="${escapeHtml(performer.name)}">
+        </span>
+      ` : ""}
+      <span class="studio-dashboard__demographic-tooltip-copy">
+        <strong>${escapeHtml(getPieTooltipLabel(item, type))}</strong>
+        <span>${escapeHtml(item.count)}${item.percent ? `, ${escapeHtml(item.percent)}%` : ""}</span>
+        ${showImage ? `<em>${escapeHtml(performer.name)}</em>` : ""}
+      </span>
+    `;
+    tooltip.classList.add("is-visible");
+    positionPieTooltip(pie, event);
+  }
+
+  function getRepresentativePerformer(item) {
+    return (item?.performers || [])
+      .filter((performer) => performer?.imagePath)
+      .slice()
+      .sort((left, right) => {
+        const ratingDiff = Number(right.performerRating || 0) - Number(left.performerRating || 0);
+        if (ratingDiff) return ratingDiff;
+        return String(left.name || "").localeCompare(String(right.name || ""));
+      })[0] || null;
+  }
+
+  function positionPieTooltip(pie, event) {
+    const tooltip = pie.querySelector(".studio-dashboard__demographic-tooltip");
+    if (!(tooltip instanceof HTMLElement) || !event) return;
+    const rect = pie.getBoundingClientRect();
+    const tooltipWidth = tooltip.offsetWidth || 180;
+    const tooltipHeight = tooltip.offsetHeight || 56;
+    const pad = 8;
+    let x = event.clientX + 14;
+    let y = event.clientY - tooltipHeight / 2;
+    if (x + tooltipWidth > window.innerWidth - pad) x = event.clientX - tooltipWidth - 14;
+    x = Math.max(pad, Math.min(window.innerWidth - tooltipWidth - pad, x));
+    y = Math.max(pad, Math.min(window.innerHeight - tooltipHeight - pad, y));
+    tooltip.style.setProperty("--studio-dashboard-tooltip-x", `${x - rect.left}px`);
+    tooltip.style.setProperty("--studio-dashboard-tooltip-y", `${y - rect.top}px`);
+  }
+
+  function getElementCenterEvent(element) {
+    const rect = element?.getBoundingClientRect?.();
+    if (!rect) return null;
+    return {
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+    };
+  }
+
+  function hidePieTooltip(pie) {
+    const tooltip = pie.querySelector(".studio-dashboard__demographic-tooltip");
+    if (tooltip instanceof HTMLElement) tooltip.classList.remove("is-visible");
+  }
+
+  function getPieTooltipLabel(item, type) {
+    if (type !== "country") return String(item.label || "");
+    if (item.key === "Other") return "Other";
+    if (item.key === "Unknown" || item.countryValue === "Unknown") return "Unknown";
+    return formatCountryLabel(item.countryValue || item.key || item.label);
+  }
+
+  function setDemographicHoverState(row, active, item = null, unit = "", type = "") {
+    const chart = row.closest(".studio-dashboard__demographic-chart");
+    const index = row.dataset.itemIndex || "";
+    const slices = chart?.querySelectorAll(`.studio-dashboard__demographic-slice[data-item-index="${escapeSelectorValue(index)}"]`) || [];
+    slices.forEach((element) => {
+      element.classList.toggle("is-hovered", active);
+      const pie = element.closest(".studio-dashboard__demographic-pie");
+      if (!(pie instanceof HTMLElement) || !item) return;
+      if (active) {
+        showPieTooltip(pie, element.studioDashboardItem || item, unit, type, getElementCenterEvent(element));
+      } else {
+        hidePieTooltip(pie);
+      }
+    });
+  }
+
+  function togglePieSliceSelection(pie, item) {
+    const chart = pie.closest(".studio-dashboard__demographic-chart");
+    const row = chart?.querySelector(`.studio-dashboard__demographic-row[data-item-index="${escapeSelectorValue(item.sourceIndex)}"]`);
+    if (row instanceof HTMLElement) toggleDemographicSelection(row, "include");
+  }
+
+  function escapeSelectorValue(value) {
+    const stringValue = String(value ?? "");
+    return window.CSS?.escape ? CSS.escape(stringValue) : stringValue.replace(/["\\]/g, "\\$&");
+  }
+
+  function describePieSlice(cx, cy, radius, startAngle, endAngle) {
+    const start = polarToCartesian(cx, cy, radius, endAngle);
+    const end = polarToCartesian(cx, cy, radius, startAngle);
+    const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+    return [
+      `M ${cx} ${cy}`,
+      `L ${start.x} ${start.y}`,
+      `A ${radius} ${radius} 0 ${largeArcFlag} 0 ${end.x} ${end.y}`,
+      "Z",
+    ].join(" ");
+  }
+
+  function polarToCartesian(cx, cy, radius, angle) {
+    const radians = ((angle - 90) * Math.PI) / 180;
+    return {
+      x: Math.round((cx + radius * Math.cos(radians)) * 1000) / 1000,
+      y: Math.round((cy + radius * Math.sin(radians)) * 1000) / 1000,
+    };
+  }
+
+  function getPieItems(items) {
+    if (!items.length) return items;
+    const knownItems = items.filter((item) => item.countryValue !== "Unknown" && item.key !== "Unknown");
+    const unknownItems = items.filter((item) => item.countryValue === "Unknown" || item.key === "Unknown");
+    if (knownItems.length <= DEMOGRAPHIC_PIE_TOP_COUNTRIES && !unknownItems.length) return items;
+    const visible = knownItems.slice(0, DEMOGRAPHIC_PIE_TOP_COUNTRIES);
+    const otherItems = knownItems.slice(DEMOGRAPHIC_PIE_TOP_COUNTRIES);
+    const otherCount = otherItems.reduce((total, item) => total + Number(item.count || 0), 0);
+    const total = items.reduce((sum, item) => sum + Number(item.count || 0), 0);
+    const pieItems = [...visible];
+    if (otherCount > 0) {
+      pieItems.push({
+        key: "Other",
+        label: "Other",
+        filterLabel: "Other",
+        countryValues: uniqueValues(otherItems.flatMap((item) => item.countryValues || item.countryValue || item.key || []))
+          .filter((value) => value && value !== "Unknown"),
+        performers: otherItems.flatMap((item) => item.performers || []),
+        performerIds: uniqueValues(otherItems.flatMap((item) => item.performerIds || [])),
+        count: otherCount,
+        percent: formatPercent(otherCount, total),
+        filterable: otherItems.length > 0,
+      });
+    }
+    const unknownCount = unknownItems.reduce((sum, item) => sum + Number(item.count || 0), 0);
+    if (unknownCount > 0) {
+      pieItems.push({
+        key: "Unknown",
+        label: "Unknown",
+        filterLabel: "Unknown",
+        countryValue: "Unknown",
+        performers: unknownItems.flatMap((item) => item.performers || []),
+        performerIds: uniqueValues(unknownItems.flatMap((item) => item.performerIds || [])),
+        count: unknownCount,
+        percent: formatPercent(unknownCount, total),
+        filterable: true,
+      });
+    }
+    return pieItems.filter((item) => Number(item.count || 0) > 0);
+  }
+
+  function toggleDemographicSelection(row, mode) {
+    const current = row.dataset.filterMode || "";
+    setDemographicSelection(row, current === mode ? "" : mode);
+  }
+
+  function setDemographicSelection(row, mode) {
+    if (row?.dataset?.filterable === "false") return;
+    const chart = row.closest(".studio-dashboard__demographic-chart");
+    if (chart?.studioDashboardType === "scene-resolution" && mode) {
+      chart.querySelectorAll(".studio-dashboard__demographic-row").forEach((otherRow) => {
+        if (otherRow !== row) setDemographicSelection(otherRow, "");
+      });
+    }
+    row.dataset.filterMode = mode || "";
+    row.classList.toggle("is-include", mode === "include");
+    row.classList.toggle("is-exclude", mode === "exclude");
+    row.querySelectorAll("[data-filter-mode]").forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.filterMode === mode);
+    });
+    syncDemographicSliceSelection(chart, row.dataset.itemIndex || "", mode);
+    updateDemographicGoState(chart);
+  }
+
+  function syncDemographicSliceSelection(chart, itemIndex, mode) {
+    if (!(chart instanceof HTMLElement)) return;
+    chart.querySelectorAll(`.studio-dashboard__demographic-slice[data-item-index="${escapeSelectorValue(itemIndex)}"]`).forEach((slice) => {
+      slice.classList.toggle("is-include", mode === "include");
+      slice.classList.toggle("is-exclude", mode === "exclude");
+    });
+  }
+
+  function updateDemographicGoState(chart) {
+    if (!(chart instanceof HTMLElement)) return;
+    const hasSelection = Array.from(chart.querySelectorAll(".studio-dashboard__demographic-row")).some((row) => {
+      return row.dataset.filterMode === "include" || row.dataset.filterMode === "exclude";
+    });
+    chart.querySelectorAll("[data-demo-action='go'], [data-demo-action='update']").forEach((button) => {
+      if (!(button instanceof HTMLButtonElement)) return;
+      button.disabled = !hasSelection;
+      button.classList.toggle("is-ready", hasSelection);
+    });
+  }
+
+  function getDemographicSelectionSets(chart) {
+    const include = new Set();
+    const exclude = new Set();
+    chart?.querySelectorAll(".studio-dashboard__demographic-row").forEach((row) => {
+      const index = row.dataset.itemIndex || "";
+      if (!index) return;
+      if (row.dataset.filterMode === "include") include.add(index);
+      if (row.dataset.filterMode === "exclude") exclude.add(index);
+    });
+    return { include, exclude };
+  }
+
+  function getUpdatedDemographicItems(items, selections) {
+    const include = selections?.include || new Set();
+    const exclude = selections?.exclude || new Set();
+    return (items || []).filter((item) => {
+      const index = String(item.sourceIndex ?? "");
+      if (exclude.has(index)) return false;
+      return include.size ? include.has(index) : true;
+    });
+  }
+
+  function updateDemographicChartView(chart) {
+    if (!(chart instanceof HTMLElement)) return;
+    const selections = getDemographicSelectionSets(chart);
+    const unit = chart.studioDashboardUnit || "";
+    const type = chart.studioDashboardType || "";
+    const subcharts = Array.isArray(chart.studioDashboardSubcharts) ? chart.studioDashboardSubcharts : [];
+
+    if (subcharts.length) {
+      const wraps = Array.from(chart.querySelectorAll(".studio-dashboard__demographic-pie-wrap"));
+      subcharts.forEach((subchart, index) => {
+        const wrap = wraps[index];
+        if (!(wrap instanceof HTMLElement)) return;
+        wrap.querySelectorAll(".studio-dashboard__demographic-pie").forEach((pie) => pie.remove());
+        renderDemographicPie(wrap, getUpdatedDemographicItems(subchart.items || [], selections), unit, type);
+      });
+    } else {
+      const body = chart.querySelector(".studio-dashboard__demographic-body");
+      if (body instanceof HTMLElement) {
+        body.querySelectorAll(":scope > .studio-dashboard__demographic-pie").forEach((pie) => pie.remove());
+        renderDemographicPie(
+          body,
+          getUpdatedDemographicItems(chart.studioDashboardItems || [], selections),
+          unit,
+          type
+        );
+      }
+    }
+
+    chart.querySelectorAll(".studio-dashboard__demographic-row").forEach((row) => {
+      syncDemographicSliceSelection(chart, row.dataset.itemIndex || "", row.dataset.filterMode || "");
+    });
+  }
+
+  function openDemographicScenes(studio, type, items, rows) {
+    const includeItems = [];
+    const excludeItems = [];
+    rows.forEach((row, index) => {
+      const mode = row.dataset.filterMode || "";
+      if (mode === "include") includeItems.push(items[index]);
+      if (mode === "exclude") excludeItems.push(items[index]);
+    });
+    let criteria;
+    if (type === "country") {
+      criteria = buildCountryFilterCriteria(includeItems, excludeItems);
+    } else if (type === "custom-scene") {
+      criteria = buildSceneTagFilterCriteria(includeItems, excludeItems);
+    } else if (type === "scene-rating") {
+      criteria = buildSceneRatingFilterCriteria(includeItems, excludeItems);
+    } else if (type === "scene-resolution") {
+      criteria = buildSceneMetricFilterCriteria("resolution", includeItems, excludeItems);
+    } else if (type === "scene-duration") {
+      criteria = buildSceneMetricFilterCriteria("duration", includeItems, excludeItems);
+    } else if (type === "custom-performer" || type === "performer-rating") {
+      criteria = buildPerformerGroupFilterCriteria(includeItems, excludeItems);
+    } else {
+      criteria = buildAgeFilterCriteria(includeItems, excludeItems);
+    }
+    window.location.href = makeStudioScenesUrl(studio, criteria);
   }
 
   function formatPerformerMeta(performer) {
@@ -1219,12 +3139,12 @@
         </thead>
         <tbody>
           <tr>
-            <td><span class="studio-dashboard__meta-icon" title="Studio scenes">🎬</span><strong>${escapeHtml(studioScenes)}</strong></td>
-            <td><span class="studio-dashboard__meta-icon" title="All scenes">🎬</span><strong>${escapeHtml(allScenes)}</strong></td>
+            <td><span class="studio-dashboard__meta-icon" title="Studio scenes">🎬</span>${formatPerformerMetricLink(performer, "studio", studioScenes, "date")}</td>
+            <td><span class="studio-dashboard__meta-icon" title="All scenes">🎬</span>${formatPerformerMetricLink(performer, "all", allScenes, "date")}</td>
           </tr>
           <tr>
-            <td><span class="studio-dashboard__meta-icon" title="Studio O's">💧</span><strong>${escapeHtml(studioOCount)}</strong></td>
-            <td><span class="studio-dashboard__meta-icon" title="All O's">💧</span><strong>${escapeHtml(allOCount)}</strong></td>
+            <td><span class="studio-dashboard__meta-icon" title="Studio O's">${O_COUNT_ICON}</span>${formatPerformerMetricLink(performer, "studio", studioOCount, "o_counter")}</td>
+            <td><span class="studio-dashboard__meta-icon" title="All O's">${O_COUNT_ICON}</span>${formatPerformerMetricLink(performer, "all", allOCount, "o_counter")}</td>
           </tr>
           <tr>
             <td><span class="studio-dashboard__meta-icon" title="Top rated studio scene">★</span>${formatRatingLink(performer, "studio", studioTopRating)}</td>
@@ -1238,12 +3158,18 @@
   function formatRatingLink(performer, scope, rating) {
     const label = formatContentRating(rating);
     if (Number(rating || 0) <= 0) return `<strong>${escapeHtml(label)}</strong>`;
-    return `<a class="studio-dashboard__meta-link" href="${escapeHtml(makePerformerRatedScenesUrl(performer, scope))}"><strong>${escapeHtml(label)}</strong></a>`;
+    return `<a class="studio-dashboard__meta-link" href="${escapeHtml(makePerformerScenesUrl(performer, scope, "rating"))}"><strong>${escapeHtml(label)}</strong></a>`;
   }
 
-  function makePerformerRatedScenesUrl(performer, scope) {
+  function formatPerformerMetricLink(performer, scope, value, sortBy) {
+    const count = Number(value || 0);
+    if (count <= 0) return `<strong>${escapeHtml(count)}</strong>`;
+    return `<a class="studio-dashboard__meta-link" href="${escapeHtml(makePerformerScenesUrl(performer, scope, sortBy))}"><strong>${escapeHtml(count)}</strong></a>`;
+  }
+
+  function makePerformerScenesUrl(performer, scope, sortBy) {
     const params = new URLSearchParams();
-    params.set("sortby", "rating");
+    params.set("sortby", sortBy || "date");
     params.set("sortdir", "desc");
     if (scope === "studio" && performer?.studioId) {
       params.append("c", JSON.stringify({
@@ -1314,15 +3240,240 @@
     return makeStudioScenesUrl(studio, [buildTagCriterion(tag)]);
   }
 
-  function buildTagCriterion(tag) {
+  function buildTagCriterion(tag, modifier = "INCLUDES") {
+    return buildTagListCriterion([tag], modifier);
+  }
+
+  function buildTagListCriterion(tags, modifier = "INCLUDES") {
+    const items = (tags || [])
+      .filter((tag) => tag?.id)
+      .map((tag) => ({ id: String(tag.id), label: String(tag.name || "Tag") }));
+    if (!items.length) return null;
     return {
       type: "tags",
       value: {
-        items: [{ id: String(tag?.id || ""), label: String(tag?.name || "Tag") }],
+        items,
         excluded: [],
         depth: -1,
       },
-      modifier: "INCLUDES",
+      modifier,
+    };
+  }
+
+  function buildCountryFilterCriteria(includeItems, excludeItems) {
+    const criteria = [];
+    const included = normalizePerformerFilterItems(includeItems);
+    const excluded = normalizePerformerFilterItems(excludeItems);
+    if (included.length) {
+      criteria.push(buildPerformerCriterion(included, "INCLUDES"));
+    }
+    if (excluded.length) {
+      criteria.push(buildPerformerCriterion(excluded, "EXCLUDES"));
+    }
+    return criteria;
+  }
+
+  function buildPerformerGroupFilterCriteria(includeItems, excludeItems) {
+    const criteria = [];
+    const included = normalizePerformerFilterItems(includeItems);
+    const excluded = normalizePerformerFilterItems(excludeItems);
+    if (included.length) criteria.push(buildPerformerCriterion(included, "INCLUDES"));
+    if (excluded.length) criteria.push(buildPerformerCriterion(excluded, "EXCLUDES"));
+    return criteria;
+  }
+
+  function buildSceneTagFilterCriteria(includeItems, excludeItems) {
+    return [
+      ...includeItems.map((item) => item?.customExcludeTags?.length
+        ? buildTagListCriterion(item.customExcludeTags, "EXCLUDES")
+        : item?.customTag ? buildTagCriterion(item.customTag, "INCLUDES") : null),
+      ...excludeItems.map((item) => item?.customExcludeTags?.length
+        ? buildTagListCriterion(item.customExcludeTags, "INCLUDES")
+        : item?.customTag ? buildTagCriterion(item.customTag, "EXCLUDES") : null),
+    ].filter(Boolean);
+  }
+
+  function buildSceneRatingFilterCriteria(includeItems, excludeItems) {
+    return [
+      ...includeItems.map((item) => buildRatingCriterion(item, false)),
+      ...excludeItems.map((item) => buildRatingCriterion(item, true)),
+    ].filter(Boolean);
+  }
+
+  function buildSceneMetricFilterCriteria(metricType, includeItems, excludeItems) {
+    return [
+      ...includeItems.map((item) => buildMetricCriterion(metricType, item, false)),
+      ...excludeItems.map((item) => buildMetricCriterion(metricType, item, true)),
+    ].filter(Boolean);
+  }
+
+  function buildAgeFilterCriteria(includeItems, excludeItems) {
+    return [
+      ...includeItems.map((item) => item?.unknownAge || item?.otherAge
+        ? buildPerformerCriterion(normalizePerformerFilterItems([item]), "INCLUDES")
+        : buildPerformerAgeCriterion(item, false)),
+      ...excludeItems.map((item) => item?.unknownAge || item?.otherAge
+        ? buildPerformerCriterion(normalizePerformerFilterItems([item]), "EXCLUDES")
+        : buildPerformerAgeCriterion(item, true)),
+    ].filter(Boolean);
+  }
+
+  function normalizePerformerFilterItems(items) {
+    const performers = [];
+    (items || []).forEach((item) => {
+      if (Array.isArray(item?.performers) && item.performers.length) {
+        item.performers.forEach((performer) => {
+          if (performer?.id) performers.push({ id: String(performer.id), label: String(performer.name || "Performer") });
+        });
+        return;
+      }
+      (item?.performerIds || []).forEach((id) => performers.push({ id: String(id), label: String(item?.filterLabel || item?.label || "Performer") }));
+    });
+    const seen = new Set();
+    return performers.filter((performer) => {
+      if (!performer.id || seen.has(performer.id)) return false;
+      seen.add(performer.id);
+      return true;
+    });
+  }
+
+  function buildPerformerCriterion(items, modifier) {
+    if (!items.length) return null;
+    return {
+      type: "performers",
+      value: {
+        items: items.map((item) => ({ id: String(item.id), label: String(item.label || "Performer") })),
+        excluded: [],
+      },
+      modifier,
+    };
+  }
+
+  function buildPerformerAgeCriterion(item, exclude = false) {
+    if (!item) return null;
+    const min = item.min == null ? null : Number(item.min);
+    const max = item.max == null ? null : Number(item.max);
+    if (min != null && max != null && min === max) {
+      return {
+        type: "performer_age",
+        value: { value: min },
+        modifier: exclude ? "NOT_EQUALS" : "EQUALS",
+      };
+    }
+    if (min != null && max != null) {
+      return {
+        type: "performer_age",
+        value: { value: min, value2: max },
+        modifier: exclude ? "NOT_BETWEEN" : "BETWEEN",
+      };
+    }
+    if (min != null) {
+      return {
+        type: "performer_age",
+        value: { value: exclude ? min : Math.max(0, min - 1) },
+        modifier: exclude ? "LESS_THAN" : "GREATER_THAN",
+      };
+    }
+    if (max != null) {
+      return {
+        type: "performer_age",
+        value: { value: exclude ? max : max + 1 },
+        modifier: exclude ? "GREATER_THAN" : "LESS_THAN",
+      };
+    }
+    return null;
+  }
+
+  function buildRatingCriterion(item, exclude = false) {
+    if (!item || item.otherRating) return null;
+    if (item.unknownRating) {
+      return {
+        type: "rating",
+        value: { value: 0 },
+        modifier: exclude ? "NOT_EQUALS" : "EQUALS",
+      };
+    }
+    const min = item.min == null ? null : Math.round(Number(item.min) * 10);
+    const max = item.max == null ? null : Math.round(Number(item.max) * 10);
+    if (min != null && max != null && min === max) {
+      return {
+        type: "rating",
+        value: { value: min },
+        modifier: exclude ? "NOT_EQUALS" : "EQUALS",
+      };
+    }
+    if (min != null && max != null) {
+      return {
+        type: "rating",
+        value: { value: min, value2: max },
+        modifier: exclude ? "NOT_BETWEEN" : "BETWEEN",
+      };
+    }
+    if (min != null) {
+      return {
+        type: "rating",
+        value: { value: exclude ? min : Math.max(0, min - 1) },
+        modifier: exclude ? "LESS_THAN" : "GREATER_THAN",
+      };
+    }
+    if (max != null) {
+      return {
+        type: "rating",
+        value: { value: exclude ? max : max + 1 },
+        modifier: exclude ? "GREATER_THAN" : "LESS_THAN",
+      };
+    }
+    return null;
+  }
+
+  function buildMetricCriterion(metricType, item, exclude = false) {
+    if (!item || item.metricOther || item.metricUnknown) return null;
+    if (metricType === "resolution") return buildResolutionCriterion(item, exclude);
+    const type = metricType === "duration" ? "duration" : "resolution";
+    const multiplier = metricType === "duration" ? 60 : 1;
+    const min = item.min == null ? null : Math.round(Number(item.min) * multiplier);
+    const max = item.max == null ? null : Math.round(Number(item.max) * multiplier);
+    if (min != null && max != null && (min === max || item.exact)) {
+      return {
+        type,
+        value: { value: min },
+        modifier: exclude ? "NOT_EQUALS" : "EQUALS",
+      };
+    }
+    if (min != null && max != null) {
+      return {
+        type,
+        value: { value: min, value2: Math.max(min, max - 1) },
+        modifier: exclude ? "NOT_BETWEEN" : "BETWEEN",
+      };
+    }
+    if (min != null) {
+      return {
+        type,
+        value: { value: exclude ? min : Math.max(0, min - 1) },
+        modifier: exclude ? "LESS_THAN" : "GREATER_THAN",
+      };
+    }
+    if (max != null) {
+      return {
+        type,
+        value: { value: exclude ? Math.max(0, max - 1) : max },
+        modifier: exclude ? "GREATER_THAN" : "LESS_THAN",
+      };
+    }
+    return null;
+  }
+
+  function buildResolutionCriterion(item, exclude = false) {
+    if (!item?.enumValue) return null;
+    return {
+      type: "resolution",
+      value: {
+        id: item.enumValue,
+        value: item.enumValue,
+        label: item.label || item.enumValue,
+      },
+      modifier: exclude ? "NOT_EQUALS" : "EQUALS",
     };
   }
 
@@ -1348,11 +3499,14 @@
     const items = getTimelineItems(timeline);
     if (!items.length) return;
 
-    const section = createSection(container);
-    const title = document.createElement("div");
-    title.className = "studio-dashboard__section-title";
-    title.textContent = "Release timeline";
-    section.appendChild(title);
+    const isDashboard = Boolean(container?.closest?.(".studio-dashboard__page-dashboard"));
+    const section = isDashboard ? createPageSection(container, "RELEASE TIMELINE") : createSection(container);
+    if (!isDashboard) {
+      const title = document.createElement("div");
+      title.className = "studio-dashboard__section-title";
+      title.textContent = "Release timeline";
+      section.appendChild(title);
+    }
 
     const chart = document.createElement("div");
     chart.className = "studio-dashboard__timeline";
@@ -1442,7 +3596,7 @@
     }
     if (/O(?:'s|-count)?$/i.test(text)) {
       const value = text.replace(/\s*O(?:'s|-count)?$/i, "");
-      return `<span class="studio-dashboard__meta-icon" title="O's">💧</span><strong>${escapeHtml(value)}</strong>`;
+      return `<span class="studio-dashboard__meta-icon" title="O's">${O_COUNT_ICON}</span><strong>${escapeHtml(value)}</strong>`;
     }
     return escapeHtml(text);
   }
@@ -1456,10 +3610,10 @@
   async function handleHoverEnter(event) {
     const anchor = event.currentTarget;
     if (!(anchor instanceof HTMLElement)) return;
-    if (!getConfigBoolean(getSetting("b01ShowHoverPopout", "showHoverPopout"), true)) return;
+    if (!getDisplayProfile()) return;
     if (
       anchor.dataset.studioDashboardSource === "browser" &&
-      !getConfigBoolean(getSetting("a02ShowOnBrowserPages", "showOnBrowserPages"), false)
+      !getConfigBoolean(getSetting("a01ShowOnBrowserPages", "showOnBrowserPages"), false)
     ) {
       return;
     }
@@ -1599,7 +3753,7 @@
 
   function ensureStudioPageDashboard() {
     const studioId = getStudioPageId();
-    if (!studioId || !getConfigBoolean(getSetting("a01ShowOnStudioPages", "showOnStudioPages"), true)) {
+    if (!studioId) {
       removeStudioPageDashboard();
       return;
     }
@@ -1656,7 +3810,7 @@
 
     if (
       isContentBrowserPage() &&
-      getConfigBoolean(getSetting("a02ShowOnBrowserPages", "showOnBrowserPages"), false)
+      getConfigBoolean(getSetting("a01ShowOnBrowserPages", "showOnBrowserPages"), false)
     ) {
       getAllStudioLinks().forEach((link) => {
         const studio = studioFromLink(link);
