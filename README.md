@@ -12,6 +12,7 @@
 - [Simple Right Click Tagging](#Simple-Right-Click-Tagging)
 - [Background Images Slideshow](#Background-Images-Slideshow)
 - [Studio Dashboard](#Studio-Dashboard)
+- [Stash Dashboard](#Stash-Dashboard)
 
 ## Installation
 
@@ -387,8 +388,23 @@ Fork of the original background images plugin. all credit goes to original uploa
 Adds a dashboard tab to studio pages to view top performers, top tags, scene release timelines and highlighted scenes
 
 - Hovering over studio badges from other pages optionally shows a popout panel of a condensed dashboard or the full dashboard
+- Dashboard elements like scene release timeline, performer and scene highlight rows, tag highlights and pie charts
+- Up to 12 pie charts, 6 performer charts, 6 scene charts. 3 hardcoded charts each and 3 customizable charts each based on your tags
 - Customize which tags to show by group (works best with tag hierarchies) with black/whitelist and exclusion rules
 - Compares performer stats from studio content to all content
+
+Adds nothing new functionally, just an at-a-glance popout for studio content summaries and a more in depth dashboard tab.
+
+# Stash Dashboard
+
+Adds a dedicated dashboard page for stash-wide performer highlights, top tags, scene release timelines, highlighted scenes, and configurable pie charts
+
+- Similar to 'Studio Dashboard' but covers content across your entire stash with optional exclusion rules
+- Dashboard elements like scene release timeline, performer and scene highlight rows, tag highlights and pie charts
+- Choose which studios to show on the dashboard, useful for summarizing content from specific studio selections
+- Up to 12 pie charts, 6 performer charts, 6 scene charts. 3 hardcoded charts each and 3 customizable charts each based on your tags
+- Customize which tags to show by group (works best with tag hierarchies) with black/whitelist and exclusion rules
+
 
 Adds nothing new functionally, just an at-a-glance popout for studio content summaries and a more in depth dashboard tab.
 
