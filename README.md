@@ -385,6 +385,8 @@ Fork of the original background images plugin. all credit goes to original uploa
 
 # Studio Dashboard
 
+*ALPHA ALPHA ALPHA - use at own risk - only up for testing
+
 Adds a dashboard tab to studio pages to view top performers, top tags, scene release timelines and highlighted scenes
 
 - Hovering over studio badges from other pages optionally shows a popout panel of a condensed dashboard or the full dashboard
@@ -395,7 +397,7 @@ Adds a dashboard tab to studio pages to view top performers, top tags, scene rel
 
 # Stash Dashboard
 
-*ALPHA ALPHA ALPHA
+*ALPHA ALPHA ALPHA - use at own risk - only up for testing
 
 Adds a dedicated dashboard page for stash-wide performer highlights, top tags, scene release timelines, highlighted scenes, and configurable pie charts
 
