@@ -1,0 +1,4736 @@
+(function () {
+  "use strict";
+
+  const PLUGIN_ID = "StashDashboard";
+  const ROUTE_EVENT = "stash-dashboard:navigation";
+  const DASHBOARD_PATH = "/stash-dashboard";
+  const NO_STUDIO_ID = "__stash_dashboard_no_studio__";
+  const TOP_PERFORMER_MAX = 6;
+  const TOP_TAG_MAX = 10;
+  const TOP_TAG_CATEGORY_MAX = 12;
+  const DEMOGRAPHIC_PIE_TOP_COUNTRIES = 10;
+  const DEMOGRAPHIC_AGE_GROUP_MAX = 10;
+  const DASHBOARD_ROW_CARD_LIMIT = 8;
+  const DASHBOARD_SCENE_ROW_LIMIT = 5;
+  const DEFAULT_STATS_PAGE_SIZE = 150;
+  const GRAPHQL_TIMEOUT_MS = 60000;
+  const DEFAULT_DASHBOARD_SECTION_ORDER = [
+    "performerHighlights",
+    "topTags",
+    "releaseTimeline",
+    "sceneHighlights",
+    "performerDemographics",
+    "sceneCharts",
+  ];
+  const DASHBOARD_SECTION_ALIASES = {
+    performers: "performerHighlights",
+    performer: "performerHighlights",
+    performerhighlights: "performerHighlights",
+    topperformers: "performerHighlights",
+    performersmostscenes: "performersMostScenes",
+    mostscenesperformers: "performersMostScenes",
+    performersmostos: "performersMostOs",
+    mostosperformers: "performersMostOs",
+    performershighestrating: "performersHighestRating",
+    highestratingperformers: "performersHighestRating",
+    performershighestratedscenes: "performersHighestRatedScenes",
+    performerswithhighestratedscenes: "performersHighestRatedScenes",
+    tags: "topTags",
+    toptags: "topTags",
+    timeline: "releaseTimeline",
+    releasetimeline: "releaseTimeline",
+    scenes: "sceneHighlights",
+    scenehighlights: "sceneHighlights",
+    topratedscenes: "topRatedScenes",
+    recentreleases: "recentReleases",
+    scenesmostos: "scenesMostOs",
+    sceneswithmostos: "scenesMostOs",
+    demographics: "performerDemographics",
+    performerdemographics: "performerDemographics",
+    scenecharts: "sceneCharts",
+    charts: "sceneCharts",
+  };
+  const DISPLAY_PROFILES = new Set(["compact", "standard", "rich"]);
+  const TOP_TAG_LAYOUTS = new Set(["rows", "columns", "flow"]);
+  const MONTH_ABBREVIATIONS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const DEMOGRAPHIC_COLORS = ["#8ec5ff", "#ffd680", "#9af0c8", "#ff9eb3", "#d4a8ff", "#f5a267", "#8fe1e7", "#c7e86b", "#f08ee6", "#8d98a8"];
+  const O_COUNT_ICON = "\u{1F4A6}";
+  const AGE_BUCKETS = [
+    { label: "18-20", min: 18, max: 20 },
+    { label: "21-24", min: 21, max: 24 },
+    { label: "25-29", min: 25, max: 29 },
+    { label: "30-34", min: 30, max: 34 },
+    { label: "35-39", min: 35, max: 39 },
+    { label: "40-44", min: 40, max: 44 },
+    { label: "45+", min: 45, max: 120 },
+  ];
+  const RATING_BUCKETS = [
+    { label: "0-0.9", min: 0, max: 0.9 },
+    { label: "1-1.9", min: 1, max: 1.9 },
+    { label: "2-2.9", min: 2, max: 2.9 },
+    { label: "3-3.9", min: 3, max: 3.9 },
+    { label: "4-4.9", min: 4, max: 4.9 },
+    { label: "5-5.9", min: 5, max: 5.9 },
+    { label: "6-6.9", min: 6, max: 6.9 },
+    { label: "7-7.9", min: 7, max: 7.9 },
+    { label: "8-8.9", min: 8, max: 8.9 },
+    { label: "9-9.9", min: 9, max: 9.9 },
+    { label: "10", min: 10, max: 10 },
+  ];
+  const RESOLUTION_BUCKETS = [
+    { label: "144p", enumValue: "VERY_LOW", max: 144 },
+    { label: "240p", enumValue: "LOW", max: 240 },
+    { label: "360p", enumValue: "R360P", max: 360 },
+    { label: "480p", enumValue: "STANDARD", max: 480 },
+    { label: "540p", enumValue: "WEB_HD", max: 540 },
+    { label: "720p", enumValue: "STANDARD_HD", max: 720 },
+    { label: "1080p", enumValue: "FULL_HD", max: 1080 },
+    { label: "1440p", enumValue: "QUAD_HD", max: 1440 },
+    { label: "4K", enumValue: "FOUR_K", max: 2160 },
+    { label: "5K", enumValue: "FIVE_K", max: 2880 },
+    { label: "6K", enumValue: "SIX_K", max: 3240 },
+    { label: "7K", enumValue: "SEVEN_K", max: 3780 },
+    { label: "8K", enumValue: "EIGHT_K", max: 4320 },
+    { label: "8K+", enumValue: "HUGE", max: null },
+  ];
+  const DURATION_BUCKETS = [
+    { label: "<5m", min: null, max: 5 },
+    { label: "5-15m", min: 5, max: 15 },
+    { label: "15-30m", min: 15, max: 30 },
+    { label: "30-45m", min: 30, max: 45 },
+    { label: "45-60m", min: 45, max: 60 },
+    { label: "60-90m", min: 60, max: 90 },
+    { label: "90-120m", min: 90, max: 120 },
+    { label: "120m+", min: 120, max: null },
+  ];
+  const COUNTRY_NAMES = {
+    AD: "Andorra", AE: "United Arab Emirates", AF: "Afghanistan", AG: "Antigua and Barbuda", AI: "Anguilla",
+    AL: "Albania", AM: "Armenia", AO: "Angola", AR: "Argentina", AT: "Austria", AU: "Australia",
+    BA: "Bosnia and Herzegovina", BB: "Barbados", BD: "Bangladesh", BE: "Belgium", BF: "Burkina Faso",
+    BG: "Bulgaria", BH: "Bahrain", BI: "Burundi", BJ: "Benin", BM: "Bermuda", BN: "Brunei", BO: "Bolivia",
+    BR: "Brazil", BS: "Bahamas", BT: "Bhutan", BW: "Botswana", BY: "Belarus", BZ: "Belize", CA: "Canada",
+    CD: "Democratic Republic of the Congo", CF: "Central African Republic", CG: "Republic of the Congo",
+    CH: "Switzerland", CI: "Cote d'Ivoire", CL: "Chile", CM: "Cameroon", CN: "China", CO: "Colombia",
+    CR: "Costa Rica", CU: "Cuba", CV: "Cape Verde", CY: "Cyprus", CZ: "Czech Republic", DE: "Germany",
+    DJ: "Djibouti", DK: "Denmark", DM: "Dominica", DO: "Dominican Republic", DZ: "Algeria", EC: "Ecuador",
+    EE: "Estonia", EG: "Egypt", ES: "Spain", ET: "Ethiopia", FI: "Finland", FJ: "Fiji", FR: "France",
+    GB: "United Kingdom", GD: "Grenada", GE: "Georgia", GH: "Ghana", GM: "Gambia", GN: "Guinea",
+    GR: "Greece", GT: "Guatemala", GY: "Guyana", HK: "Hong Kong", HN: "Honduras", HR: "Croatia",
+    HT: "Haiti", HU: "Hungary", ID: "Indonesia", IE: "Ireland", IL: "Israel", IN: "India", IQ: "Iraq",
+    IR: "Iran", IS: "Iceland", IT: "Italy", JM: "Jamaica", JO: "Jordan", JP: "Japan", KE: "Kenya",
+    KG: "Kyrgyzstan", KH: "Cambodia", KR: "South Korea", KW: "Kuwait", KZ: "Kazakhstan", LA: "Laos",
+    LB: "Lebanon", LC: "Saint Lucia", LK: "Sri Lanka", LR: "Liberia", LS: "Lesotho", LT: "Lithuania",
+    LU: "Luxembourg", LV: "Latvia", LY: "Libya", MA: "Morocco", MC: "Monaco", MD: "Moldova",
+    ME: "Montenegro", MG: "Madagascar", MK: "North Macedonia", ML: "Mali", MM: "Myanmar", MN: "Mongolia",
+    MO: "Macau", MR: "Mauritania", MT: "Malta", MU: "Mauritius", MV: "Maldives", MW: "Malawi",
+    MX: "Mexico", MY: "Malaysia", MZ: "Mozambique", NA: "Namibia", NE: "Niger", NG: "Nigeria",
+    NI: "Nicaragua", NL: "Netherlands", NO: "Norway", NP: "Nepal", NZ: "New Zealand", OM: "Oman",
+    PA: "Panama", PE: "Peru", PG: "Papua New Guinea", PH: "Philippines", PK: "Pakistan", PL: "Poland",
+    PR: "Puerto Rico", PS: "Palestine", PT: "Portugal", PY: "Paraguay", QA: "Qatar", RO: "Romania",
+    RS: "Serbia", RU: "Russia", RW: "Rwanda", SA: "Saudi Arabia", SC: "Seychelles", SD: "Sudan",
+    SE: "Sweden", SG: "Singapore", SI: "Slovenia", SK: "Slovakia", SN: "Senegal", SO: "Somalia",
+    SR: "Suriname", SV: "El Salvador", SY: "Syria", TD: "Chad", TH: "Thailand", TJ: "Tajikistan",
+    TN: "Tunisia", TR: "Turkey", TT: "Trinidad and Tobago", TW: "Taiwan", TZ: "Tanzania", UA: "Ukraine",
+    UG: "Uganda", US: "United States", UY: "Uruguay", UZ: "Uzbekistan", VE: "Venezuela", VN: "Vietnam",
+    ZA: "South Africa", ZM: "Zambia", ZW: "Zimbabwe",
+  };
+
+  const state = {
+    config: {},
+    configKey: "",
+    currentStudio: null,
+    lastPath: "",
+    routeTimer: 0,
+    observer: null,
+    tooltip: null,
+    tooltipAnchor: null,
+    tooltipCloseTimer: 0,
+    statsCache: new Map(),
+    allTags: null,
+    studioPageNav: null,
+    studioPageHost: null,
+    studioPageId: "",
+    studioPageRenderToken: 0,
+    dashboardHost: null,
+    dashboardNav: null,
+    dashboardRenderToken: 0,
+    dashboardStudios: [],
+    dashboardLoadedStudioIds: new Set(),
+    dashboardFailedStudioNames: [],
+    dashboardStudioSceneCounts: new Map(),
+    dashboardStudioUpdatedAt: new Map(),
+    dashboardStudioPerformerUpdatedAt: new Map(),
+    dashboardTagUpdatedAt: "",
+    routeToken: 0,
+  };
+
+  function gql(query, variables = {}) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), GRAPHQL_TIMEOUT_MS);
+    return fetch("/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      signal: controller.signal,
+      body: JSON.stringify({ query, variables }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`GraphQL HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((json) => {
+        if (json.errors?.length) {
+          throw new Error(json.errors.map((err) => err.message).join("; "));
+        }
+        return json.data;
+      })
+      .finally(() => window.clearTimeout(timer));
+  }
+
+  function getConfigBoolean(value, fallback) {
+    if (typeof value === "boolean") return value;
+    const normalized = String(value ?? "").trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+    return fallback;
+  }
+
+  function getConfigString(value, fallback) {
+    const normalized = String(value ?? "").trim();
+    return normalized || fallback;
+  }
+
+  function getConfigNumber(value, fallback, min, max) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(max, Math.max(min, parsed));
+  }
+
+  function delay(ms) {
+    const duration = Number(ms || 0);
+    return duration > 0 ? new Promise((resolve) => window.setTimeout(resolve, duration)) : Promise.resolve();
+  }
+
+  function getSetting(...keys) {
+    for (const key of keys) {
+      if (Object.prototype.hasOwnProperty.call(state.config || {}, key)) {
+        return state.config[key];
+      }
+    }
+    return undefined;
+  }
+
+  function getDashboardHeaderFontSize() {
+    return getConfigNumber(getSetting("z01DashboardHeaderFontSize", "dashboardHeaderFontSize"), 26, 12, 48);
+  }
+
+  function getDashboardSubheaderFontSize() {
+    return getConfigNumber(getSetting("z02DashboardSubheaderFontSize", "dashboardSubheaderFontSize"), 18, 10, 36);
+  }
+
+  function getDashboardContentFontSize() {
+    return getConfigNumber(
+      getSetting("z03DashboardContentFontSize", "dashboardContentFontSize", "dashboardFontSize"),
+      15,
+      9,
+      28
+    );
+  }
+
+  function getDashboardTagWidth() {
+    return Math.max(
+      100,
+      Math.round(Number(getSetting("z04DashboardTagWidth", "dashboardTagWidth", "dashboardTagMinWidth") ?? 200) || 200)
+    );
+  }
+
+  function getDashboardSurfaceColor() {
+    return getConfigString(getSetting("z05DashboardSurfaceBackgroundColor", "dashboardSurfaceBackgroundColor"), "#000000");
+  }
+
+  function getDashboardSurfaceOpacity() {
+    return getConfigNumber(getSetting("z06DashboardSurfaceOpacity", "dashboardSurfaceOpacity"), 0.15, 0, 1);
+  }
+
+  function getDashboardSceneLoadLimit() {
+    return 1500;
+  }
+
+  function getDashboardPageSize() {
+    return DEFAULT_STATS_PAGE_SIZE;
+  }
+
+  function getDashboardPageDelayMs() {
+    return 50;
+  }
+
+  function getAutoLoadDashboardOnOpen() {
+    return false;
+  }
+
+  function normalizeDashboardSectionKey(value) {
+    const key = String(value || "").trim().replace(/[\s_-]+/g, "").toLowerCase();
+    if (!key) return "";
+    return DASHBOARD_SECTION_ALIASES[key] || "";
+  }
+
+  function getDashboardSectionOrder() {
+    const raw = String(getSetting("a01DashboardSectionOrder", "dashboardSectionOrder") ?? "").trim();
+    if (!raw) return DEFAULT_DASHBOARD_SECTION_ORDER.slice();
+    if (/^(none|off|disabled)$/i.test(raw)) return [];
+    const seen = new Set();
+    const order = raw
+      .split(",")
+      .map(normalizeDashboardSectionKey)
+      .filter((key) => {
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    return order.length ? order : DEFAULT_DASHBOARD_SECTION_ORDER.slice();
+  }
+
+  function getDashboardTopTagLimit() {
+    return Math.round(getConfigNumber(getSetting("c03TopTagsPerCategory", "topTagsPerCategory"), 10, 1, TOP_TAG_MAX));
+  }
+
+  function getDashboardTopTagLayout() {
+    const layout = getConfigString(getSetting("c02TopTagCategoryLayout", "topTagCategoryLayout"), "rows").toLowerCase();
+    return TOP_TAG_LAYOUTS.has(layout) ? layout : "rows";
+  }
+
+  function getPieSliceMax() {
+    const value = Number(getSetting("c06PieChartSliceMax", "pieChartSliceMax") ?? 0);
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.round(value));
+  }
+
+  function getDemographicTooltipImageHeight() {
+    const value = getSetting("d02DemographicTooltipImageHeight", "d02ShowDemographicTooltipImages", "showDemographicTooltipImages");
+    if (typeof value === "boolean") return value ? 78 : 0;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 78;
+    return Math.max(0, Math.min(240, Math.round(numeric)));
+  }
+
+  function getAgeBuckets() {
+    const configured = getConfigString(getSetting("d03AgeGroups", "ageGroups"), "");
+    const buckets = parseAgeBuckets(configured);
+    return (buckets.length ? buckets : AGE_BUCKETS).slice(0, DEMOGRAPHIC_AGE_GROUP_MAX);
+  }
+
+  function getRatingBuckets() {
+    const configured = getConfigString(getSetting("d04RatingGroups", "ratingGroups"), "");
+    const buckets = parseRatingBuckets(configured);
+    return buckets.length ? buckets : RATING_BUCKETS;
+  }
+
+  function getSceneRatingBuckets() {
+    const configured = getConfigString(getSetting("e01SceneRatingGroups", "sceneRatingGroups"), "");
+    const buckets = parseRatingBuckets(configured);
+    return buckets.length ? buckets : RATING_BUCKETS;
+  }
+
+  function getResolutionBuckets() {
+    return RESOLUTION_BUCKETS;
+  }
+
+  function getDurationBuckets() {
+    const configured = getConfigString(getSetting("e02SceneDurationGroups", "sceneDurationGroups"), "");
+    const buckets = parseMetricBuckets(configured, { unit: "m" });
+    return buckets.length ? buckets : DURATION_BUCKETS;
+  }
+
+  function getPerformerPieChartTagRef(index) {
+    const keyNumber = { 1: "d05", 2: "d07", 3: "d09" }[index] || "d05";
+    return getConfigString(getSetting(`${keyNumber}PerformerPieChart${index}Tag`), "");
+  }
+
+  function getPerformerPieChartLabel(index) {
+    const keyNumber = { 1: "d06", 2: "d08", 3: "d10" }[index] || "d06";
+    return getConfigString(getSetting(`${keyNumber}PerformerPieChart${index}Label`), `Performer pie ${index}`);
+  }
+
+  function getScenePieChartTagRef(index) {
+    const keyNumber = { 1: "e03", 2: "e05", 3: "e07" }[index] || "e03";
+    return getConfigString(getSetting(`${keyNumber}ScenePieChart${index}Tag`, `scenePieChart${index}Tag`), "");
+  }
+
+  function getScenePieChartLabel(index) {
+    const keyNumber = { 1: "e04", 2: "e06", 3: "e08" }[index] || "e04";
+    return getConfigString(getSetting(`${keyNumber}ScenePieChart${index}Label`, `scenePieChart${index}Label`), `Scene pie ${index}`);
+  }
+
+  function getDisplayProfile() {
+    const value = getSetting("a02DisplayProfile", "displayProfile");
+    if (value == null) return "standard";
+    const profile = String(value).trim().toLowerCase();
+    if (!profile) return "";
+    return DISPLAY_PROFILES.has(profile) ? profile : "standard";
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  async function loadConfig() {
+    const data = await gql(`
+      query StashDashboardConfig {
+        configuration {
+          plugins
+        }
+      }
+    `);
+    const plugins = data?.configuration?.plugins || {};
+    const nextConfig = plugins[PLUGIN_ID] || {};
+    const nextKey = JSON.stringify(nextConfig);
+    if (state.configKey && state.configKey !== nextKey) {
+      state.statsCache.clear();
+    }
+    state.config = nextConfig;
+    state.configKey = nextKey;
+  }
+
+  function getPageEntity() {
+    const path = window.location.pathname;
+    const scene = path.match(/^\/scenes\/(\d+)/);
+    if (scene) return { type: "scene", id: scene[1] };
+    const image = path.match(/^\/images\/(\d+)/);
+    if (image) return { type: "image", id: image[1] };
+    const gallery = path.match(/^\/galleries\/(\d+)/);
+    if (gallery) return { type: "gallery", id: gallery[1] };
+    return null;
+  }
+
+  function isContentBrowserPage() {
+    return /^\/(?:scenes|images|galleries)\/?$/.test(window.location.pathname);
+  }
+
+  function getStudioPageId() {
+    const match = window.location.pathname.match(/^\/studios\/(\d+)(?:\/|$)/);
+    return match ? match[1] : "";
+  }
+
+  async function fetchCurrentStudio(entity) {
+    if (!entity) return null;
+
+    const queryByType = {
+      scene: `
+        query StudioDashboardSceneStudio($id: ID!) {
+          findScene(id: $id) {
+            id
+            studio { id name image_path }
+          }
+        }
+      `,
+      image: `
+        query StudioDashboardImageStudio($id: ID!) {
+          findImage(id: $id) {
+            id
+            studio { id name image_path }
+          }
+        }
+      `,
+      gallery: `
+        query StudioDashboardGalleryStudio($id: ID!) {
+          findGallery(id: $id) {
+            id
+            studio { id name image_path }
+          }
+        }
+      `,
+    };
+    const data = await gql(queryByType[entity.type], { id: entity.id });
+    return normalizeStudio(
+      data?.findScene?.studio || data?.findImage?.studio || data?.findGallery?.studio
+    );
+  }
+
+  async function fetchStudioById(id) {
+    if (!id) return null;
+    const data = await gql(`
+      query StudioDashboardStudio($id: ID!) {
+        findStudio(id: $id) {
+          id
+          name
+          image_path
+        }
+      }
+    `, { id });
+    return normalizeStudio(data?.findStudio);
+  }
+
+  function normalizeStudio(studio) {
+    if (!studio?.id) return null;
+    return {
+      id: String(studio.id),
+      name: String(studio.name || "Studio"),
+      imagePath: String(studio.image_path || "").trim(),
+    };
+  }
+
+  function studioFilter(studioId) {
+    if (String(studioId || "") === NO_STUDIO_ID) {
+      return {
+        studios: {
+          value: [],
+          modifier: "IS_NULL",
+        },
+      };
+    }
+    if (!studioId) return {};
+    return {
+      studios: {
+        value: [String(studioId)],
+        modifier: "INCLUDES",
+      },
+    };
+  }
+
+  async function fetchAllTags() {
+    if (state.allTags) return state.allTags;
+    const data = await gql(`
+      query StudioDashboardAllTags {
+        findTags(filter: { per_page: -1, sort: "name", direction: ASC }) {
+          tags {
+            id
+            name
+            image_path
+            children { id }
+          }
+        }
+      }
+    `);
+    state.allTags = (data?.findTags?.tags || []).map((tag) => ({
+      id: String(tag?.id || ""),
+      name: String(tag?.name || ""),
+      imagePath: String(tag?.image_path || ""),
+      childIds: (tag?.children || []).map((child) => String(child?.id || "")).filter(Boolean),
+    })).filter((tag) => tag.id && tag.name);
+    return state.allTags;
+  }
+
+  function parseList(value) {
+    return String(value || "")
+      .split(",")
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  function normalizeRef(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function isTagRefMatch(tag, ref) {
+    const normalized = normalizeRef(ref);
+    if (!normalized || !tag) return false;
+    return String(tag.id || "").toLowerCase() === normalized ||
+      String(tag.name || "").trim().toLowerCase() === normalized;
+  }
+
+  function addTagAndDescendants(tag, tagMap, targetSet) {
+    if (!tag?.id || targetSet.has(`id:${tag.id.toLowerCase()}`)) return;
+    targetSet.add(`id:${tag.id.toLowerCase()}`);
+    targetSet.add(`name:${tag.name.toLowerCase()}`);
+    tag.childIds.forEach((childId) => addTagAndDescendants(tagMap.get(childId), tagMap, targetSet));
+  }
+
+  function collectDescendantTagIds(tag, tagMap, targetSet = new Set()) {
+    if (!tag?.id) return targetSet;
+    tag.childIds.forEach((childId) => {
+      if (targetSet.has(childId)) return;
+      targetSet.add(childId);
+      collectDescendantTagIds(tagMap.get(childId), tagMap, targetSet);
+    });
+    return targetSet;
+  }
+
+  async function getConfiguredTopTagCategories() {
+    const refs = parseList(getSetting("c01TopTagCategories", "topTagCategories"));
+    if (!refs.length) return [];
+
+    try {
+      const allTags = await fetchAllTags();
+      const tagMap = new Map(allTags.map((tag) => [tag.id, tag]));
+      const categories = refs
+        .map((ref) => allTags.find((tag) => isTagRefMatch(tag, ref)))
+        .filter(Boolean)
+        .filter((tag, index, tags) => tags.findIndex((item) => item.id === tag.id) === index)
+        .slice(0, TOP_TAG_CATEGORY_MAX)
+        .map((tag) => {
+          const descendantIds = collectDescendantTagIds(tag, tagMap);
+          return {
+            id: tag.id,
+            name: tag.name,
+            tagIds: descendantIds.size ? descendantIds : new Set([tag.id]),
+          };
+        });
+      categories.forEach((category) => {
+        categories.forEach((candidate) => {
+          if (category.id === candidate.id || !category.tagIds.has(candidate.id)) return;
+          candidate.tagIds.forEach((tagId) => category.tagIds.delete(tagId));
+          category.tagIds.delete(candidate.id);
+        });
+      });
+      return categories;
+    } catch (err) {
+      console.warn("[StudioDashboard] Top tag categories failed", err);
+      return [];
+    }
+  }
+
+  async function buildTopTagFilters() {
+    const blacklist = parseList(getSetting("c05TopTagBlacklist", "topTagBlacklist"));
+    const whitelist = parseList(getSetting("c04TopTagWhitelist", "topTagWhitelist"));
+    if (!blacklist.length && !whitelist.length) return { blacklist: new Set(), whitelist: null };
+
+    try {
+      const allTags = await fetchAllTags();
+      const tagMap = new Map(allTags.map((tag) => [tag.id, tag]));
+      const expand = (items) => {
+        const set = new Set();
+        items.forEach((item) => {
+          allTags
+            .filter((tag) => tag.id.toLowerCase() === item || tag.name.toLowerCase() === item)
+            .forEach((tag) => addTagAndDescendants(tag, tagMap, set));
+        });
+        return set;
+      };
+      return {
+        blacklist: expand(blacklist),
+        whitelist: whitelist.length ? expand(whitelist) : null,
+      };
+    } catch (err) {
+      console.warn("[StudioDashboard] Tag filter hierarchy failed", err);
+      return {
+        blacklist: new Set(blacklist.flatMap((item) => [`id:${item}`, `name:${item}`])),
+        whitelist: whitelist.length
+          ? new Set(whitelist.flatMap((item) => [`id:${item}`, `name:${item}`]))
+          : null,
+      };
+    }
+  }
+
+  function isTagAllowed(tag, filters) {
+    const keys = [`id:${String(tag?.id || "").toLowerCase()}`, `name:${String(tag?.name || "").toLowerCase()}`];
+    if (filters.whitelist && !keys.some((key) => filters.whitelist.has(key))) return false;
+    return !keys.some((key) => filters.blacklist.has(key));
+  }
+
+  async function buildDashboardExcludeTagSet() {
+    const refs = [];
+    if (!refs.length) return new Set();
+    try {
+      const allTags = await fetchAllTags();
+      const tagMap = new Map(allTags.map((tag) => [tag.id, tag]));
+      const set = new Set();
+      refs.forEach((ref) => {
+        allTags
+          .filter((tag) => tag.id.toLowerCase() === ref || tag.name.toLowerCase() === ref)
+          .forEach((tag) => addTagAndDescendants(tag, tagMap, set));
+      });
+      return set;
+    } catch (err) {
+      console.warn("[StashDashboard] Exclude tag hierarchy failed", err);
+      return new Set(refs.flatMap((item) => [`id:${item}`, `name:${item}`]));
+    }
+  }
+
+  function sceneHasExcludedTag(scene, excludedTags) {
+    if (!excludedTags?.size) return false;
+    return (scene?.tags || []).some((tag) => {
+      const keys = [`id:${String(tag?.id || "").toLowerCase()}`, `name:${String(tag?.name || "").toLowerCase()}`];
+      return keys.some((key) => excludedTags.has(key));
+    });
+  }
+
+  function sceneMatchesPathFilters(scene) {
+    const includePaths = [];
+    const excludePaths = parseList(getSetting("a04ExcludePaths", "excludePaths"));
+    if (!includePaths.length && !excludePaths.length) return true;
+    const paths = (scene?.files || []).map((file) => String(file?.path || "").toLowerCase()).filter(Boolean);
+    const includeOk = !includePaths.length || paths.some((path) => includePaths.some((fragment) => path.includes(fragment)));
+    const excludeOk = !excludePaths.length || !paths.some((path) => excludePaths.some((fragment) => path.includes(fragment)));
+    return includeOk && excludeOk;
+  }
+
+  function sceneMatchesStudioFilters(scene) {
+    const includeStudios = [];
+    const excludeStudios = parseList(getSetting("a06ExcludeStudios", "excludeStudios"));
+    if (!includeStudios.length && !excludeStudios.length) return true;
+    const studio = scene?.studio || {};
+    const keys = [String(studio?.id || "").toLowerCase(), String(studio?.name || "").toLowerCase()].filter(Boolean);
+    const includeOk = !includeStudios.length || includeStudios.some((ref) => keys.includes(ref));
+    const excludeOk = !excludeStudios.length || !excludeStudios.some((ref) => keys.includes(ref));
+    return includeOk && excludeOk;
+  }
+
+  async function filterDashboardScenes(scenes) {
+    const excludedTags = await buildDashboardExcludeTagSet();
+    return (scenes || []).filter((scene) =>
+      !sceneHasExcludedTag(scene, excludedTags) &&
+      sceneMatchesPathFilters(scene) &&
+      sceneMatchesStudioFilters(scene)
+    );
+  }
+
+  function buildTopTags(scenes, filters) {
+    const counts = new Map();
+    scenes.forEach((scene) => {
+      const seen = new Set();
+      (scene?.tags || []).forEach((tag) => {
+        const id = String(tag?.id || "");
+        const name = String(tag?.name || "").trim();
+        if (!id || !name || seen.has(id) || !isTagAllowed(tag, filters)) return;
+        seen.add(id);
+        const existing = counts.get(id) || {
+          id,
+          name,
+          imagePath: String(tag?.image_path || ""),
+          count: 0,
+        };
+        existing.count += 1;
+        counts.set(id, existing);
+      });
+    });
+    return Array.from(counts.values())
+      .sort((left, right) => {
+        if (right.count !== left.count) return right.count - left.count;
+        return left.name.localeCompare(right.name);
+      })
+      .slice(0, TOP_TAG_MAX);
+  }
+
+  function buildTopTagGroups(scenes, filters, categories) {
+    if (!categories?.length) return [];
+    return categories
+      .map((category) => ({
+        id: category.id,
+        name: category.name,
+        tags: buildTopTags(
+          scenes.map((scene) => ({
+            ...scene,
+            tags: (scene?.tags || []).filter((tag) => category.tagIds.has(String(tag?.id || ""))),
+          })),
+          filters
+        ),
+      }))
+      .filter((group) => group.tags.length);
+  }
+
+  function pickPerformer(performers, sorter, filter = () => true) {
+    return performers
+      .filter(filter)
+      .slice()
+      .sort(sorter)[0] || null;
+  }
+
+  function pickPerformers(performers, sorter, filter = () => true, limit = DASHBOARD_ROW_CARD_LIMIT) {
+    return performers
+      .filter(filter)
+      .slice()
+      .sort(sorter)
+      .slice(0, limit);
+  }
+
+  function performerMetricValue(performer, metricKey) {
+    if (metricKey === "mostScenes" || metricKey === "leastScenes") return String(Number(performer?.count || 0));
+    if (metricKey === "mostOCount" || metricKey === "leastOCount") return String(Number(performer?.oCount || 0));
+    if (metricKey === "highestRating" || metricKey === "lowestRating") return formatRating(performer?.performerRating);
+    if (metricKey === "highestStudioContentRating" || metricKey === "lowestStudioContentRating") return formatContentRating(performer?.studioTopRating);
+    return "";
+  }
+
+  function performerMetricCard(performer, metricKey, metricTitle, options = {}) {
+    if (!performer) return null;
+    const title = options.useMetricValue ? performerMetricValue(performer, metricKey) : metricTitle;
+    return {
+      id: performer.id,
+      name: performer.name,
+      imagePath: performer.imagePath,
+      count: performer.count,
+      oCount: performer.oCount,
+      allOCount: performer.allOCount,
+      allSceneCount: performer.allSceneCount,
+      allTopRating: performer.allTopRating,
+      performerRating: performer.performerRating,
+      studioTopRating: performer.studioTopRating,
+      metricKey,
+      metricTitle: title,
+    };
+  }
+
+  function performerMetricCards(performers, metricKey, metricTitle, options = {}) {
+    return (performers || [])
+      .map((performer) => performerMetricCard(performer, metricKey, metricTitle, options))
+      .filter(Boolean);
+  }
+
+  function buildPerformerHighlights(performers) {
+    const byMostScenes = (left, right) => {
+      if (right.count !== left.count) return right.count - left.count;
+      return left.name.localeCompare(right.name);
+    };
+    const byLeastScenes = (left, right) => {
+      if (left.count !== right.count) return left.count - right.count;
+      return left.name.localeCompare(right.name);
+    };
+    const byHighestRating = (left, right) => {
+      if (right.performerRating !== left.performerRating) return right.performerRating - left.performerRating;
+      return byMostScenes(left, right);
+    };
+    const byLowestRating = (left, right) => {
+      if (left.performerRating !== right.performerRating) return left.performerRating - right.performerRating;
+      return byMostScenes(left, right);
+    };
+    const byMostOCount = (left, right) => {
+      if (right.oCount !== left.oCount) return right.oCount - left.oCount;
+      return byMostScenes(left, right);
+    };
+    const byLeastOCount = (left, right) => {
+      if (left.oCount !== right.oCount) return left.oCount - right.oCount;
+      return byMostScenes(left, right);
+    };
+    const byHighestStudioContentRating = (left, right) => {
+      if (right.studioTopRating !== left.studioTopRating) return right.studioTopRating - left.studioTopRating;
+      return byMostScenes(left, right);
+    };
+    const byLowestStudioContentRating = (left, right) => {
+      if (left.studioTopRating !== right.studioTopRating) return left.studioTopRating - right.studioTopRating;
+      return byMostScenes(left, right);
+    };
+    const hasRating = (performer) => performer.performerRating > 0;
+    const hasStudioContentRating = (performer) => performer.studioTopRating > 0;
+
+    return [
+      performerMetricCard(
+        pickPerformer(performers, byMostScenes),
+        "mostScenes",
+        "Most scenes"
+      ),
+      performerMetricCard(
+        pickPerformer(performers, byLeastScenes),
+        "leastScenes",
+        "Least scenes"
+      ),
+      performerMetricCard(
+        pickPerformer(performers, byHighestRating, hasRating),
+        "highestRating",
+        "Highest rating"
+      ),
+      performerMetricCard(
+        pickPerformer(performers, byLowestRating, hasRating),
+        "lowestRating",
+        "Lowest rating"
+      ),
+      performerMetricCard(
+        pickPerformer(performers, byMostOCount),
+        "mostOCount",
+        "Most O's"
+      ),
+      performerMetricCard(
+        pickPerformer(performers, byLeastOCount),
+        "leastOCount",
+        "Least O's"
+      ),
+      performerMetricCard(
+        pickPerformer(performers, byHighestStudioContentRating, hasStudioContentRating),
+        "highestStudioContentRating",
+        "Top rated scene"
+      ),
+      performerMetricCard(
+        pickPerformer(performers, byLowestStudioContentRating, hasStudioContentRating),
+        "lowestStudioContentRating",
+        "Lowest rated scene"
+      ),
+    ].filter(Boolean);
+  }
+
+  function buildPerformerHighlightRows(performers) {
+    const byMostScenes = (left, right) => {
+      if (right.count !== left.count) return right.count - left.count;
+      return left.name.localeCompare(right.name);
+    };
+    const byMostOCount = (left, right) => {
+      if (right.oCount !== left.oCount) return right.oCount - left.oCount;
+      return byMostScenes(left, right);
+    };
+    const byHighestRating = (left, right) => {
+      if (right.performerRating !== left.performerRating) return right.performerRating - left.performerRating;
+      return byMostScenes(left, right);
+    };
+    const byHighestStudioContentRating = (left, right) => {
+      if (right.studioTopRating !== left.studioTopRating) return right.studioTopRating - left.studioTopRating;
+      return byMostScenes(left, right);
+    };
+    return {
+      performersMostScenes: performerMetricCards(
+        pickPerformers(performers, byMostScenes),
+        "mostScenes",
+        "Most scenes",
+        { useMetricValue: true }
+      ),
+      performersMostOs: performerMetricCards(
+        pickPerformers(performers, byMostOCount, (performer) => Number(performer.oCount || 0) > 0),
+        "mostOCount",
+        "Most O's",
+        { useMetricValue: true }
+      ),
+      performersHighestRating: performerMetricCards(
+        pickPerformers(performers, byHighestRating, (performer) => Number(performer.performerRating || 0) > 0),
+        "highestRating",
+        "Highest rating",
+        { useMetricValue: true }
+      ),
+      performersHighestRatedScenes: performerMetricCards(
+        pickPerformers(performers, byHighestStudioContentRating, (performer) => Number(performer.studioTopRating || 0) > 0),
+        "highestStudioContentRating",
+        "Top rated scene",
+        { useMetricValue: true }
+      ),
+    };
+  }
+
+  function attachStudioToPerformers(performers, studio) {
+    (performers || []).forEach((performer) => {
+      performer.studioId = studio?.id || "";
+      performer.studioName = studio?.name || "";
+    });
+  }
+
+  function getPerformerHighlightsForProfile(stats, profile) {
+    const highlights = Array.isArray(stats?.performerHighlights) ? stats.performerHighlights : [];
+    if (profile === "rich") return highlights.slice(0, 6);
+    const keys = new Set(["mostScenes", "highestRating", "mostOCount"]);
+    return highlights.filter((performer) => keys.has(performer.metricKey)).slice(0, 3);
+  }
+
+  async function hydratePerformerGlobalStats(performers) {
+    const unique = Array.from(new Map((performers || []).map((performer) => [performer.id, performer])).values());
+    await Promise.all(unique.map(async (performer) => {
+      try {
+        const data = await gql(
+          `
+            query StudioDashboardPerformerGlobalStats($sceneFilter: SceneFilterType) {
+              findScenes(scene_filter: $sceneFilter, filter: { per_page: -1 }) {
+                count
+                scenes {
+                  rating100
+                  o_counter
+                }
+              }
+            }
+          `,
+          {
+            sceneFilter: {
+              performers: {
+                value: [String(performer.id)],
+                modifier: "INCLUDES_ALL",
+              },
+            },
+          }
+        );
+        const scenes = data?.findScenes?.scenes || [];
+        const globalStats = {
+          allSceneCount: Number(data?.findScenes?.count || scenes.length || 0),
+          allOCount: scenes.reduce((total, scene) => total + Number(scene?.o_counter || 0), 0),
+          allTopRating: scenes.reduce((top, scene) => Math.max(top, Number(scene?.rating100 || 0)), 0),
+        };
+        performers
+          .filter((item) => item.id === performer.id)
+          .forEach((item) => Object.assign(item, globalStats));
+      } catch (err) {
+        console.warn("[StudioDashboard] Performer global stats failed", performer.id, err);
+      }
+    }));
+  }
+
+  function addMonths(year, month, amount) {
+    const date = new Date(Date.UTC(year, month - 1 + amount, 1));
+    return {
+      year: date.getUTCFullYear(),
+      month: date.getUTCMonth() + 1,
+    };
+  }
+
+  function formatMonthLabel(year, month) {
+    return `${year}-${String(month).padStart(2, "0")}`;
+  }
+
+  function formatDateLabel(year, month = 1, day = 1) {
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  function lastDayOfMonth(year, month) {
+    return new Date(Date.UTC(year, month, 0)).getUTCDate();
+  }
+
+  function buildReleaseTimeline(scenes) {
+    const monthCounts = new Map();
+    const yearCounts = new Map();
+    scenes.forEach((scene) => {
+      const date = String(scene?.date || "").trim();
+      const match = date.match(/^(\d{4})-(\d{2})/);
+      if (!match) return;
+      const year = match[1];
+      const month = `${match[1]}-${match[2]}`;
+      monthCounts.set(month, (monthCounts.get(month) || 0) + 1);
+      yearCounts.set(year, (yearCounts.get(year) || 0) + 1);
+    });
+
+    const yearKeys = Array.from(yearCounts.keys()).sort((left, right) => left.localeCompare(right));
+    const years = [];
+    if (yearKeys.length) {
+      for (let year = Number(yearKeys[0]); year <= Number(yearKeys[yearKeys.length - 1]); year += 1) {
+        const label = String(year);
+        years.push({ label, count: yearCounts.get(label) || 0 });
+      }
+    }
+
+    const monthKeys = Array.from(monthCounts.keys()).sort((left, right) => left.localeCompare(right));
+    const months = [];
+    if (monthKeys.length) {
+      let [year, month] = monthKeys[0].split("-").map(Number);
+      const [endYear, endMonth] = monthKeys[monthKeys.length - 1].split("-").map(Number);
+      while (year < endYear || (year === endYear && month <= endMonth)) {
+        const label = `${year}-${String(month).padStart(2, "0")}`;
+        months.push({ label, count: monthCounts.get(label) || 0 });
+        month += 1;
+        if (month > 12) {
+          month = 1;
+          year += 1;
+        }
+      }
+    }
+
+    return {
+      years,
+      months,
+      startMonth: monthKeys[0] || "",
+      endMonth: monthKeys[monthKeys.length - 1] || "",
+      maxYear: Math.max(1, ...years.map((item) => item.count)),
+      maxMonth: Math.max(1, ...months.map((item) => item.count)),
+    };
+  }
+
+  function getProfileLimits(profile) {
+    if (profile === "rich") {
+      return {
+        performers: 6,
+        tags: 10,
+        scenes: 5,
+        showTimeline: true,
+      };
+    }
+    return {
+      performers: 3,
+      tags: 5,
+      scenes: 3,
+      showTimeline: false,
+    };
+  }
+
+  function getTimelineItems(timeline) {
+    if (!timeline?.months?.length || !timeline.startMonth || !timeline.endMonth) return [];
+    const [startYear, startMonth] = timeline.startMonth.split("-").map(Number);
+    const [endYear, endMonth] = timeline.endMonth.split("-").map(Number);
+    const totalMonths = (endYear - startYear) * 12 + (endMonth - startMonth) + 1;
+    const bucketSize = totalMonths <= 36 ? 1 : totalMonths <= 96 ? 3 : 12;
+    const monthCounts = new Map(timeline.months.map((item) => [item.label, item.count]));
+    const buckets = [];
+
+    for (let offset = 0; offset < totalMonths; offset += bucketSize) {
+      const start = addMonths(startYear, startMonth, offset);
+      const remaining = totalMonths - offset;
+      const monthsInBucket = Math.min(bucketSize, remaining);
+      const end = addMonths(start.year, start.month, monthsInBucket - 1);
+      let count = 0;
+      for (let inner = 0; inner < monthsInBucket; inner += 1) {
+        const current = addMonths(start.year, start.month, inner);
+        count += monthCounts.get(formatMonthLabel(current.year, current.month)) || 0;
+      }
+
+      const label = monthsInBucket === 1
+        ? MONTH_ABBREVIATIONS[start.month - 1]
+        : bucketSize === 3
+          ? `Q${Math.floor((start.month - 1) / 3) + 1}`
+          : String(start.year);
+      buckets.push({
+        label,
+        year: String(start.year),
+        count,
+        startDate: formatDateLabel(start.year, start.month, 1),
+        endDate: formatDateLabel(end.year, end.month, lastDayOfMonth(end.year, end.month)),
+      });
+    }
+
+    const max = Math.max(1, ...buckets.map((item) => item.count));
+    return buckets.map((item) => ({ ...item, max }));
+  }
+
+  function getTimelineYearGroups(items) {
+    const groups = [];
+    items.forEach((item) => {
+      const last = groups[groups.length - 1];
+      if (last && last.year === item.year) {
+        last.span += 1;
+      } else {
+        groups.push({ year: item.year, span: 1 });
+      }
+    });
+    return groups;
+  }
+
+  async function buildPerformerDemographics(performers, scenes) {
+    const countryGroups = new Map();
+    (performers || []).forEach((performer) => {
+      const key = normalizeCountryKey(performer?.country);
+      const group = countryGroups.get(key) || {
+        key,
+        raw: String(performer?.country || ""),
+        performerIds: [],
+        performers: [],
+        count: 0,
+      };
+      group.count += 1;
+      group.performerIds.push(String(performer?.id || ""));
+      group.performers.push(normalizeDemographicPerformer(performer));
+      countryGroups.set(key, group);
+    });
+
+    const ageBuckets = getAgeBuckets();
+    const ageCounts = new Map(ageBuckets.map((bucket) => [bucket.label, 0]));
+    const agePerformers = new Map(ageBuckets.map((bucket) => [bucket.label, new Map()]));
+    let otherAgeCount = 0;
+    const otherAgePerformers = new Map();
+    let unknownAgeCount = 0;
+    const unknownAgePerformers = new Map();
+    (scenes || []).forEach((scene) => {
+      const sceneDate = String(scene?.date || "");
+      (scene?.performers || []).forEach((performer) => {
+        const age = calculateAgeAtDate(performer?.birthdate, sceneDate);
+        if (age == null) {
+          unknownAgeCount += 1;
+          const id = String(performer?.id || "");
+          if (id) unknownAgePerformers.set(id, normalizeDemographicPerformer(performer));
+          return;
+        }
+        const bucket = ageBuckets.find((item) => ageMatchesBucket(age, item));
+        if (bucket) {
+          ageCounts.set(bucket.label, (ageCounts.get(bucket.label) || 0) + 1);
+          addDemographicPerformer(agePerformers.get(bucket.label), performer);
+        } else {
+          otherAgeCount += 1;
+          const id = String(performer?.id || "");
+          if (id) otherAgePerformers.set(id, normalizeDemographicPerformer(performer));
+        }
+      });
+    });
+    const knownAgeTotal = Array.from(ageCounts.values()).reduce((total, count) => total + count, 0) + otherAgeCount;
+    const ratingDistribution = buildRatingDistribution(performers, {
+      getRating: (performer) => Number(performer?.performerRating || 0),
+      getEntity: normalizeDemographicPerformer,
+      entityKey: "performers",
+    });
+    const customDistributions = await buildCustomPerformerPieDistributions(performers);
+
+    return {
+      countries: buildCountryDistributionItems(countryGroups, Infinity, Math.max(0, performers?.length || 0)),
+      ages: buildAgeDistributionItems(
+        ageBuckets,
+        ageCounts,
+        agePerformers,
+        knownAgeTotal + unknownAgeCount,
+        otherAgeCount,
+        otherAgePerformers,
+        unknownAgeCount,
+        unknownAgePerformers
+      ),
+      ratings: ratingDistribution.items,
+      customPies: customDistributions,
+      ageUnknown: unknownAgeCount,
+      countryTotal: Math.max(0, performers?.length || 0),
+      ageTotal: knownAgeTotal + unknownAgeCount,
+      ratingTotal: ratingDistribution.total,
+    };
+  }
+
+  function buildCountryDistributionItems(groups, limit = Infinity, totalOverride = null) {
+    const entries = Array.from(groups.values())
+      .filter((group) => Number(group.count || 0) > 0)
+      .sort((left, right) => {
+        if (right.count !== left.count) return right.count - left.count;
+        return getCountryDisplayName(left.key).localeCompare(getCountryDisplayName(right.key));
+      })
+      .slice(0, limit);
+    const total = Number(totalOverride || 0) || entries.reduce((sum, group) => sum + Number(group.count || 0), 0);
+    return entries.map((group) => ({
+      key: group.key,
+      label: formatCountryLabel(group.key),
+      filterLabel: getCountryDisplayName(group.key),
+      countryValue: group.key,
+      countryValues: group.key === "Unknown" ? [] : [group.key],
+      count: Number(group.count || 0),
+      percent: formatPercent(Number(group.count || 0), total),
+      performerIds: uniqueValues(group.performerIds).filter(Boolean),
+      performers: group.performers || [],
+      filterable: group.key !== "Unknown" || uniqueValues(group.performerIds).filter(Boolean).length > 0,
+    }));
+  }
+
+  function buildAgeDistributionItems(
+    buckets,
+    counts,
+    performerGroups = new Map(),
+    totalOverride = null,
+    otherCount = 0,
+    otherPerformers = new Map(),
+    unknownCount = 0,
+    unknownPerformers = new Map()
+  ) {
+    const entries = buckets.map((bucket) => [bucket, Number(counts.get(bucket.label) || 0)])
+      .filter(([, count]) => count > 0);
+    const total = Number(totalOverride || 0) || entries.reduce((sum, [, count]) => sum + count, 0);
+    const items = entries.map(([bucket, count]) => ({
+      ...bucket,
+      count,
+      percent: formatPercent(count, total),
+      performers: Array.from(performerGroups.get(bucket.label)?.values() || []),
+      performerIds: Array.from(performerGroups.get(bucket.label)?.keys() || []),
+    }));
+    if (otherCount > 0) {
+      items.push({
+        label: "Other",
+        count: Number(otherCount || 0),
+        percent: formatPercent(Number(otherCount || 0), total),
+        otherAge: true,
+        performers: Array.from(otherPerformers.values()),
+        performerIds: Array.from(otherPerformers.keys()),
+      });
+    }
+    if (unknownCount > 0) {
+      items.push({
+        label: "Unknown",
+        count: Number(unknownCount || 0),
+        percent: formatPercent(Number(unknownCount || 0), total),
+        unknownAge: true,
+        performers: Array.from(unknownPerformers.values()),
+        performerIds: Array.from(unknownPerformers.keys()),
+      });
+    }
+    return items;
+  }
+
+  function buildRatingDistribution(items, options = {}) {
+    const buckets = options.buckets || getRatingBuckets();
+    const counts = new Map(buckets.map((bucket) => [bucket.label, 0]));
+    const entityGroups = new Map(buckets.map((bucket) => [bucket.label, []]));
+    const otherEntities = [];
+    const unknownEntities = [];
+    (items || []).forEach((item) => {
+      const rating100 = Number(options.getRating ? options.getRating(item) : item?.rating100 || 0);
+      if (!Number.isFinite(rating100) || rating100 <= 0) {
+        unknownEntities.push(options.getEntity ? options.getEntity(item) : item);
+        return;
+      }
+      const rating = rating100 / 10;
+      const bucket = buckets.find((candidate) => ratingMatchesBucket(rating, candidate));
+      if (bucket) {
+        counts.set(bucket.label, (counts.get(bucket.label) || 0) + 1);
+        entityGroups.get(bucket.label)?.push(options.getEntity ? options.getEntity(item) : item);
+      } else {
+        otherEntities.push(options.getEntity ? options.getEntity(item) : item);
+      }
+    });
+    const knownTotal = Array.from(counts.values()).reduce((total, count) => total + count, 0) + otherEntities.length;
+    const total = knownTotal + unknownEntities.length;
+    const itemsOut = buckets
+      .map((bucket) => {
+        const count = Number(counts.get(bucket.label) || 0);
+        return {
+          ...bucket,
+          count,
+          percent: formatPercent(count, total),
+          [options.entityKey || "entities"]: (entityGroups.get(bucket.label) || []).filter(Boolean),
+        };
+      })
+      .filter((item) => item.count > 0);
+    if (otherEntities.length) {
+      itemsOut.push({
+        label: "Other",
+        count: otherEntities.length,
+        percent: formatPercent(otherEntities.length, total),
+        otherRating: true,
+        filterable: options.entityKey !== "scenes",
+        [options.entityKey || "entities"]: otherEntities.filter(Boolean),
+      });
+    }
+    if (unknownEntities.length) {
+      itemsOut.push({
+        label: "Unknown",
+        count: unknownEntities.length,
+        percent: formatPercent(unknownEntities.length, total),
+        unknownRating: true,
+        [options.entityKey || "entities"]: unknownEntities.filter(Boolean),
+      });
+    }
+    return { total, items: itemsOut };
+  }
+
+  function buildMetricDistribution(items, buckets, options = {}) {
+    const counts = new Map(buckets.map((bucket) => [bucket.label, 0]));
+    const entityGroups = new Map(buckets.map((bucket) => [bucket.label, []]));
+    const otherEntities = [];
+    const unknownEntities = [];
+    (items || []).forEach((item) => {
+      const metric = Number(options.getMetric ? options.getMetric(item) : NaN);
+      const entity = options.getEntity ? options.getEntity(item) : item;
+      if (!Number.isFinite(metric) || metric <= 0) {
+        unknownEntities.push(entity);
+        return;
+      }
+      const bucket = buckets.find((candidate) => metricMatchesBucket(metric, candidate));
+      if (bucket) {
+        counts.set(bucket.label, (counts.get(bucket.label) || 0) + 1);
+        entityGroups.get(bucket.label)?.push(entity);
+      } else {
+        otherEntities.push(entity);
+      }
+    });
+    const knownTotal = Array.from(counts.values()).reduce((total, count) => total + count, 0) + otherEntities.length;
+    const total = knownTotal + unknownEntities.length;
+    const entityKey = options.entityKey || "entities";
+    const itemsOut = buckets
+      .map((bucket) => {
+        const count = Number(counts.get(bucket.label) || 0);
+        return {
+          ...bucket,
+          count,
+          percent: formatPercent(count, total),
+          filterable: options.metricType !== "resolution" || Boolean(bucket.enumValue),
+          metricType: options.metricType || "",
+          [entityKey]: (entityGroups.get(bucket.label) || []).filter(Boolean),
+        };
+      })
+      .filter((item) => item.count > 0);
+    if (otherEntities.length) {
+      itemsOut.push({
+        label: "Other",
+        count: otherEntities.length,
+        percent: formatPercent(otherEntities.length, total),
+        filterable: false,
+        metricType: options.metricType || "",
+        metricOther: true,
+        [entityKey]: otherEntities.filter(Boolean),
+      });
+    }
+    if (unknownEntities.length) {
+      itemsOut.push({
+        label: "Unknown",
+        count: unknownEntities.length,
+        percent: formatPercent(unknownEntities.length, total),
+        filterable: false,
+        metricType: options.metricType || "",
+        metricUnknown: true,
+        [entityKey]: unknownEntities.filter(Boolean),
+      });
+    }
+    return { total, items: itemsOut };
+  }
+
+  async function buildCustomPerformerPieDistributions(performers) {
+    const charts = [];
+    for (let index = 1; index <= 3; index += 1) {
+      const tagRef = getPerformerPieChartTagRef(index);
+      if (!tagRef) continue;
+      const distribution = await buildCustomTagPieDistribution(performers, tagRef);
+      const hasItems = distribution.items.length || distribution.subcharts?.some((subchart) => subchart.items?.length);
+      if (!hasItems) continue;
+      charts.push({
+        ...distribution,
+        title: getPerformerPieChartLabel(index),
+      });
+    }
+    return charts;
+  }
+
+  async function buildCustomScenePieDistributions(scenes) {
+    const charts = [];
+    for (let index = 1; index <= 3; index += 1) {
+      const tagRef = getScenePieChartTagRef(index);
+      if (!tagRef) continue;
+      const distribution = await buildCustomSceneTagPieDistribution(scenes, tagRef);
+      const hasItems = distribution.items.length || distribution.subcharts?.some((subchart) => subchart.items?.length);
+      if (!hasItems) continue;
+      charts.push({
+        ...distribution,
+        title: getScenePieChartLabel(index),
+      });
+    }
+    return charts;
+  }
+
+  async function buildCustomTagPieDistribution(performers, tagRef) {
+    try {
+      const allTags = await fetchAllTags();
+      const customGroups = parseCustomPieGroups(tagRef).slice(0, 4);
+      if (customGroups.length > 1) {
+        const subcharts = customGroups
+          .map((group, index) => buildCustomTagPieSubchart(performers, allTags, group, index + 1))
+          .filter((subchart) => subchart.items.length);
+        return {
+          total: Math.max(0, performers?.length || 0),
+          items: [],
+          subcharts,
+        };
+      }
+      const subchart = buildCustomTagPieSubchart(performers, allTags, customGroups[0] || tagRef, 1);
+      return {
+        total: subchart.total,
+        items: subchart.items,
+      };
+    } catch (err) {
+      console.warn("[StudioDashboard] Custom tag pie failed", err);
+      return { total: 0, items: [] };
+    }
+  }
+
+  function buildCustomTagPieSubchart(performers, allTags, tagRef, index) {
+    const group = normalizeCustomPieGroup(tagRef, index);
+    const selectedTags = resolveCustomPieSliceTags(allTags, group.value);
+    const sliceTags = selectedTags.sort((left, right) => left.name.localeCompare(right.name));
+    if (!sliceTags.length) return { title: `Group ${index}`, total: 0, items: [] };
+    const groups = new Map(sliceTags.map((tag) => [tag.id, {
+      key: tag.id,
+      label: tag.name,
+      filterLabel: tag.name,
+      count: 0,
+      performers: new Map(),
+      performerIds: [],
+      tag,
+    }]));
+    const unknownPerformers = new Map();
+    (performers || []).forEach((performer) => {
+      const performerTags = performer?.tags || [];
+      const matchingTags = sliceTags.filter((tag) => performerTags.some((performerTag) => String(performerTag?.id || "") === tag.id));
+      if (!matchingTags.length) {
+        addDemographicPerformer(unknownPerformers, performer);
+        return;
+      }
+      matchingTags.forEach((tag) => {
+        const group = groups.get(tag.id);
+        if (!group) return;
+        group.count += 1;
+        addDemographicPerformer(group.performers, performer);
+        if (performer?.id) group.performerIds.push(String(performer.id));
+      });
+    });
+    const total = Math.max(0, performers?.length || 0);
+    const items = Array.from(groups.values())
+      .filter((group) => group.count > 0)
+      .sort((left, right) => left.label.localeCompare(right.label))
+      .map((group) => ({
+        key: group.key,
+        label: group.label,
+        filterLabel: group.filterLabel,
+        count: group.count,
+        percent: formatPercent(group.count, total),
+        performers: Array.from(group.performers.values()),
+        performerIds: uniqueValues(group.performerIds),
+        customTag: group.tag,
+      }));
+    if (unknownPerformers.size > 0) {
+      items.push({
+        key: "Unknown",
+        label: "Unknown",
+        filterLabel: "Unknown",
+        count: unknownPerformers.size,
+        percent: formatPercent(unknownPerformers.size, total),
+        performers: Array.from(unknownPerformers.values()),
+        performerIds: Array.from(unknownPerformers.keys()),
+        customTagUnknown: true,
+      });
+    }
+    return {
+      title: group.title || getCustomPieGroupTitle(allTags, group.value, index),
+      total,
+      items,
+    };
+  }
+
+  async function buildCustomSceneTagPieDistribution(scenes, tagRef) {
+    try {
+      const allTags = await fetchAllTags();
+      const customGroups = parseCustomPieGroups(tagRef).slice(0, 4);
+      if (customGroups.length > 1) {
+        const subcharts = customGroups
+          .map((group, index) => buildCustomSceneTagPieSubchart(scenes, allTags, group, index + 1))
+          .filter((subchart) => subchart.items.length);
+        return {
+          total: Math.max(0, scenes?.length || 0),
+          items: [],
+          subcharts,
+        };
+      }
+      const subchart = buildCustomSceneTagPieSubchart(scenes, allTags, customGroups[0] || tagRef, 1);
+      return {
+        total: subchart.total,
+        items: subchart.items,
+      };
+    } catch (err) {
+      console.warn("[StudioDashboard] Custom scene tag pie failed", err);
+      return { total: 0, items: [] };
+    }
+  }
+
+  function buildCustomSceneTagPieSubchart(scenes, allTags, tagRef, index) {
+    const group = normalizeCustomPieGroup(tagRef, index);
+    const selectedTags = resolveCustomPieSliceTags(allTags, group.value);
+    const sliceTags = selectedTags.sort((left, right) => left.name.localeCompare(right.name));
+    if (!sliceTags.length) return { title: `Group ${index}`, total: 0, items: [] };
+    const groups = new Map(sliceTags.map((tag) => [tag.id, {
+      key: tag.id,
+      label: tag.name,
+      filterLabel: tag.name,
+      count: 0,
+      sceneIds: [],
+      tag,
+    }]));
+    let unknownSceneCount = 0;
+    (scenes || []).forEach((scene) => {
+      const sceneTags = scene?.tags || [];
+      const matchingTags = sliceTags.filter((tag) => sceneTags.some((sceneTag) => String(sceneTag?.id || "") === tag.id));
+      if (!matchingTags.length) {
+        unknownSceneCount += 1;
+        return;
+      }
+      matchingTags.forEach((tag) => {
+        const group = groups.get(tag.id);
+        if (!group) return;
+        group.count += 1;
+        if (scene?.id) group.sceneIds.push(String(scene.id));
+      });
+    });
+    const total = Math.max(0, scenes?.length || 0);
+    const items = Array.from(groups.values())
+      .filter((group) => group.count > 0)
+      .sort((left, right) => left.label.localeCompare(right.label))
+      .map((group) => ({
+        key: group.key,
+        label: group.label,
+        filterLabel: group.filterLabel,
+        count: group.count,
+        percent: formatPercent(group.count, total),
+        sceneIds: uniqueValues(group.sceneIds),
+        customTag: group.tag,
+      }));
+    if (unknownSceneCount > 0) {
+      items.push({
+        key: "Unknown",
+        label: "Unknown",
+        filterLabel: "Unknown",
+        count: unknownSceneCount,
+        percent: formatPercent(unknownSceneCount, total),
+        customExcludeTags: sliceTags,
+        customTagUnknown: true,
+        filterable: true,
+      });
+    }
+    return {
+      title: group.title || getCustomPieGroupTitle(allTags, group.value, index),
+      total,
+      items,
+    };
+  }
+
+  function parseCustomPieGroups(value) {
+    const text = String(value || "").trim();
+    const groups = Array.from(text.matchAll(/([^(),]*)\(([^()]+)\)/g))
+      .map((match) => {
+        const label = String(match[1] || "").trim().replace(/^,+|,+$/g, "").trim();
+        const group = String(match[2] || "").trim();
+        return group ? { title: label, value: group } : null;
+      })
+      .filter(Boolean);
+    return groups.length ? groups : [text].filter(Boolean);
+  }
+
+  function normalizeCustomPieGroup(group, index) {
+    if (typeof group === "string") return { title: "", value: group, index };
+    return {
+      title: String(group?.title || "").trim(),
+      value: String(group?.value || "").trim(),
+      index,
+    };
+  }
+
+  function resolveCustomPieSliceTags(allTags, tagRef) {
+    const refs = parseList(tagRef);
+    if (refs.length > 1) {
+      return refs
+        .map((ref) => allTags.find((tag) => isTagRefMatch(tag, ref)))
+        .filter(Boolean)
+        .filter((tag, index, tags) => tags.findIndex((item) => item.id === tag.id) === index);
+    }
+    return getCustomPieChildTags(allTags, tagRef);
+  }
+
+  function getCustomPieGroupTitle(allTags, tagRef, index) {
+    const refs = parseList(tagRef);
+    if (refs.length === 1) {
+      const parent = allTags.find((tag) => isTagRefMatch(tag, tagRef));
+      if (parent) return parent.name;
+    }
+    return `Group ${index}`;
+  }
+
+  function getCustomPieChildTags(allTags, tagRef) {
+    const parent = allTags.find((tag) => isTagRefMatch(tag, tagRef));
+    if (!parent) return [];
+    return (parent.childIds || [])
+      .map((id) => allTags.find((tag) => tag.id === id))
+      .filter(Boolean);
+  }
+
+  function addDemographicPerformer(map, performer) {
+    if (!(map instanceof Map)) return;
+    const normalized = normalizeDemographicPerformer(performer);
+    if (!normalized.id) return;
+    const existing = map.get(normalized.id);
+    if (!existing || normalized.performerRating > Number(existing.performerRating || 0)) {
+      map.set(normalized.id, normalized);
+    }
+  }
+
+  function normalizeDemographicPerformer(performer) {
+    return {
+      id: String(performer?.id || ""),
+      name: String(performer?.name || "Performer"),
+      imagePath: String(performer?.imagePath || performer?.image_path || ""),
+      performerRating: Number(performer?.performerRating || performer?.rating100 || 0),
+    };
+  }
+
+  function mergePerformerTags(existingTags = [], nextTags = []) {
+    const map = new Map();
+    [...existingTags, ...nextTags].forEach((tag) => {
+      const id = String(tag?.id || "");
+      if (!id || map.has(id)) return;
+      map.set(id, {
+        id,
+        name: String(tag?.name || "Tag"),
+        imagePath: String(tag?.imagePath || tag?.image_path || ""),
+      });
+    });
+    return Array.from(map.values());
+  }
+
+  function formatPercent(count, total) {
+    const numericTotal = Number(total || 0);
+    if (!numericTotal) return "";
+    const value = (Number(count || 0) / numericTotal) * 100;
+    if (value > 0 && value < 0.1) return value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+    if (value > 0 && value < 1) return value.toFixed(1);
+    if (value < 10 && !Number.isInteger(value)) return value.toFixed(1);
+    return String(Math.round(value));
+  }
+
+  function normalizeCountryKey(country) {
+    const value = String(country || "").trim();
+    if (!value) return "Unknown";
+    if (/^[a-z]{2,3}$/i.test(value)) return value.toUpperCase();
+    return value
+      .split(/\s+/)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(" ");
+  }
+
+  function getCountryDisplayName(countryKey) {
+    const key = String(countryKey || "").trim();
+    if (!key || key === "Unknown") return "Unknown";
+    return COUNTRY_NAMES[key.toUpperCase()] || key;
+  }
+
+  function formatCountryLabel(countryKey) {
+    const key = String(countryKey || "").trim();
+    const flag = getCountryFlag(key);
+    const name = getCountryDisplayName(key);
+    return `${flag ? `${flag} ` : ""}${name}`;
+  }
+
+  function getCountryFlag(countryKey) {
+    const key = String(countryKey || "").trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(key)) return "";
+    return String.fromCodePoint(...Array.from(key).map((char) => 127397 + char.charCodeAt(0)));
+  }
+
+  function parseAgeBuckets(value) {
+    return String(value || "")
+      .split(",")
+      .map((item) => parseAgeBucket(item.trim()))
+      .filter(Boolean);
+  }
+
+  function parseRatingBuckets(value) {
+    return String(value || "")
+      .split(",")
+      .map((item) => parseRatingBucket(item.trim()))
+      .filter(Boolean);
+  }
+
+  function parseMetricBuckets(value, options = {}) {
+    return String(value || "")
+      .split(",")
+      .map((item) => parseMetricBucket(item.trim(), options))
+      .filter(Boolean);
+  }
+
+  function parseMetricBucket(value, options = {}) {
+    if (!value) return null;
+    const unit = String(options.unit || "").trim();
+    const normalized = value.replace(/\s+/g, "").toLowerCase().replace(/minutes?|mins?/g, "m");
+    if (unit === "p") {
+      const nativeResolution = RESOLUTION_BUCKETS.find((bucket) => {
+        return normalized === bucket.label.toLowerCase() ||
+          normalized === bucket.enumValue.toLowerCase() ||
+          normalized === bucket.label.toLowerCase().replace("k", "k");
+      });
+      if (nativeResolution) return { ...nativeResolution };
+    }
+    let match = normalized.match(/^<(\d+(?:\.\d+)?)(?:[pmk])?$/);
+    if (match) {
+      const max = normalizeMetricValue(match[1], normalized, unit);
+      return { label: `<${formatBucketNumber(max)}${unit}`, min: null, max };
+    }
+    match = normalized.match(/^<=?(\d+(?:\.\d+)?)(?:[pmk])?$/);
+    if (match) {
+      const max = normalizeMetricValue(match[1], normalized, unit);
+      return { label: `<=${formatBucketNumber(max)}${unit}`, min: null, max };
+    }
+    match = normalized.match(/^(\d+(?:\.\d+)?)(?:[pmk])?-(\d+(?:\.\d+)?)(?:[pmk])?$/);
+    if (match) {
+      const min = normalizeMetricValue(match[1], normalized, unit);
+      const max = normalizeMetricValue(match[2], normalized, unit);
+      if (min < max) return { label: `${formatBucketNumber(min)}-${formatBucketNumber(max)}${unit}`, min, max };
+    }
+    match = normalized.match(/^(\d+(?:\.\d+)?)(?:[pmk])?\+$/);
+    if (match) {
+      const min = normalizeMetricValue(match[1], normalized, unit);
+      return { label: `${formatBucketNumber(min)}${unit}+`, min, max: null };
+    }
+    match = normalized.match(/^>=?(\d+(?:\.\d+)?)(?:[pmk])?$/);
+    if (match) {
+      const min = normalizeMetricValue(match[1], normalized, unit);
+      return { label: `${formatBucketNumber(min)}${unit}+`, min, max: null };
+    }
+    match = normalized.match(/^(\d+(?:\.\d+)?)(?:[pmk])?$/);
+    if (match) {
+      const exact = normalizeMetricValue(match[1], normalized, unit);
+      return { label: `${formatBucketNumber(exact)}${unit}`, min: exact, max: exact, exact: true };
+    }
+    return null;
+  }
+
+  function normalizeMetricValue(value, source, unit) {
+    const numeric = Number(value);
+    if (unit === "p" && /k/.test(source)) return numeric * 540;
+    return numeric;
+  }
+
+  function getResolutionEnumForHeight(height) {
+    const value = Number(height);
+    if (!Number.isFinite(value) || value <= 0) return "";
+    const bucket = RESOLUTION_BUCKETS.find((item) => item.max == null || value <= item.max);
+    return bucket?.enumValue || "";
+  }
+
+  function parseRatingBucket(value) {
+    if (!value) return null;
+    const normalized = value.replace(/\s+/g, "");
+    let match = normalized.match(/^(\d{1,2}(?:\.\d+)?)-(\d{1,2}(?:\.\d+)?)$/);
+    if (match) {
+      const min = Number(match[1]);
+      const max = Number(match[2]);
+      if (min <= max) return { label: `${formatBucketNumber(min)}-${formatBucketNumber(max)}`, min, max, modifier: "BETWEEN" };
+    }
+    match = normalized.match(/^(\d{1,2}(?:\.\d+)?)\+$/);
+    if (match) return { label: `${formatBucketNumber(Number(match[1]))}+`, min: Number(match[1]), max: null, modifier: "GREATER_THAN" };
+    match = normalized.match(/^>=?(\d{1,2}(?:\.\d+)?)$/);
+    if (match) return { label: `${formatBucketNumber(Number(match[1]))}+`, min: Number(match[1]), max: null, modifier: "GREATER_THAN" };
+    match = normalized.match(/^<=?(\d{1,2}(?:\.\d+)?)$/);
+    if (match) return { label: `<=${formatBucketNumber(Number(match[1]))}`, min: null, max: Number(match[1]), modifier: "LESS_THAN" };
+    match = normalized.match(/^=?(\d{1,2}(?:\.\d+)?)$/);
+    if (match) {
+      const exact = Number(match[1]);
+      return { label: formatBucketNumber(exact), min: exact, max: exact, modifier: "EQUALS" };
+    }
+    return null;
+  }
+
+  function formatBucketNumber(value) {
+    return String(Number(value));
+  }
+
+  function parseAgeBucket(value) {
+    if (!value) return null;
+    const normalized = value.replace(/\s+/g, "");
+    let match = normalized.match(/^(\d{1,3})-(\d{1,3})$/);
+    if (match) {
+      const min = Number(match[1]);
+      const max = Number(match[2]);
+      if (min <= max) return { label: `${min}-${max}`, min, max, modifier: "BETWEEN" };
+    }
+    match = normalized.match(/^(\d{1,3})\+$/);
+    if (match) return { label: `${Number(match[1])}+`, min: Number(match[1]), max: null, modifier: "GREATER_THAN" };
+    match = normalized.match(/^>=?(\d{1,3})$/);
+    if (match) return { label: `${Number(match[1])}+`, min: Number(match[1]), max: null, modifier: "GREATER_THAN" };
+    match = normalized.match(/^<=?(\d{1,3})$/);
+    if (match) return { label: `<=${Number(match[1])}`, min: null, max: Number(match[1]), modifier: "LESS_THAN" };
+    match = normalized.match(/^=(\d{1,3})$/);
+    if (match) return { label: `${Number(match[1])}`, min: Number(match[1]), max: Number(match[1]), modifier: "EQUALS" };
+    return null;
+  }
+
+  function ageMatchesBucket(age, bucket) {
+    const value = Number(age);
+    if (!Number.isFinite(value)) return false;
+    if (bucket.min != null && value < bucket.min) return false;
+    if (bucket.max != null && value > bucket.max) return false;
+    return true;
+  }
+
+  function ratingMatchesBucket(rating, bucket) {
+    const value = Number(rating);
+    if (!Number.isFinite(value)) return false;
+    if (bucket.min != null && value < bucket.min) return false;
+    if (bucket.max != null && value > bucket.max) return false;
+    return true;
+  }
+
+  function metricMatchesBucket(metric, bucket) {
+    const value = Number(metric);
+    if (!Number.isFinite(value)) return false;
+    if (bucket.exact) return value === Number(bucket.min);
+    if (bucket.min != null && value < bucket.min) return false;
+    if (bucket.max != null && value >= bucket.max) return false;
+    return true;
+  }
+
+  function uniqueValues(values) {
+    return Array.from(new Set((values || []).filter(Boolean)));
+  }
+
+  function calculateAgeAtDate(birthdate, date) {
+    const birth = parseDateValue(birthdate);
+    const sceneDate = parseDateValue(date);
+    if (!birth || !sceneDate || sceneDate < birth) return null;
+    let age = sceneDate.getUTCFullYear() - birth.getUTCFullYear();
+    const monthDiff = sceneDate.getUTCMonth() - birth.getUTCMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && sceneDate.getUTCDate() < birth.getUTCDate())) age -= 1;
+    return age >= 18 && age <= 120 ? age : null;
+  }
+
+  function getSceneResolutionHeight(scene) {
+    const heights = (scene?.files || [])
+      .map((file) => Number(file?.height || 0))
+      .filter((height) => Number.isFinite(height) && height > 0);
+    return heights.length ? Math.max(...heights) : 0;
+  }
+
+  function getSceneDurationMinutes(scene) {
+    const fileDurations = (scene?.files || [])
+      .map((file) => Number(file?.duration || 0))
+      .filter((duration) => Number.isFinite(duration) && duration > 0);
+    if (fileDurations.length) {
+      return fileDurations.reduce((total, duration) => total + duration, 0) / 60;
+    }
+    const duration = Number(scene?.duration || 0);
+    return Number.isFinite(duration) && duration > 0 ? duration / 60 : 0;
+  }
+
+  function buildResolutionDistribution(scenes) {
+    const buckets = getResolutionBuckets();
+    const usesNativeBuckets = buckets.every((bucket) => bucket.enumValue);
+    if (usesNativeBuckets) {
+      return buildResolutionEnumDistribution(scenes, buckets);
+    }
+    return buildMetricDistribution(scenes, buckets, {
+      getMetric: getSceneResolutionHeight,
+      getEntity: normalizeSceneSummary,
+      entityKey: "scenes",
+      metricType: "resolution",
+    });
+  }
+
+  function buildResolutionEnumDistribution(scenes, buckets) {
+    const counts = new Map(buckets.map((bucket) => [bucket.enumValue, 0]));
+    const sceneGroups = new Map(buckets.map((bucket) => [bucket.enumValue, []]));
+    const unknownScenes = [];
+    (scenes || []).forEach((scene) => {
+      const enumValue = getResolutionEnumForHeight(getSceneResolutionHeight(scene));
+      const summary = normalizeSceneSummary(scene);
+      if (!enumValue || !counts.has(enumValue)) {
+        unknownScenes.push(summary);
+        return;
+      }
+      counts.set(enumValue, (counts.get(enumValue) || 0) + 1);
+      if (summary) sceneGroups.get(enumValue)?.push(summary);
+    });
+    const knownTotal = Array.from(counts.values()).reduce((total, count) => total + count, 0);
+    const total = knownTotal + unknownScenes.filter(Boolean).length;
+    const items = buckets
+      .map((bucket) => {
+        const count = Number(counts.get(bucket.enumValue) || 0);
+        return {
+          ...bucket,
+          key: bucket.enumValue,
+          count,
+          percent: formatPercent(count, total),
+          filterable: true,
+          metricType: "resolution",
+          scenes: (sceneGroups.get(bucket.enumValue) || []).filter(Boolean),
+        };
+      })
+      .filter((item) => item.count > 0);
+    if (unknownScenes.filter(Boolean).length) {
+      items.push({
+        label: "Unknown",
+        key: "Unknown",
+        count: unknownScenes.filter(Boolean).length,
+        percent: formatPercent(unknownScenes.filter(Boolean).length, total),
+        metricType: "resolution",
+        metricUnknown: true,
+        filterable: false,
+        scenes: unknownScenes.filter(Boolean),
+      });
+    }
+    return { total, items };
+  }
+
+  function buildDurationDistribution(scenes) {
+    return buildMetricDistribution(scenes, getDurationBuckets(), {
+      getMetric: getSceneDurationMinutes,
+      getEntity: normalizeSceneSummary,
+      entityKey: "scenes",
+      metricType: "duration",
+    });
+  }
+
+  function parseDateValue(value) {
+    const text = String(value || "").trim();
+    if (!text) return null;
+    const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!match) return null;
+    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  async function fetchStudioStats(studio, options = {}) {
+    const studioId = String(studio?.id || "");
+    if (!studioId) return null;
+    if (state.statsCache.has(studioId)) return state.statsCache.get(studioId);
+    const onProgress = typeof options.onProgress === "function" ? options.onProgress : null;
+
+    const statsPromise = fetchStudioStatsUncached(studio, onProgress)
+      .then((stats) => {
+        state.statsCache.set(studioId, stats);
+        return stats;
+      })
+      .catch((err) => {
+        if (state.statsCache.get(studioId) === statsPromise) {
+          state.statsCache.delete(studioId);
+        }
+        throw err;
+      });
+    state.statsCache.set(studioId, statsPromise);
+    return statsPromise;
+  }
+
+  async function fetchStashStats(options = {}) {
+    const cacheKey = `global:${state.configKey || "default"}`;
+    if (state.statsCache.has(cacheKey)) return state.statsCache.get(cacheKey);
+    const statsPromise = fetchStashStatsByStudio(options.onProgress)
+      .then((stats) => {
+        state.statsCache.set(cacheKey, stats);
+        return stats;
+      })
+      .catch((err) => {
+        if (state.statsCache.get(cacheKey) === statsPromise) {
+          state.statsCache.delete(cacheKey);
+        }
+        throw err;
+      });
+    state.statsCache.set(cacheKey, statsPromise);
+    return statsPromise;
+  }
+
+  async function fetchAllStudiosForDashboard() {
+    const normalize = (studios) => (studios || [])
+      .map((studio) => ({
+        id: String(studio?.id || ""),
+        name: String(studio?.name || "Studio"),
+        imagePath: String(studio?.image_path || ""),
+      }))
+      .filter((studio) => studio.id);
+    const data = await gql(`
+      query StashDashboardStudios {
+        findStudios(filter: { per_page: -1, sort: "name", direction: ASC }) {
+          studios { id name image_path }
+        }
+      }
+    `);
+    const studios = normalize(data?.findStudios?.studios);
+    if (studios.length) return [
+      { id: NO_STUDIO_ID, name: "_NoStudio", imagePath: "", synthetic: true },
+      ...studios,
+    ];
+
+    const sceneData = await gql(`
+      query StashDashboardStudiosFromScenes {
+        findScenes(filter: { per_page: 1000, sort: "date", direction: DESC }) {
+          scenes {
+            studio { id name image_path }
+          }
+        }
+      }
+    `);
+    const map = new Map();
+    (sceneData?.findScenes?.scenes || []).forEach((scene) => {
+      const studio = scene?.studio;
+      if (studio?.id && !map.has(String(studio.id))) map.set(String(studio.id), studio);
+    });
+    return [
+      { id: NO_STUDIO_ID, name: "_NoStudio", imagePath: "", synthetic: true },
+      ...normalize(Array.from(map.values())).sort((left, right) => left.name.localeCompare(right.name)),
+    ];
+  }
+
+  function sceneStatsFields(includeFiles = true) {
+    return `
+      id
+      title
+      studio { id name }
+      date
+      updated_at
+      rating100
+      o_counter
+      performers { id name image_path rating100 country birthdate updated_at tags { id name image_path updated_at } }
+      tags { id name image_path updated_at }
+      paths { screenshot preview }
+      ${includeFiles ? "files { path width height duration }" : ""}
+    `;
+  }
+
+  async function fetchStatsCounts(studioId) {
+    const scopedStudioId = String(studioId || "");
+    const data = await gql(
+      `
+        query StashDashboardCounts(
+          $sceneFilter: SceneFilterType
+          $imageFilter: ImageFilterType
+          $galleryFilter: GalleryFilterType
+        ) {
+          findScenes(scene_filter: $sceneFilter, filter: { per_page: 1 }) { count }
+          findImages(image_filter: $imageFilter, filter: { per_page: 1 }) { count }
+          findGalleries(gallery_filter: $galleryFilter, filter: { per_page: 1 }) { count }
+        }
+      `,
+      {
+        sceneFilter: studioFilter(scopedStudioId),
+        imageFilter: studioFilter(scopedStudioId),
+        galleryFilter: studioFilter(scopedStudioId),
+      }
+    );
+    return {
+      scenes: Number(data?.findScenes?.count || 0),
+      images: Number(data?.findImages?.count || 0),
+      galleries: Number(data?.findGalleries?.count || 0),
+    };
+  }
+
+  async function fetchSceneStatsPage(studioId, page, perPage, includeFiles = true) {
+    const data = await gql(
+      `
+        query StashDashboardSceneStatsPage(
+          $sceneFilter: SceneFilterType
+          $page: Int!
+          $perPage: Int!
+        ) {
+          findScenes(scene_filter: $sceneFilter, filter: { page: $page, per_page: $perPage, sort: "date", direction: DESC }) {
+            scenes {
+              ${sceneStatsFields(includeFiles)}
+            }
+          }
+        }
+      `,
+      {
+        sceneFilter: studioFilter(studioId),
+        page,
+        perPage,
+      }
+    );
+    return data?.findScenes?.scenes || [];
+  }
+
+  async function fetchSceneStatsPageSafe(studioId, page, perPage, maxItems, onProgress) {
+    try {
+      const scenes = await fetchSceneStatsPage(studioId, page, perPage, true);
+      return { scenes: scenes.slice(0, maxItems), skipped: 0 };
+    } catch (err) {
+      console.warn("[StashDashboard] Scene page failed, trying single-scene fallback", { page, perPage, err });
+      if (onProgress) onProgress(`A scene page failed; isolating problem scenes on page ${page}...`);
+    }
+
+    const scenes = [];
+    let skipped = 0;
+    const startOffset = (page - 1) * perPage;
+    for (let index = 0; index < maxItems; index += 1) {
+      const singlePage = startOffset + index + 1;
+      try {
+        const full = await fetchSceneStatsPage(studioId, singlePage, 1, true);
+        if (full[0]) scenes.push(full[0]);
+      } catch (fullErr) {
+        try {
+          const minimal = await fetchSceneStatsPage(studioId, singlePage, 1, false);
+          if (minimal[0]) scenes.push(minimal[0]);
+        } catch (minimalErr) {
+          skipped += 1;
+          console.warn("[StashDashboard] Skipping scene that failed dashboard stats fetch", { offset: startOffset + index, fullErr, minimalErr });
+        }
+      }
+    }
+    return { scenes, skipped };
+  }
+
+  function getLatestSceneUpdatedAt(scenes) {
+    return (scenes || []).reduce((latest, scene) => {
+      const value = String(scene?.updated_at || scene?.updatedAt || "").trim();
+      return value && value > latest ? value : latest;
+    }, "");
+  }
+
+  function getLatestPerformerUpdatedAt(scenes) {
+    return (scenes || []).reduce((latest, scene) => {
+      (scene?.performers || []).forEach((performer) => {
+        const value = String(performer?.updated_at || performer?.updatedAt || "").trim();
+        if (value && value > latest) latest = value;
+      });
+      return latest;
+    }, "");
+  }
+
+  function getLatestTagUpdatedAtFromScenes(scenes) {
+    return (scenes || []).reduce((latest, scene) => {
+      (scene?.tags || []).forEach((tag) => {
+        const value = String(tag?.updated_at || tag?.updatedAt || "").trim();
+        if (value && value > latest) latest = value;
+      });
+      (scene?.performers || []).forEach((performer) => {
+        (performer?.tags || []).forEach((tag) => {
+          const value = String(tag?.updated_at || tag?.updatedAt || "").trim();
+          if (value && value > latest) latest = value;
+        });
+      });
+      return latest;
+    }, "");
+  }
+
+  async function fetchDashboardSceneScope(studio, onProgress, options = {}) {
+    const studioId = String(studio?.id || "");
+    const sceneLoadLimit = options.sceneLoadLimit == null ? getDashboardSceneLoadLimit() : Number(options.sceneLoadLimit || 0);
+    const pageSize = getDashboardPageSize();
+    const pageDelayMs = getDashboardPageDelayMs();
+    const counts = await fetchStatsCounts(studioId);
+    const scenes = [];
+    let skippedScenes = 0;
+    const sceneCount = counts.scenes;
+    const targetSceneCount = sceneLoadLimit > 0 ? Math.min(sceneCount, sceneLoadLimit) : sceneCount;
+    if (onProgress && targetSceneCount > 0) {
+      const limitSuffix = sceneLoadLimit > 0 && sceneCount > sceneLoadLimit ? ` (limited from ${sceneCount})` : "";
+      onProgress(`Loading studio scenes 0 / ${targetSceneCount}${limitSuffix}...`);
+    }
+    for (let offset = 0; offset < targetSceneCount; offset += pageSize) {
+      if (offset > 0) await delay(pageDelayMs);
+      const page = Math.floor(offset / pageSize) + 1;
+      const maxItems = Math.min(pageSize, targetSceneCount - offset);
+      const pageResult = await fetchSceneStatsPageSafe(studioId, page, pageSize, maxItems, onProgress);
+      if (!pageResult.scenes.length && !pageResult.skipped) break;
+      scenes.push(...pageResult.scenes);
+      skippedScenes += pageResult.skipped;
+      if (onProgress) {
+        const limitSuffix = sceneLoadLimit > 0 && sceneCount > sceneLoadLimit ? ` (limited from ${sceneCount})` : "";
+        const skippedSuffix = skippedScenes ? `, skipped ${skippedScenes}` : "";
+        onProgress(`Loading studio scenes ${Math.min(offset + pageSize, targetSceneCount)} / ${targetSceneCount}${limitSuffix}${skippedSuffix}...`);
+      }
+    }
+
+    const filteredScenes = await filterDashboardScenes(scenes);
+    scenes.length = 0;
+    scenes.push(...filteredScenes);
+    return {
+      studio,
+      scenes,
+      counts,
+      sceneCount,
+      targetSceneCount,
+      skippedScenes,
+      limited: sceneLoadLimit > 0 && sceneCount > sceneLoadLimit,
+      latestUpdatedAt: getLatestSceneUpdatedAt(scenes),
+      latestPerformerUpdatedAt: getLatestPerformerUpdatedAt(scenes),
+      latestTagUpdatedAt: getLatestTagUpdatedAtFromScenes(scenes),
+    };
+  }
+
+  async function buildStatsFromScenes(studio, scenes, counts, loadSummary) {
+
+    const tagFilters = await buildTopTagFilters();
+    const topTagCategories = await getConfiguredTopTagCategories();
+    const performerCounts = new Map();
+    let oCount = 0;
+    scenes.forEach((scene) => {
+      const sceneOCount = Number(scene?.o_counter || 0);
+      const sceneRating = Number(scene?.rating100 || 0);
+      oCount += sceneOCount;
+      (scene?.performers || []).forEach((performer) => {
+        const id = String(performer?.id || "");
+        const name = String(performer?.name || "").trim();
+        const performerRating = Number(performer?.rating100 || 0);
+        if (!id || !name) return;
+        const existing = performerCounts.get(id) || {
+          id,
+          name,
+          imagePath: String(performer?.image_path || ""),
+          country: String(performer?.country || ""),
+          birthdate: String(performer?.birthdate || ""),
+          tags: [],
+          count: 0,
+          oCount: 0,
+          performerRating,
+          studioTopRating: 0,
+          allSceneCount: 0,
+          allOCount: 0,
+          allTopRating: 0,
+        };
+        existing.count += 1;
+        existing.oCount += sceneOCount;
+        existing.country = existing.country || String(performer?.country || "");
+        existing.birthdate = existing.birthdate || String(performer?.birthdate || "");
+        existing.tags = mergePerformerTags(existing.tags, performer?.tags || []);
+        existing.performerRating = Math.max(existing.performerRating || 0, performerRating);
+        existing.studioTopRating = Math.max(existing.studioTopRating || 0, sceneRating);
+        performerCounts.set(id, existing);
+      });
+    });
+
+    const performers = Array.from(performerCounts.values());
+    const topPerformers = performers
+      .sort((left, right) => {
+        if (right.count !== left.count) return right.count - left.count;
+        return left.name.localeCompare(right.name);
+      })
+      .slice(0, TOP_PERFORMER_MAX);
+    const performerHighlights = buildPerformerHighlights(performers);
+    attachStudioToPerformers(performerHighlights, studio);
+    await hydratePerformerGlobalStats(performerHighlights);
+    const performerHighlightRows = buildPerformerHighlightRows(performers);
+    Object.values(performerHighlightRows).forEach((row) => attachStudioToPerformers(row, studio));
+    await hydratePerformerGlobalStats(Object.values(performerHighlightRows).flat());
+
+    const topScene = scenes
+      .slice()
+      .filter((scene) => Number(scene?.rating100 || 0) > 0)
+      .sort((left, right) => {
+        const ratingDiff = Number(right?.rating100 || 0) - Number(left?.rating100 || 0);
+        if (ratingDiff) return ratingDiff;
+        return String(left?.title || "").localeCompare(String(right?.title || ""));
+      })[0];
+    const recentScene = scenes
+      .slice()
+      .filter((scene) => String(scene?.date || "").trim())
+      .sort((left, right) => String(right?.date || "").localeCompare(String(left?.date || "")))[0];
+    const lowestRatedScene = scenes
+      .slice()
+      .filter((scene) => Number(scene?.rating100 || 0) > 0)
+      .sort((left, right) => {
+        const ratingDiff = Number(left?.rating100 || 0) - Number(right?.rating100 || 0);
+        if (ratingDiff) return ratingDiff;
+        return String(left?.title || "").localeCompare(String(right?.title || ""));
+      })[0];
+    const topOCountScene = scenes
+      .slice()
+      .filter((scene) => Number(scene?.o_counter || 0) > 0)
+      .sort((left, right) => {
+        const oDiff = Number(right?.o_counter || 0) - Number(left?.o_counter || 0);
+        if (oDiff) return oDiff;
+        return String(left?.title || "").localeCompare(String(right?.title || ""));
+      })[0];
+    const leastOCountScene = scenes
+      .slice()
+      .filter((scene) => Number(scene?.o_counter || 0) > 0)
+      .sort((left, right) => {
+        const oDiff = Number(left?.o_counter || 0) - Number(right?.o_counter || 0);
+        if (oDiff) return oDiff;
+        return String(left?.title || "").localeCompare(String(right?.title || ""));
+      })[0];
+    const sceneRatingDistribution = buildRatingDistribution(scenes, {
+      getRating: (scene) => Number(scene?.rating100 || 0),
+      getEntity: normalizeSceneSummary,
+      entityKey: "scenes",
+      buckets: getSceneRatingBuckets(),
+    });
+    const sceneResolutionDistribution = buildResolutionDistribution(scenes);
+    const sceneDurationDistribution = buildDurationDistribution(scenes);
+
+    const stats = {
+      studio,
+      counts: {
+        scenes: scenes.length,
+        images: Number(counts?.images || 0),
+        galleries: Number(counts?.galleries || 0),
+        performers: performerCounts.size,
+        oCount,
+      },
+      loadSummary,
+      topPerformers,
+      performerHighlights,
+      performerHighlightRows,
+      topTags: buildTopTags(scenes, tagFilters),
+      topTagGroups: buildTopTagGroups(scenes, tagFilters, topTagCategories),
+      performerDemographics: await buildPerformerDemographics(performers, scenes),
+      sceneRatings: sceneRatingDistribution,
+      sceneResolutions: sceneResolutionDistribution,
+      sceneDurations: sceneDurationDistribution,
+      sceneCharts: await buildCustomScenePieDistributions(scenes),
+      timeline: buildReleaseTimeline(scenes),
+      topScene: normalizeSceneSummary(topScene),
+      topRatedScenes: normalizeSceneSummaries(
+        scenes
+          .filter((scene) => Number(scene?.rating100 || 0) > 0)
+          .sort((left, right) => {
+            const ratingDiff = Number(right?.rating100 || 0) - Number(left?.rating100 || 0);
+            if (ratingDiff) return ratingDiff;
+            return String(left?.title || "").localeCompare(String(right?.title || ""));
+          })
+      ),
+      recentScene: normalizeSceneSummary(recentScene),
+      recentReleases: normalizeSceneSummaries(
+        scenes
+          .filter((scene) => String(scene?.date || "").trim())
+          .sort((left, right) => String(right?.date || "").localeCompare(String(left?.date || "")))
+      ),
+      lowestRatedScene: normalizeSceneSummary(lowestRatedScene),
+      topOCountScene: normalizeSceneSummary(topOCountScene),
+      scenesMostOs: normalizeSceneSummaries(
+        scenes
+          .filter((scene) => Number(scene?.o_counter || 0) > 0)
+          .sort((left, right) => {
+            const oDiff = Number(right?.o_counter || 0) - Number(left?.o_counter || 0);
+            if (oDiff) return oDiff;
+            return String(left?.title || "").localeCompare(String(right?.title || ""));
+          })
+      ),
+      leastOCountScene: normalizeSceneSummary(leastOCountScene),
+    };
+    return stats;
+  }
+
+  async function fetchStudioStatsUncached(studio, onProgress) {
+    const scope = await fetchDashboardSceneScope(studio, onProgress);
+    return buildStatsFromScenes(studio, scope.scenes, scope.counts, {
+      totalScenes: scope.sceneCount,
+      targetScenes: scope.targetSceneCount,
+      loadedScenes: scope.scenes.length,
+      skippedScenes: scope.skippedScenes,
+      limited: scope.limited,
+    });
+  }
+
+  function studioMatchesDashboardFilters(studio) {
+    const includeStudios = [];
+    const excludeStudios = parseList(getSetting("a06ExcludeStudios", "excludeStudios"));
+    if (!includeStudios.length && !excludeStudios.length) return true;
+    const keys = [String(studio?.id || "").toLowerCase(), String(studio?.name || "").toLowerCase()].filter(Boolean);
+    const includeOk = !includeStudios.length || includeStudios.some((ref) => keys.includes(ref));
+    const excludeOk = !excludeStudios.length || !excludeStudios.some((ref) => keys.includes(ref));
+    return includeOk && excludeOk;
+  }
+
+  async function fetchStashStatsByStudio(onProgress) {
+    const dashboard = { id: "", name: "All Stash", imagePath: "" };
+    const allStudios = await fetchAllStudiosForDashboard();
+    const studios = allStudios.filter(studioMatchesDashboardFilters);
+    const globalSceneLoadLimit = getDashboardSceneLoadLimit();
+    const scenes = [];
+    const counts = { scenes: 0, images: 0, galleries: 0 };
+    const failedStudios = [];
+    let skippedScenes = 0;
+    let targetScenes = 0;
+    let limited = false;
+
+    if (onProgress) {
+      onProgress(`Loading stash dashboard by studio 0 / ${studios.length}...`);
+    }
+
+    for (let index = 0; index < studios.length; index += 1) {
+      const studio = studios[index];
+      if (index > 0) await delay(getDashboardPageDelayMs());
+      if (onProgress) {
+        onProgress(`Loading ${studio.name} (${index + 1} / ${studios.length})...`);
+      }
+      try {
+        const remainingBudget = globalSceneLoadLimit > 0 ? Math.max(0, globalSceneLoadLimit - scenes.length) : 0;
+        if (globalSceneLoadLimit > 0 && remainingBudget <= 0) {
+          limited = true;
+          break;
+        }
+        const scope = await fetchDashboardSceneScope(studio, (message) => {
+          if (onProgress) onProgress(`${studio.name}: ${message.replace(/studio/i, "studio")}`);
+        }, { sceneLoadLimit: remainingBudget });
+        scenes.push(...scope.scenes);
+        counts.scenes += scope.scenes.length;
+        counts.images += Number(scope.counts?.images || 0);
+        counts.galleries += Number(scope.counts?.galleries || 0);
+        targetScenes += scope.targetSceneCount;
+        skippedScenes += scope.skippedScenes;
+        limited = limited || scope.limited;
+      } catch (err) {
+        failedStudios.push(studio.name);
+        console.warn("[StashDashboard] Studio dashboard chunk failed", studio, err);
+      }
+      if (onProgress) {
+        const failedSuffix = failedStudios.length ? `, failed ${failedStudios.length}` : "";
+        onProgress(`Loaded studios ${index + 1} / ${studios.length}${failedSuffix}...`);
+      }
+    }
+
+    return buildStatsFromScenes(dashboard, scenes, counts, {
+      totalScenes: targetScenes,
+      targetScenes,
+      loadedScenes: scenes.length,
+      skippedScenes,
+      failedStudios,
+      limited,
+    });
+  }
+
+  function getDashboardStudioScopeCacheKey(studio) {
+    return `scope:${studio.id}:${state.configKey || "default"}`;
+  }
+
+  async function fetchDashboardStudioScopeCached(studio, onProgress) {
+    const key = getDashboardStudioScopeCacheKey(studio);
+    if (state.statsCache.has(key)) return state.statsCache.get(key);
+    const promise = fetchDashboardSceneScope(studio, onProgress)
+      .then((scope) => {
+        state.statsCache.set(key, scope);
+        state.dashboardLoadedStudioIds.add(studio.id);
+        state.dashboardStudioSceneCounts.set(studio.id, Number(scope.sceneCount || 0));
+        state.dashboardStudioUpdatedAt.set(studio.id, scope.latestUpdatedAt || "");
+        state.dashboardStudioPerformerUpdatedAt.set(studio.id, scope.latestPerformerUpdatedAt || "");
+        if (scope.latestTagUpdatedAt && scope.latestTagUpdatedAt > state.dashboardTagUpdatedAt) {
+          state.dashboardTagUpdatedAt = scope.latestTagUpdatedAt;
+        }
+        return scope;
+      })
+      .catch((err) => {
+        if (state.statsCache.get(key) === promise) state.statsCache.delete(key);
+        throw err;
+      });
+    state.statsCache.set(key, promise);
+    return promise;
+  }
+
+  async function fetchStashStatsForStudios(studios, onProgress) {
+    const dashboard = { id: "", name: "All Stash", imagePath: "" };
+    const scenes = [];
+    const counts = { scenes: 0, images: 0, galleries: 0 };
+    const failedStudios = [];
+    let skippedScenes = 0;
+    let targetScenes = 0;
+    let limited = false;
+
+    for (let index = 0; index < studios.length; index += 1) {
+      const studio = studios[index];
+      if (index > 0) await delay(getDashboardPageDelayMs());
+      if (onProgress) onProgress(`Loading ${studio.name} (${index + 1} / ${studios.length})...`);
+      try {
+        const scope = await fetchDashboardStudioScopeCached(studio, (message) => {
+          if (onProgress) onProgress(`${studio.name}: ${message}`);
+        });
+        state.dashboardLoadedStudioIds.add(studio.id);
+        state.dashboardStudioSceneCounts.set(studio.id, Number(scope.sceneCount || 0));
+        state.dashboardStudioUpdatedAt.set(studio.id, scope.latestUpdatedAt || "");
+        state.dashboardStudioPerformerUpdatedAt.set(studio.id, scope.latestPerformerUpdatedAt || "");
+        if (scope.latestTagUpdatedAt && scope.latestTagUpdatedAt > state.dashboardTagUpdatedAt) {
+          state.dashboardTagUpdatedAt = scope.latestTagUpdatedAt;
+        }
+        scenes.push(...scope.scenes);
+        counts.scenes += scope.scenes.length;
+        counts.images += Number(scope.counts?.images || 0);
+        counts.galleries += Number(scope.counts?.galleries || 0);
+        targetScenes += scope.targetSceneCount;
+        skippedScenes += scope.skippedScenes;
+        limited = limited || scope.limited;
+      } catch (err) {
+        failedStudios.push(studio.name);
+        state.dashboardFailedStudioNames = Array.from(new Set([...(state.dashboardFailedStudioNames || []), studio.name]));
+        console.warn("[StashDashboard] Selected studio chunk failed", studio, err);
+      }
+    }
+
+    return buildStatsFromScenes(dashboard, scenes, counts, {
+      totalScenes: targetScenes,
+      targetScenes,
+      loadedScenes: scenes.length,
+      skippedScenes,
+      failedStudios,
+      limited,
+    });
+  }
+
+  async function buildStashStatsFromCachedStudios(studios) {
+    const dashboard = { id: "", name: "All Stash", imagePath: "" };
+    const scenes = [];
+    const counts = { scenes: 0, images: 0, galleries: 0 };
+    let skippedScenes = 0;
+    let targetScenes = 0;
+    let limited = false;
+    const loadedStudios = [];
+
+    for (const studio of studios || []) {
+      const key = getDashboardStudioScopeCacheKey(studio);
+      if (!state.statsCache.has(key)) continue;
+      const scope = await state.statsCache.get(key);
+      if (!scope) continue;
+      loadedStudios.push(studio);
+      scenes.push(...(scope.scenes || []));
+      counts.scenes += Number(scope.scenes?.length || 0);
+      counts.images += Number(scope.counts?.images || 0);
+      counts.galleries += Number(scope.counts?.galleries || 0);
+      targetScenes += Number(scope.targetSceneCount || 0);
+      skippedScenes += Number(scope.skippedScenes || 0);
+      limited = limited || Boolean(scope.limited);
+    }
+
+    return buildStatsFromScenes(dashboard, scenes, counts, {
+      totalScenes: targetScenes,
+      targetScenes,
+      loadedScenes: scenes.length,
+      loadedStudios: loadedStudios.length,
+      skippedScenes,
+      failedStudios: state.dashboardFailedStudioNames || [],
+      limited,
+    });
+  }
+
+  async function fetchStudioLatestSceneUpdatedAt(studio) {
+    const data = await gql(
+      `
+        query StashDashboardStudioLatestUpdate($sceneFilter: SceneFilterType) {
+          findScenes(scene_filter: $sceneFilter, filter: { page: 1, per_page: 1, sort: "updated_at", direction: DESC }) {
+            scenes { id updated_at }
+          }
+        }
+      `,
+      { sceneFilter: studioFilter(studio?.id) }
+    );
+    return String(data?.findScenes?.scenes?.[0]?.updated_at || "");
+  }
+
+  async function fetchStudioLatestPerformerUpdatedAt(studio) {
+    const data = await gql(
+      `
+        query StashDashboardStudioLatestPerformerUpdate($sceneFilter: SceneFilterType) {
+          findScenes(scene_filter: $sceneFilter, filter: { per_page: -1 }) {
+            scenes {
+              performers { id updated_at }
+            }
+          }
+        }
+      `,
+      { sceneFilter: studioFilter(studio?.id) }
+    );
+    const seen = new Set();
+    return (data?.findScenes?.scenes || []).reduce((latest, scene) => {
+      (scene?.performers || []).forEach((performer) => {
+        const id = String(performer?.id || "");
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        const value = String(performer?.updated_at || "").trim();
+        if (value && value > latest) latest = value;
+      });
+      return latest;
+    }, "");
+  }
+
+  async function fetchLatestTagUpdatedAt() {
+    const data = await gql(`
+      query StashDashboardLatestTagUpdate {
+        findTags(filter: { page: 1, per_page: 1, sort: "updated_at", direction: DESC }) {
+          tags { id updated_at }
+        }
+      }
+    `);
+    return String(data?.findTags?.tags?.[0]?.updated_at || "");
+  }
+
+  async function findChangedCachedStudios(onProgress) {
+    const cachedStudios = getCachedDashboardStudios();
+    const changed = [];
+    const latestTagUpdatedAt = await fetchLatestTagUpdatedAt();
+    const tagsChanged = latestTagUpdatedAt && latestTagUpdatedAt !== state.dashboardTagUpdatedAt;
+    if (tagsChanged) {
+      if (onProgress) onProgress("Tag changes detected; refreshing cached studios...");
+      state.dashboardTagUpdatedAt = latestTagUpdatedAt;
+      return cachedStudios;
+    }
+    for (let index = 0; index < cachedStudios.length; index += 1) {
+      const studio = cachedStudios[index];
+      if (index > 0) await delay(getDashboardPageDelayMs());
+      if (onProgress) onProgress(`Checking ${studio.name} (${index + 1} / ${cachedStudios.length})...`);
+      const [latestScene, latestPerformer] = await Promise.all([
+        fetchStudioLatestSceneUpdatedAt(studio),
+        fetchStudioLatestPerformerUpdatedAt(studio),
+      ]);
+      const counts = await fetchStatsCounts(studio.id);
+      const cachedScene = state.dashboardStudioUpdatedAt.get(studio.id) || "";
+      const cachedPerformer = state.dashboardStudioPerformerUpdatedAt.get(studio.id) || "";
+      const cachedSceneCount = state.dashboardStudioSceneCounts.get(studio.id);
+      const countChanged = Number.isFinite(cachedSceneCount) && Number(counts.scenes || 0) !== cachedSceneCount;
+      if (countChanged || (latestScene && latestScene !== cachedScene) || (latestPerformer && latestPerformer !== cachedPerformer)) {
+        changed.push(studio);
+      }
+    }
+    return changed;
+  }
+
+  function normalizeSceneSummary(scene) {
+    if (!scene?.id) return null;
+    return {
+      id: String(scene.id || ""),
+      title: String(scene.title || "Untitled scene"),
+      date: String(scene.date || ""),
+      rating100: Number(scene.rating100 || 0),
+      oCounter: Number(scene.o_counter || 0),
+      screenshot: String(scene.paths?.screenshot || ""),
+      preview: String(scene.paths?.preview || ""),
+    };
+  }
+
+  function normalizeSceneSummaries(scenes, limit = DASHBOARD_SCENE_ROW_LIMIT) {
+    return (scenes || [])
+      .slice(0, limit)
+      .map(normalizeSceneSummary)
+      .filter(Boolean);
+  }
+
+  function getStudioLinks(studioId) {
+    if (!studioId) return [];
+    const escaped = CSS.escape(String(studioId));
+    return Array.from(
+      document.querySelectorAll(`a[href="/studios/${escaped}"], a[href*="/studios/${escaped}"]`)
+    ).filter((link) => link instanceof HTMLElement && !link.closest(".studio-dashboard__hover"));
+  }
+
+  function getAllStudioLinks() {
+    return Array.from(document.querySelectorAll('a[href*="/studios/"]')).filter(
+      (link) => link instanceof HTMLElement && !link.closest(".studio-dashboard__hover")
+    );
+  }
+
+  function studioFromLink(link) {
+    if (!(link instanceof HTMLAnchorElement)) return null;
+    const match = link.pathname.match(/^\/studios\/([^/?#]+)/);
+    if (!match?.[1]) return null;
+    const image = link.querySelector("img");
+    const name =
+      link.getAttribute("title") ||
+      link.getAttribute("aria-label") ||
+      image?.getAttribute("alt") ||
+      image?.getAttribute("title") ||
+      link.textContent ||
+      "Studio";
+    return normalizeStudio({
+      id: decodeURIComponent(match[1]),
+      name: String(name).trim() || "Studio",
+    });
+  }
+
+  function enhanceStudioLink(link, studio, source = "detail") {
+    if (!(link instanceof HTMLElement) || !studio?.id) return;
+    link.classList.add("studio-dashboard__badge");
+    link.setAttribute("data-studio-dashboard-id", studio.id);
+    link.setAttribute("data-studio-dashboard-name", studio.name);
+    link.setAttribute("data-studio-dashboard-source", source);
+
+    if (!getDisplayProfile()) return;
+    if (link.dataset.studioDashboardHoverBound === "true") return;
+    link.dataset.studioDashboardHoverBound = "true";
+    link.addEventListener("mouseenter", handleHoverEnter);
+    link.addEventListener("focus", handleHoverEnter);
+    link.addEventListener("mouseleave", handleHoverLeave);
+    link.addEventListener("blur", handleHoverLeave);
+  }
+
+  function createTooltip(anchor, studio) {
+    closeTooltip();
+    const tooltip = document.createElement("div");
+    tooltip.className = `studio-dashboard__hover studio-dashboard__hover--${getDisplayProfile()}`;
+    tooltip.innerHTML = `
+      <a class="studio-dashboard__hover-title" href="/studios/${encodeURIComponent(studio?.id || "")}">${escapeHtml(studio?.name || "Studio")}</a>
+      <div class="studio-dashboard__status">Loading studio stats...</div>
+    `;
+    document.body.appendChild(tooltip);
+    state.tooltip = tooltip;
+    state.tooltipAnchor = anchor;
+    tooltip.addEventListener("mouseenter", cancelTooltipClose);
+    tooltip.addEventListener("mouseleave", scheduleTooltipClose);
+    positionTooltip(anchor, tooltip);
+    return tooltip;
+  }
+
+  function positionTooltip(anchor, tooltip) {
+    if (!(anchor instanceof HTMLElement) || !(tooltip instanceof HTMLElement)) return;
+    const rect = anchor.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const pad = 8;
+    const preferRight = rect.right + pad + tooltipRect.width <= window.innerWidth;
+    const left = preferRight
+      ? rect.right + pad
+      : Math.max(pad, Math.min(window.innerWidth - tooltipRect.width - pad, rect.left));
+    const top = Math.max(
+      pad,
+      Math.min(window.innerHeight - tooltipRect.height - pad, rect.top)
+    );
+    tooltip.style.left = `${Math.round(left)}px`;
+    tooltip.style.top = `${Math.round(top)}px`;
+  }
+
+  function renderStatsInto(container, stats) {
+    if (!(container instanceof HTMLElement) || !stats) return;
+    container.innerHTML = "";
+    const profile = getDisplayProfile();
+    const limits = getProfileLimits(profile);
+
+    const section = createSection(container);
+    const counts = document.createElement("div");
+    counts.className = "studio-dashboard__counts";
+    const countItems = [
+      ["Scenes", stats.counts.scenes],
+      ["Images", stats.counts.images],
+      ["Galleries", stats.counts.galleries],
+      ["Performers", stats.counts.performers],
+      ["O's", stats.counts.oCount],
+    ];
+    counts.style.gridTemplateColumns = `repeat(${countItems.length}, minmax(0, 1fr))`;
+    countItems.forEach(([label, value]) => {
+      const item = document.createElement("div");
+      item.className = "studio-dashboard__count";
+      item.innerHTML = `
+        <span class="studio-dashboard__count-value">${escapeHtml(value)}</span>
+        <span class="studio-dashboard__count-label">${escapeHtml(label)}</span>
+      `;
+      counts.appendChild(item);
+    });
+    section.appendChild(counts);
+
+    const performerHighlights = getPerformerHighlightsForProfile(stats, profile);
+    if (performerHighlights.length) {
+      const section = createSection(container);
+      renderPerformerCards(section, performerHighlights.slice(0, limits.performers));
+    }
+
+    if (stats.topTags.length) {
+      const section = createSection(container);
+      const title = document.createElement("div");
+      title.className = "studio-dashboard__section-title";
+      title.textContent = "TOP TAGS";
+      section.appendChild(title);
+      renderTagCards(section, stats.studio, stats.topTags.slice(0, limits.tags));
+    }
+
+    if (limits.showTimeline) {
+      renderReleaseTimeline(container, stats.studio, stats.timeline);
+    }
+
+    const sceneHighlights = getSceneHighlights(stats).slice(0, limits.scenes);
+    if (profile === "rich") {
+      renderSceneHighlightGrid(container, sceneHighlights);
+    } else {
+      sceneHighlights.forEach((highlight) => renderSceneHighlight(container, highlight));
+    }
+  }
+
+  function renderStudioPageDashboard(container, stats) {
+    if (!(container instanceof HTMLElement) || !stats) return;
+    container.innerHTML = "";
+    container.className = "tab-pane fade studio-dashboard__page-dashboard active show";
+    container.dataset.studioDashboardStudioId = stats.studio.id;
+    container.style.setProperty("--studio-dashboard-header-font-size", `${getDashboardHeaderFontSize()}px`);
+    container.style.setProperty("--studio-dashboard-subheader-font-size", `${getDashboardSubheaderFontSize()}px`);
+    container.style.setProperty("--studio-dashboard-content-font-size", `${getDashboardContentFontSize()}px`);
+    container.style.setProperty("--studio-dashboard-tag-width", `${getDashboardTagWidth()}px`);
+    container.style.setProperty("--studio-dashboard-surface-color", getDashboardSurfaceColor());
+    container.style.setProperty("--studio-dashboard-surface-opacity", String(getDashboardSurfaceOpacity()));
+
+    const body = document.createElement("div");
+    body.className = "studio-dashboard__page-body";
+    container.appendChild(body);
+
+    const renderers = {
+      performerHighlights: () => {
+        const performerHighlights = Array.isArray(stats.performerHighlights) ? stats.performerHighlights : [];
+        if (!performerHighlights.length) return;
+        const section = createPageSection(body, "PERFORMER HIGHLIGHTS");
+        renderPerformerCards(section, performerHighlights.slice(0, 8));
+      },
+      performersMostScenes: () => renderPerformerRowSection(body, "PERFORMERS WITH MOST SCENES", stats.performerHighlightRows?.performersMostScenes),
+      performersMostOs: () => renderPerformerRowSection(body, "PERFORMERS WITH MOST O'S", stats.performerHighlightRows?.performersMostOs),
+      performersHighestRating: () => renderPerformerRowSection(body, "PERFORMERS WITH HIGHEST RATING", stats.performerHighlightRows?.performersHighestRating),
+      performersHighestRatedScenes: () => renderPerformerRowSection(body, "PERFORMERS WITH HIGHEST RATED SCENES", stats.performerHighlightRows?.performersHighestRatedScenes),
+      topTags: () => {
+        if (!stats.topTags.length) return;
+        const section = createPageSection(body, "TOP TAGS");
+        renderDashboardTopTags(section, stats);
+      },
+      releaseTimeline: () => {
+        renderReleaseTimeline(body, stats.studio, stats.timeline);
+      },
+      sceneHighlights: () => {
+        renderSceneHighlightGrid(body, getSceneHighlights(stats), { title: "SCENE HIGHLIGHTS" });
+      },
+      topRatedScenes: () => renderSceneRowSection(body, "TOP RATED SCENES", stats.topRatedScenes, (scene) => formatRating(scene.rating100)),
+      recentReleases: () => renderSceneRowSection(body, "RECENT RELEASES", stats.recentReleases, (scene) => formatDate(scene.date)),
+      scenesMostOs: () => renderSceneRowSection(body, "SCENES WITH MOST O'S", stats.scenesMostOs, (scene) => `${scene.oCounter} O's`),
+      performerDemographics: () => {
+        renderPerformerDemographics(body, stats);
+      },
+      sceneCharts: () => {
+        renderSceneCharts(body, stats);
+      },
+    };
+    getDashboardSectionOrder().forEach((key) => renderers[key]?.());
+  }
+
+  function createPageSection(container, titleText) {
+    const section = document.createElement("div");
+    section.className = "studio-dashboard__page-section";
+    if (titleText) {
+      const title = document.createElement("h5");
+      title.className = "studio-dashboard__page-section-title";
+      title.textContent = titleText;
+      section.appendChild(title);
+    }
+    container.appendChild(section);
+    return section;
+  }
+
+  function renderDashboardTopTags(container, stats) {
+    const groups = Array.isArray(stats.topTagGroups) ? stats.topTagGroups : [];
+    const limit = getDashboardTopTagLimit();
+    if (!groups.length) {
+      renderTagCards(container, stats.studio, stats.topTags.slice(0, limit));
+      return;
+    }
+
+    const grouped = document.createElement("div");
+    grouped.className = `studio-dashboard__tag-groups studio-dashboard__tag-groups--${getDashboardTopTagLayout()}`;
+    groups.forEach((group) => {
+      const row = document.createElement("div");
+      row.className = "studio-dashboard__tag-group";
+      row.style.setProperty("--studio-dashboard-tag-count", String(Math.max(1, Math.min(limit, group.tags.length))));
+      const title = document.createElement("div");
+      title.className = "studio-dashboard__tag-group-title";
+      title.textContent = group.name;
+      row.appendChild(title);
+      renderTagCards(row, stats.studio, group.tags.slice(0, limit));
+      grouped.appendChild(row);
+    });
+    container.appendChild(grouped);
+  }
+
+  function renderPerformerRowSection(container, title, performers) {
+    const visible = Array.isArray(performers) ? performers.filter(Boolean) : [];
+    if (!visible.length) return;
+    const section = createPageSection(container, title);
+    renderPerformerCards(section, visible.slice(0, DASHBOARD_ROW_CARD_LIMIT));
+  }
+
+  function renderSceneRowSection(container, title, scenes, metaFormatter) {
+    const visible = Array.isArray(scenes) ? scenes.filter(Boolean) : [];
+    if (!visible.length) return;
+    const section = createPageSection(container, title);
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__scene-grid";
+    visible.slice(0, DASHBOARD_SCENE_ROW_LIMIT).forEach((scene) => {
+      const item = document.createElement("div");
+      item.className = "studio-dashboard__scene-grid-item";
+      renderSceneCard(item, scene, typeof metaFormatter === "function" ? metaFormatter(scene) : "");
+      grid.appendChild(item);
+    });
+    section.appendChild(grid);
+  }
+
+  function getSceneHighlights(stats) {
+    return [
+      {
+        enabled: true,
+        title: "Most recent release",
+        scene: stats.recentScene,
+        meta: stats.recentScene ? formatDate(stats.recentScene.date) : "",
+      },
+      {
+        enabled: true,
+        title: "Top rated scene",
+        scene: stats.topScene,
+        meta: stats.topScene ? formatRating(stats.topScene.rating100) : "",
+      },
+      {
+        enabled: true,
+        title: "Lowest rated scene",
+        scene: stats.lowestRatedScene,
+        meta: stats.lowestRatedScene ? formatRating(stats.lowestRatedScene.rating100) : "",
+      },
+      {
+        enabled: true,
+        title: "Most O's",
+        scene: stats.topOCountScene,
+        meta: stats.topOCountScene ? `${stats.topOCountScene.oCounter} O's` : "",
+      },
+      {
+        enabled: true,
+        title: "Least O's",
+        scene: stats.leastOCountScene,
+        meta: stats.leastOCountScene ? `${stats.leastOCountScene.oCounter} O's` : "",
+      },
+    ];
+  }
+
+  function createSection(container) {
+    const section = document.createElement("div");
+    section.className = "studio-dashboard__section";
+    container.appendChild(section);
+    return section;
+  }
+
+  function renderSceneHighlight(container, { enabled, title, scene, meta }) {
+    if (!enabled || !scene) return;
+    const section = createSection(container);
+    const sectionTitle = document.createElement("div");
+    sectionTitle.className = "studio-dashboard__section-title";
+    sectionTitle.textContent = title;
+    section.appendChild(sectionTitle);
+    renderSceneCard(section, scene, meta);
+  }
+
+  function renderSceneHighlightGrid(container, highlights, options = {}) {
+    const visible = highlights.filter((highlight) => highlight.enabled && highlight.scene);
+    if (!visible.length) return;
+    const section = options.title ? createPageSection(container, options.title) : createSection(container);
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__scene-grid";
+    visible.forEach((highlight) => {
+      const item = document.createElement("div");
+      item.className = "studio-dashboard__scene-grid-item";
+      const title = document.createElement("div");
+      title.className = "studio-dashboard__section-title";
+      title.textContent = highlight.title;
+      item.appendChild(title);
+      renderSceneCard(item, highlight.scene, highlight.meta);
+      grid.appendChild(item);
+    });
+    section.appendChild(grid);
+  }
+
+  function renderPerformerDemographics(container, stats) {
+    const demographics = stats?.performerDemographics;
+    const hasCountries = Array.isArray(demographics?.countries) && demographics.countries.length;
+    const hasAges = Array.isArray(demographics?.ages) && demographics.ages.length;
+    const hasRatings = Array.isArray(demographics?.ratings) && demographics.ratings.length;
+    const customPies = Array.isArray(demographics?.customPies) ? demographics.customPies : [];
+    const hasCustomPie = customPies.some((chart) => {
+      return Array.isArray(chart?.items) && chart.items.length ||
+        Array.isArray(chart?.subcharts) && chart.subcharts.some((subchart) => subchart.items?.length);
+    });
+    if (!hasCountries && !hasAges && !hasRatings && !hasCustomPie && !demographics?.ageUnknown) return;
+
+    const section = createPageSection(container, "PERFORMER DEMOGRAPHICS");
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__demographics";
+    section.appendChild(grid);
+
+    renderDemographicChart(grid, {
+      title: "Nationality",
+      subtitle: `${demographics.countryTotal || 0} unique performer${demographics.countryTotal === 1 ? "" : "s"}`,
+      items: demographics.countries || [],
+      unit: "performers",
+      type: "country",
+      studio: stats.studio,
+    });
+
+    renderDemographicChart(grid, {
+      title: "Age at release",
+      subtitle: `${demographics.ageTotal || 0} performer appearance${demographics.ageTotal === 1 ? "" : "s"}`,
+      items: demographics.ages || [],
+      unit: "appearances",
+      type: "age",
+      studio: stats.studio,
+    });
+
+    renderDemographicChart(grid, {
+      title: "Performer rating",
+      subtitle: `${demographics.ratingTotal || 0} unique performer${demographics.ratingTotal === 1 ? "" : "s"}`,
+      items: demographics.ratings || [],
+      unit: "performers",
+      type: "performer-rating",
+      studio: stats.studio,
+    });
+
+    customPies.forEach((chart, index) => {
+      renderDemographicChart(grid, {
+        title: chart.title || `Performer pie ${index + 1}`,
+        subtitle: `${chart.total || 0} unique performer${chart.total === 1 ? "" : "s"}`,
+        items: chart.items || [],
+        subcharts: chart.subcharts || [],
+        unit: "performers",
+        type: "custom-performer",
+        studio: stats.studio,
+      });
+    });
+  }
+
+  function renderSceneCharts(container, stats) {
+    const sceneCharts = Array.isArray(stats?.sceneCharts) ? stats.sceneCharts : [];
+    const sceneRatings = stats?.sceneRatings || {};
+    const sceneResolutions = stats?.sceneResolutions || {};
+    const sceneDurations = stats?.sceneDurations || {};
+    const visibleCharts = sceneCharts.filter((chart) => {
+      return Array.isArray(chart?.items) && chart.items.length ||
+        Array.isArray(chart?.subcharts) && chart.subcharts.some((subchart) => subchart.items?.length);
+    });
+    const hasSceneRatings = Array.isArray(sceneRatings.items) && sceneRatings.items.length;
+    const hasSceneResolutions = Array.isArray(sceneResolutions.items) && sceneResolutions.items.length;
+    const hasSceneDurations = Array.isArray(sceneDurations.items) && sceneDurations.items.length;
+    if (!visibleCharts.length && !hasSceneRatings && !hasSceneResolutions && !hasSceneDurations) return;
+
+    const section = createPageSection(container, "SCENE CHARTS");
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__demographics";
+    section.appendChild(grid);
+
+    if (hasSceneRatings) {
+      renderDemographicChart(grid, {
+        title: "Scene rating",
+        subtitle: `${sceneRatings.total || 0} scene${sceneRatings.total === 1 ? "" : "s"}`,
+        items: sceneRatings.items || [],
+        unit: "scenes",
+        type: "scene-rating",
+        studio: stats.studio,
+      });
+    }
+
+    if (hasSceneResolutions) {
+      renderDemographicChart(grid, {
+        title: "Video resolution",
+        subtitle: `${sceneResolutions.total || 0} scene${sceneResolutions.total === 1 ? "" : "s"}`,
+        items: sceneResolutions.items || [],
+        unit: "scenes",
+        type: "scene-resolution",
+        studio: stats.studio,
+        footer: "Stash supports filtering by one resolution at a time.",
+      });
+    }
+
+    if (hasSceneDurations) {
+      renderDemographicChart(grid, {
+        title: "Video duration",
+        subtitle: `${sceneDurations.total || 0} scene${sceneDurations.total === 1 ? "" : "s"}`,
+        items: sceneDurations.items || [],
+        unit: "scenes",
+        type: "scene-duration",
+        studio: stats.studio,
+      });
+    }
+
+    visibleCharts.forEach((chart, index) => {
+      renderDemographicChart(grid, {
+        title: chart.title || `Scene pie ${index + 1}`,
+        subtitle: `${chart.total || 0} scene${chart.total === 1 ? "" : "s"}`,
+        items: chart.items || [],
+        subcharts: chart.subcharts || [],
+        unit: "scenes",
+        type: "custom-scene",
+        studio: stats.studio,
+      });
+    });
+  }
+
+  function renderDemographicChart(container, { title, subtitle, items, subcharts, unit, type, studio, footer }) {
+    const hasSubcharts = Array.isArray(subcharts) && subcharts.length;
+    let nextItemIndex = 0;
+    const displayItems = hasSubcharts
+      ? []
+      : getDemographicDisplayItems(items || [], type).map((item) => ({ ...item, sourceIndex: nextItemIndex++ }));
+    const displaySubcharts = hasSubcharts
+      ? subcharts.map((subchart) => ({
+        ...subchart,
+        items: (subchart.items || []).map((item) => ({ ...item, sourceIndex: nextItemIndex++ })),
+      }))
+      : [];
+    const allDisplayItems = hasSubcharts ? displaySubcharts.flatMap((subchart) => subchart.items || []) : displayItems;
+    const chart = document.createElement("div");
+    chart.className = "studio-dashboard__demographic-chart studio-dashboard__demographic-chart--pie";
+    chart.studioDashboardItems = displayItems;
+    chart.studioDashboardSubcharts = displaySubcharts;
+    chart.studioDashboardUnit = unit;
+    chart.studioDashboardType = type;
+    chart.innerHTML = `
+      <div class="studio-dashboard__demographic-heading">
+        <span>${escapeHtml(title)}</span>
+        <small>${escapeHtml(subtitle || "")}</small>
+      </div>
+    `;
+    const body = document.createElement("div");
+    body.className = "studio-dashboard__demographic-body";
+    if (hasSubcharts) {
+      body.classList.add("studio-dashboard__demographic-body--multi");
+      renderDemographicSubcharts(body, displaySubcharts, unit, type);
+    } else {
+    const list = document.createElement("div");
+    list.className = "studio-dashboard__demographic-list";
+    if (type !== "scene-resolution" && displayItems.some((item) => item.filterable !== false)) {
+      const toolbar = document.createElement("div");
+      toolbar.className = "studio-dashboard__demographic-select-all";
+      toolbar.innerHTML = `
+        <span class="studio-dashboard__demographic-actions">
+          <button type="button" data-demo-action="include-all" title="Include all">+</button>
+          <button type="button" data-demo-action="clear" title="Deselect all">-</button>
+        </span>
+        <span></span>
+        <span></span>
+      `;
+      toolbar.querySelector("[data-demo-action='include-all']")?.addEventListener("click", () => {
+        list.querySelectorAll(".studio-dashboard__demographic-row[data-filterable='true']").forEach((row) => setDemographicSelection(row, "include"));
+      });
+      toolbar.querySelector("[data-demo-action='clear']")?.addEventListener("click", () => {
+        list.querySelectorAll(".studio-dashboard__demographic-row").forEach((row) => setDemographicSelection(row, ""));
+      });
+      list.appendChild(toolbar);
+    }
+    displayItems.forEach((item, index) => {
+      const filterable = item.filterable !== false;
+      const row = document.createElement("div");
+      row.className = "studio-dashboard__demographic-row";
+      row.dataset.itemIndex = String(index);
+      row.dataset.filterable = filterable ? "true" : "false";
+      row.style.setProperty("--studio-dashboard-demo-color", DEMOGRAPHIC_COLORS[index % DEMOGRAPHIC_COLORS.length]);
+      row.innerHTML = `
+        <span class="studio-dashboard__demographic-actions">
+          ${filterable ? `
+            <button type="button" data-filter-mode="include" title="Include ${escapeHtml(item.filterLabel || item.label)}">+</button>
+            <button type="button" data-filter-mode="exclude" title="Exclude ${escapeHtml(item.filterLabel || item.label)}">-</button>
+          ` : ""}
+        </span>
+        <span class="studio-dashboard__demographic-label"><span class="studio-dashboard__demographic-swatch"></span>${escapeHtml(item.label)}</span>
+        <span class="studio-dashboard__demographic-value">
+          <strong>${escapeHtml(item.count)}</strong>
+          ${item.percent ? `<small>${escapeHtml(item.percent)}%</small>` : ""}
+        </span>
+      `;
+      row.querySelectorAll("[data-filter-mode]").forEach((button) => {
+        button.addEventListener("click", () => toggleDemographicSelection(row, button.dataset.filterMode));
+      });
+      row.querySelector(".studio-dashboard__demographic-label")?.addEventListener("click", () => {
+        if (row.dataset.filterable === "false") return;
+        toggleDemographicSelection(row, "include");
+      });
+      row.addEventListener("mouseenter", () => setDemographicHoverState(row, true, item, unit, type));
+      row.addEventListener("mouseleave", () => setDemographicHoverState(row, false, item, unit, type));
+      list.appendChild(row);
+    });
+    if (!list.children.length) {
+      const empty = document.createElement("div");
+      empty.className = "studio-dashboard__status";
+      empty.textContent = "No data found.";
+      list.appendChild(empty);
+    }
+    body.appendChild(list);
+    if (items?.length) {
+      renderDemographicPie(body, displayItems, unit, type);
+    }
+    }
+    chart.appendChild(body);
+    if (footer) {
+      const note = document.createElement("div");
+      note.className = "studio-dashboard__demographic-note";
+      note.textContent = footer;
+      chart.appendChild(note);
+    }
+    if (allDisplayItems.some((item) => item.filterable !== false)) {
+      const controls = document.createElement("div");
+      controls.className = "studio-dashboard__demographic-controls";
+      controls.innerHTML = `
+        <button type="button" data-demo-action="go" disabled>Go to scenes</button>
+        <button type="button" data-demo-action="update" disabled>Update chart</button>
+      `;
+      controls.querySelector("[data-demo-action='go']")?.addEventListener("click", () => {
+        openDemographicScenes(studio, type, allDisplayItems, Array.from(chart.querySelectorAll(".studio-dashboard__demographic-row")));
+      });
+      controls.querySelector("[data-demo-action='update']")?.addEventListener("click", () => {
+        updateDemographicChartView(chart);
+      });
+      chart.appendChild(controls);
+      updateDemographicGoState(chart);
+    }
+    container.appendChild(chart);
+  }
+
+  function renderDemographicSubcharts(container, subcharts, unit, type) {
+    const layout = document.createElement("div");
+    layout.className = "studio-dashboard__demographic-multi";
+    const list = document.createElement("div");
+    list.className = "studio-dashboard__demographic-list studio-dashboard__demographic-list--shared";
+    const pies = document.createElement("div");
+    pies.className = `studio-dashboard__demographic-pies studio-dashboard__demographic-pies--${Math.min(4, subcharts.length)}`;
+    subcharts.forEach((subchart) => {
+      const group = document.createElement("div");
+      group.className = "studio-dashboard__demographic-legend-group";
+      group.innerHTML = `<div class="studio-dashboard__demographic-subtitle">${escapeHtml(subchart.title || "Group")}</div>`;
+      (subchart.items || []).forEach((item) => {
+        const filterable = item.filterable !== false;
+        const row = document.createElement("div");
+        row.className = "studio-dashboard__demographic-row";
+        row.dataset.itemIndex = String(item.sourceIndex);
+        row.dataset.filterable = filterable ? "true" : "false";
+        row.style.setProperty("--studio-dashboard-demo-color", DEMOGRAPHIC_COLORS[item.sourceIndex % DEMOGRAPHIC_COLORS.length]);
+        row.innerHTML = `
+          <span class="studio-dashboard__demographic-actions">
+            ${filterable ? `
+              <button type="button" data-filter-mode="include" title="Include ${escapeHtml(item.filterLabel || item.label)}">+</button>
+              <button type="button" data-filter-mode="exclude" title="Exclude ${escapeHtml(item.filterLabel || item.label)}">-</button>
+            ` : ""}
+          </span>
+          <span class="studio-dashboard__demographic-label"><span class="studio-dashboard__demographic-swatch"></span>${escapeHtml(item.label)}</span>
+          <span class="studio-dashboard__demographic-value">
+            <strong>${escapeHtml(item.count)}</strong>
+            ${item.percent ? `<small>${escapeHtml(item.percent)}%</small>` : ""}
+          </span>
+        `;
+        row.querySelectorAll("[data-filter-mode]").forEach((button) => {
+          button.addEventListener("click", () => toggleDemographicSelection(row, button.dataset.filterMode));
+        });
+        row.querySelector(".studio-dashboard__demographic-label")?.addEventListener("click", () => {
+          if (row.dataset.filterable === "false") return;
+          toggleDemographicSelection(row, "include");
+        });
+        row.addEventListener("mouseenter", () => setDemographicHoverState(row, true, item, unit, type));
+        row.addEventListener("mouseleave", () => setDemographicHoverState(row, false, item, unit, type));
+        group.appendChild(row);
+      });
+      list.appendChild(group);
+      const pieWrap = document.createElement("div");
+      pieWrap.className = "studio-dashboard__demographic-pie-wrap";
+      pieWrap.innerHTML = `<div class="studio-dashboard__demographic-subtitle">${escapeHtml(subchart.title || "Group")}</div>`;
+      renderDemographicPie(pieWrap, subchart.items || [], unit, type);
+      pies.appendChild(pieWrap);
+    });
+    layout.appendChild(list);
+    layout.appendChild(pies);
+    container.appendChild(layout);
+  }
+
+  function getDemographicDisplayItems(items, type) {
+    if (type !== "country") return items;
+    return getPieItems(items);
+  }
+
+  function renderDemographicPie(container, items, unit, type) {
+    const pieItems = getPieChartItems(items, type);
+    if (!pieItems.length || (pieItems.length === 1 && isUnknownDemographicItem(pieItems[0]))) {
+      const empty = document.createElement("div");
+      empty.className = "studio-dashboard__demographic-pie studio-dashboard__demographic-pie--empty";
+      empty.textContent = "N/A";
+      container.appendChild(empty);
+      return;
+    }
+    const totalCount = pieItems.reduce((sum, item) => sum + Number(item.count || 0), 0);
+    const total = Math.max(1, totalCount);
+    let cursor = 0;
+    const pie = document.createElement("div");
+    pie.className = "studio-dashboard__demographic-pie";
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 100 100");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", `${type === "country" ? "Nationality" : "Age"} distribution`);
+    pieItems.forEach((item, index) => {
+      const displayItem = {
+        ...item,
+        percent: formatPercent(Number(item.count || 0), totalCount),
+      };
+      const start = cursor;
+      cursor += (Number(displayItem.count || 0) / total) * 360;
+      const end = cursor;
+      const colorIndex = Number(displayItem.sourceIndex ?? index);
+      const slice = end - start >= 359.99
+        ? document.createElementNS("http://www.w3.org/2000/svg", "circle")
+        : document.createElementNS("http://www.w3.org/2000/svg", "path");
+      if (slice.tagName.toLowerCase() === "circle") {
+        slice.setAttribute("cx", "50");
+        slice.setAttribute("cy", "50");
+        slice.setAttribute("r", "47");
+      } else {
+        slice.setAttribute("d", describePieSlice(50, 50, 47, start, end));
+      }
+      slice.setAttribute("fill", DEMOGRAPHIC_COLORS[colorIndex % DEMOGRAPHIC_COLORS.length]);
+      slice.setAttribute("transform-origin", "50 50");
+      slice.dataset.itemIndex = String(displayItem.sourceIndex ?? index);
+      slice.studioDashboardItem = displayItem;
+      slice.classList.add("studio-dashboard__demographic-slice");
+      slice.setAttribute("aria-label", `${displayItem.filterLabel || displayItem.label}: ${displayItem.count} ${unit}${displayItem.percent ? `, ${displayItem.percent}%` : ""}`);
+      slice.addEventListener("click", () => togglePieSliceSelection(pie, displayItem));
+      slice.addEventListener("mouseenter", (event) => {
+        setPieHoverState(pie, displayItem, true);
+        showPieTooltip(pie, displayItem, unit, type, event);
+      });
+      slice.addEventListener("mousemove", (event) => positionPieTooltip(pie, event));
+      slice.addEventListener("mouseleave", () => {
+        setPieHoverState(pie, displayItem, false);
+        hidePieTooltip(pie);
+      });
+      svg.appendChild(slice);
+    });
+    const tooltip = document.createElement("div");
+    tooltip.className = "studio-dashboard__demographic-tooltip";
+    pie.appendChild(svg);
+    pie.appendChild(tooltip);
+    container.appendChild(pie);
+  }
+
+  function getPieChartItems(items, type) {
+    const sorted = (items || [])
+      .map((item, index) => ({ ...item, sourceIndex: item.sourceIndex ?? index }))
+      .sort((left, right) => {
+        if (right.count !== left.count) return Number(right.count || 0) - Number(left.count || 0);
+        return Number(left.sourceIndex) - Number(right.sourceIndex);
+      });
+    if (type === "country") return sorted;
+    return applyPieSliceLimit(sorted);
+  }
+
+  function applyPieSliceLimit(items) {
+    const max = getPieSliceMax();
+    if (!max || items.length <= max) return items;
+    const knownItems = items.filter((item) => !isUnknownDemographicItem(item));
+    const unknownItems = items.filter(isUnknownDemographicItem);
+    if (knownItems.length <= max) return items;
+    const visible = knownItems.slice(0, max);
+    const overflow = knownItems.slice(max);
+    const otherCount = overflow.reduce((total, item) => total + Number(item.count || 0), 0);
+    const firstOverflowIndex = Math.min(...overflow.map((item) => Number(item.sourceIndex ?? max)));
+    const other = {
+      key: "Other",
+      label: "Other",
+      filterLabel: "Other",
+      count: otherCount,
+      sourceIndex: Number.isFinite(firstOverflowIndex) ? firstOverflowIndex : max,
+      performers: overflow.flatMap((item) => item.performers || []),
+      performerIds: uniqueValues(overflow.flatMap((item) => item.performerIds || [])),
+      filterable: false,
+    };
+    return [...visible, other, ...unknownItems].filter((item) => Number(item.count || 0) > 0);
+  }
+
+  function isUnknownDemographicItem(item) {
+    return item?.key === "Unknown" ||
+      item?.countryValue === "Unknown" ||
+      item?.unknownAge ||
+      item?.unknownRange ||
+      item?.unknownRating ||
+      item?.metricUnknown ||
+      item?.customTagUnknown;
+  }
+
+  function setPieHoverState(pie, item, active) {
+    const chart = pie.closest(".studio-dashboard__demographic-chart");
+    const index = String(item.sourceIndex ?? "");
+    chart?.querySelectorAll(`[data-item-index="${escapeSelectorValue(index)}"]`).forEach((element) => {
+      element.classList.toggle("is-hovered", active);
+    });
+  }
+
+  function showPieTooltip(pie, item, unit, type, event) {
+    const tooltip = pie.querySelector(".studio-dashboard__demographic-tooltip");
+    if (!(tooltip instanceof HTMLElement)) return;
+    const colorIndex = Number(item.sourceIndex ?? 0);
+    const performer = getRepresentativePerformer(item);
+    const imageHeight = getDemographicTooltipImageHeight();
+    const showImage = imageHeight > 0 && performer?.imagePath;
+    tooltip.style.setProperty("--studio-dashboard-demo-color", DEMOGRAPHIC_COLORS[colorIndex % DEMOGRAPHIC_COLORS.length]);
+    tooltip.style.setProperty("--studio-dashboard-tooltip-image-height", `${imageHeight}px`);
+    tooltip.innerHTML = `
+      ${showImage ? `
+        <span class="studio-dashboard__demographic-tooltip-image">
+          <img src="${escapeHtml(performer.imagePath)}" alt="${escapeHtml(performer.name)}">
+        </span>
+      ` : ""}
+      <span class="studio-dashboard__demographic-tooltip-copy">
+        <strong>${escapeHtml(getPieTooltipLabel(item, type))}</strong>
+        <span>${escapeHtml(item.count)}${item.percent ? `, ${escapeHtml(item.percent)}%` : ""}</span>
+        ${showImage ? `<em>${escapeHtml(performer.name)}</em>` : ""}
+      </span>
+    `;
+    tooltip.classList.add("is-visible");
+    positionPieTooltip(pie, event);
+  }
+
+  function getRepresentativePerformer(item) {
+    return (item?.performers || [])
+      .filter((performer) => performer?.imagePath)
+      .slice()
+      .sort((left, right) => {
+        const ratingDiff = Number(right.performerRating || 0) - Number(left.performerRating || 0);
+        if (ratingDiff) return ratingDiff;
+        return String(left.name || "").localeCompare(String(right.name || ""));
+      })[0] || null;
+  }
+
+  function positionPieTooltip(pie, event) {
+    const tooltip = pie.querySelector(".studio-dashboard__demographic-tooltip");
+    if (!(tooltip instanceof HTMLElement) || !event) return;
+    const rect = pie.getBoundingClientRect();
+    const tooltipWidth = tooltip.offsetWidth || 180;
+    const tooltipHeight = tooltip.offsetHeight || 56;
+    const pad = 8;
+    let x = event.clientX + 14;
+    let y = event.clientY - tooltipHeight / 2;
+    if (x + tooltipWidth > window.innerWidth - pad) x = event.clientX - tooltipWidth - 14;
+    x = Math.max(pad, Math.min(window.innerWidth - tooltipWidth - pad, x));
+    y = Math.max(pad, Math.min(window.innerHeight - tooltipHeight - pad, y));
+    tooltip.style.setProperty("--studio-dashboard-tooltip-x", `${x - rect.left}px`);
+    tooltip.style.setProperty("--studio-dashboard-tooltip-y", `${y - rect.top}px`);
+  }
+
+  function getElementCenterEvent(element) {
+    const rect = element?.getBoundingClientRect?.();
+    if (!rect) return null;
+    return {
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+    };
+  }
+
+  function hidePieTooltip(pie) {
+    const tooltip = pie.querySelector(".studio-dashboard__demographic-tooltip");
+    if (tooltip instanceof HTMLElement) tooltip.classList.remove("is-visible");
+  }
+
+  function getPieTooltipLabel(item, type) {
+    if (type !== "country") return String(item.label || "");
+    if (item.key === "Other") return "Other";
+    if (item.key === "Unknown" || item.countryValue === "Unknown") return "Unknown";
+    return formatCountryLabel(item.countryValue || item.key || item.label);
+  }
+
+  function setDemographicHoverState(row, active, item = null, unit = "", type = "") {
+    const chart = row.closest(".studio-dashboard__demographic-chart");
+    const index = row.dataset.itemIndex || "";
+    const slices = chart?.querySelectorAll(`.studio-dashboard__demographic-slice[data-item-index="${escapeSelectorValue(index)}"]`) || [];
+    slices.forEach((element) => {
+      element.classList.toggle("is-hovered", active);
+      const pie = element.closest(".studio-dashboard__demographic-pie");
+      if (!(pie instanceof HTMLElement) || !item) return;
+      if (active) {
+        showPieTooltip(pie, element.studioDashboardItem || item, unit, type, getElementCenterEvent(element));
+      } else {
+        hidePieTooltip(pie);
+      }
+    });
+  }
+
+  function togglePieSliceSelection(pie, item) {
+    const chart = pie.closest(".studio-dashboard__demographic-chart");
+    const row = chart?.querySelector(`.studio-dashboard__demographic-row[data-item-index="${escapeSelectorValue(item.sourceIndex)}"]`);
+    if (row instanceof HTMLElement) toggleDemographicSelection(row, "include");
+  }
+
+  function escapeSelectorValue(value) {
+    const stringValue = String(value ?? "");
+    return window.CSS?.escape ? CSS.escape(stringValue) : stringValue.replace(/["\\]/g, "\\$&");
+  }
+
+  function describePieSlice(cx, cy, radius, startAngle, endAngle) {
+    const start = polarToCartesian(cx, cy, radius, endAngle);
+    const end = polarToCartesian(cx, cy, radius, startAngle);
+    const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+    return [
+      `M ${cx} ${cy}`,
+      `L ${start.x} ${start.y}`,
+      `A ${radius} ${radius} 0 ${largeArcFlag} 0 ${end.x} ${end.y}`,
+      "Z",
+    ].join(" ");
+  }
+
+  function polarToCartesian(cx, cy, radius, angle) {
+    const radians = ((angle - 90) * Math.PI) / 180;
+    return {
+      x: Math.round((cx + radius * Math.cos(radians)) * 1000) / 1000,
+      y: Math.round((cy + radius * Math.sin(radians)) * 1000) / 1000,
+    };
+  }
+
+  function getPieItems(items) {
+    if (!items.length) return items;
+    const knownItems = items.filter((item) => item.countryValue !== "Unknown" && item.key !== "Unknown");
+    const unknownItems = items.filter((item) => item.countryValue === "Unknown" || item.key === "Unknown");
+    if (knownItems.length <= DEMOGRAPHIC_PIE_TOP_COUNTRIES && !unknownItems.length) return items;
+    const visible = knownItems.slice(0, DEMOGRAPHIC_PIE_TOP_COUNTRIES);
+    const otherItems = knownItems.slice(DEMOGRAPHIC_PIE_TOP_COUNTRIES);
+    const otherCount = otherItems.reduce((total, item) => total + Number(item.count || 0), 0);
+    const total = items.reduce((sum, item) => sum + Number(item.count || 0), 0);
+    const pieItems = [...visible];
+    if (otherCount > 0) {
+      pieItems.push({
+        key: "Other",
+        label: "Other",
+        filterLabel: "Other",
+        countryValues: uniqueValues(otherItems.flatMap((item) => item.countryValues || item.countryValue || item.key || []))
+          .filter((value) => value && value !== "Unknown"),
+        performers: otherItems.flatMap((item) => item.performers || []),
+        performerIds: uniqueValues(otherItems.flatMap((item) => item.performerIds || [])),
+        count: otherCount,
+        percent: formatPercent(otherCount, total),
+        filterable: otherItems.length > 0,
+      });
+    }
+    const unknownCount = unknownItems.reduce((sum, item) => sum + Number(item.count || 0), 0);
+    if (unknownCount > 0) {
+      pieItems.push({
+        key: "Unknown",
+        label: "Unknown",
+        filterLabel: "Unknown",
+        countryValue: "Unknown",
+        performers: unknownItems.flatMap((item) => item.performers || []),
+        performerIds: uniqueValues(unknownItems.flatMap((item) => item.performerIds || [])),
+        count: unknownCount,
+        percent: formatPercent(unknownCount, total),
+        filterable: true,
+      });
+    }
+    return pieItems.filter((item) => Number(item.count || 0) > 0);
+  }
+
+  function toggleDemographicSelection(row, mode) {
+    const current = row.dataset.filterMode || "";
+    setDemographicSelection(row, current === mode ? "" : mode);
+  }
+
+  function setDemographicSelection(row, mode) {
+    if (row?.dataset?.filterable === "false") return;
+    const chart = row.closest(".studio-dashboard__demographic-chart");
+    if (chart?.studioDashboardType === "scene-resolution" && mode) {
+      chart.querySelectorAll(".studio-dashboard__demographic-row").forEach((otherRow) => {
+        if (otherRow !== row) setDemographicSelection(otherRow, "");
+      });
+    }
+    row.dataset.filterMode = mode || "";
+    row.classList.toggle("is-include", mode === "include");
+    row.classList.toggle("is-exclude", mode === "exclude");
+    row.querySelectorAll("[data-filter-mode]").forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.filterMode === mode);
+    });
+    syncDemographicSliceSelection(chart, row.dataset.itemIndex || "", mode);
+    updateDemographicGoState(chart);
+  }
+
+  function syncDemographicSliceSelection(chart, itemIndex, mode) {
+    if (!(chart instanceof HTMLElement)) return;
+    chart.querySelectorAll(`.studio-dashboard__demographic-slice[data-item-index="${escapeSelectorValue(itemIndex)}"]`).forEach((slice) => {
+      slice.classList.toggle("is-include", mode === "include");
+      slice.classList.toggle("is-exclude", mode === "exclude");
+    });
+  }
+
+  function updateDemographicGoState(chart) {
+    if (!(chart instanceof HTMLElement)) return;
+    const hasSelection = Array.from(chart.querySelectorAll(".studio-dashboard__demographic-row")).some((row) => {
+      return row.dataset.filterMode === "include" || row.dataset.filterMode === "exclude";
+    });
+    chart.querySelectorAll("[data-demo-action='go'], [data-demo-action='update']").forEach((button) => {
+      if (!(button instanceof HTMLButtonElement)) return;
+      button.disabled = !hasSelection;
+      button.classList.toggle("is-ready", hasSelection);
+    });
+  }
+
+  function getDemographicSelectionSets(chart) {
+    const include = new Set();
+    const exclude = new Set();
+    chart?.querySelectorAll(".studio-dashboard__demographic-row").forEach((row) => {
+      const index = row.dataset.itemIndex || "";
+      if (!index) return;
+      if (row.dataset.filterMode === "include") include.add(index);
+      if (row.dataset.filterMode === "exclude") exclude.add(index);
+    });
+    return { include, exclude };
+  }
+
+  function getUpdatedDemographicItems(items, selections) {
+    const include = selections?.include || new Set();
+    const exclude = selections?.exclude || new Set();
+    return (items || []).filter((item) => {
+      const index = String(item.sourceIndex ?? "");
+      if (exclude.has(index)) return false;
+      return include.size ? include.has(index) : true;
+    });
+  }
+
+  function updateDemographicChartView(chart) {
+    if (!(chart instanceof HTMLElement)) return;
+    const selections = getDemographicSelectionSets(chart);
+    const unit = chart.studioDashboardUnit || "";
+    const type = chart.studioDashboardType || "";
+    const subcharts = Array.isArray(chart.studioDashboardSubcharts) ? chart.studioDashboardSubcharts : [];
+
+    if (subcharts.length) {
+      const wraps = Array.from(chart.querySelectorAll(".studio-dashboard__demographic-pie-wrap"));
+      subcharts.forEach((subchart, index) => {
+        const wrap = wraps[index];
+        if (!(wrap instanceof HTMLElement)) return;
+        wrap.querySelectorAll(".studio-dashboard__demographic-pie").forEach((pie) => pie.remove());
+        renderDemographicPie(wrap, getUpdatedDemographicItems(subchart.items || [], selections), unit, type);
+      });
+    } else {
+      const body = chart.querySelector(".studio-dashboard__demographic-body");
+      if (body instanceof HTMLElement) {
+        body.querySelectorAll(":scope > .studio-dashboard__demographic-pie").forEach((pie) => pie.remove());
+        renderDemographicPie(
+          body,
+          getUpdatedDemographicItems(chart.studioDashboardItems || [], selections),
+          unit,
+          type
+        );
+      }
+    }
+
+    chart.querySelectorAll(".studio-dashboard__demographic-row").forEach((row) => {
+      syncDemographicSliceSelection(chart, row.dataset.itemIndex || "", row.dataset.filterMode || "");
+    });
+  }
+
+  function openDemographicScenes(studio, type, items, rows) {
+    const includeItems = [];
+    const excludeItems = [];
+    rows.forEach((row, index) => {
+      const mode = row.dataset.filterMode || "";
+      if (mode === "include") includeItems.push(items[index]);
+      if (mode === "exclude") excludeItems.push(items[index]);
+    });
+    let criteria;
+    if (type === "country") {
+      criteria = buildCountryFilterCriteria(includeItems, excludeItems);
+    } else if (type === "custom-scene") {
+      criteria = buildSceneTagFilterCriteria(includeItems, excludeItems);
+    } else if (type === "scene-rating") {
+      criteria = buildSceneRatingFilterCriteria(includeItems, excludeItems);
+    } else if (type === "scene-resolution") {
+      criteria = buildSceneMetricFilterCriteria("resolution", includeItems, excludeItems);
+    } else if (type === "scene-duration") {
+      criteria = buildSceneMetricFilterCriteria("duration", includeItems, excludeItems);
+    } else if (type === "custom-performer" || type === "performer-rating") {
+      criteria = buildPerformerGroupFilterCriteria(includeItems, excludeItems);
+    } else {
+      criteria = buildAgeFilterCriteria(includeItems, excludeItems);
+    }
+    window.location.href = makeStudioScenesUrl(studio, criteria);
+  }
+
+  function formatPerformerMeta(performer) {
+    const studioScenes = Number(performer?.count || 0);
+    const allScenes = Number(performer?.allSceneCount || 0);
+    const studioTopRating = Number(performer?.studioTopRating || 0);
+    const allTopRating = Number(performer?.allTopRating || 0);
+    const studioOCount = Number(performer?.oCount || 0);
+    const allOCount = Number(performer?.allOCount || 0);
+    return `
+      <table class="studio-dashboard__performer-meta-table">
+        <thead>
+          <tr>
+            <th>Studio</th>
+            <th>All</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="studio-dashboard__meta-icon" title="Studio scenes">🎬</span>${formatPerformerMetricLink(performer, "studio", studioScenes, "date")}</td>
+            <td><span class="studio-dashboard__meta-icon" title="All scenes">🎬</span>${formatPerformerMetricLink(performer, "all", allScenes, "date")}</td>
+          </tr>
+          <tr>
+            <td><span class="studio-dashboard__meta-icon" title="Studio O's">${O_COUNT_ICON}</span>${formatPerformerMetricLink(performer, "studio", studioOCount, "o_counter")}</td>
+            <td><span class="studio-dashboard__meta-icon" title="All O's">${O_COUNT_ICON}</span>${formatPerformerMetricLink(performer, "all", allOCount, "o_counter")}</td>
+          </tr>
+          <tr>
+            <td><span class="studio-dashboard__meta-icon" title="Top rated studio scene">★</span>${formatRatingLink(performer, "studio", studioTopRating)}</td>
+            <td><span class="studio-dashboard__meta-icon" title="Top rated scene">★</span>${formatRatingLink(performer, "all", allTopRating)}</td>
+          </tr>
+        </tbody>
+      </table>
+    `;
+  }
+
+  function formatRatingLink(performer, scope, rating) {
+    const label = formatContentRating(rating);
+    if (Number(rating || 0) <= 0) return `<strong>${escapeHtml(label)}</strong>`;
+    return `<a class="studio-dashboard__meta-link" href="${escapeHtml(makePerformerScenesUrl(performer, scope, "rating"))}"><strong>${escapeHtml(label)}</strong></a>`;
+  }
+
+  function formatPerformerMetricLink(performer, scope, value, sortBy) {
+    const count = Number(value || 0);
+    if (count <= 0) return `<strong>${escapeHtml(count)}</strong>`;
+    return `<a class="studio-dashboard__meta-link" href="${escapeHtml(makePerformerScenesUrl(performer, scope, sortBy))}"><strong>${escapeHtml(count)}</strong></a>`;
+  }
+
+  function makePerformerScenesUrl(performer, scope, sortBy) {
+    const params = new URLSearchParams();
+    params.set("sortby", sortBy || "date");
+    params.set("sortdir", "desc");
+    if (scope === "studio" && performer?.studioId) {
+      params.append("c", JSON.stringify({
+        type: "studios",
+        value: {
+          items: [{ id: String(performer.studioId), label: String(performer.studioName || "Studio") }],
+          excluded: [],
+          depth: -1,
+        },
+        modifier: "INCLUDES",
+      }));
+    }
+    const query = params.toString();
+    return `/performers/${encodeURIComponent(performer?.id || "")}/scenes${query ? `?${query}` : ""}`;
+  }
+
+  function formatPerformerName(performer) {
+    const performerRating = Number(performer?.performerRating || 0);
+    return `
+      <span class="studio-dashboard__performer-name">${escapeHtml(performer.name)}</span>
+      <span class="studio-dashboard__performer-rating">
+        <span class="studio-dashboard__meta-icon" title="Performer rating">★</span><strong>${escapeHtml(formatRating(performerRating))}</strong>
+      </span>
+    `;
+  }
+
+  function renderPerformerCards(container, performers, options = {}) {
+    const showMeta = options.showMeta !== false;
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__cards";
+    performers.forEach((performer) => {
+      const card = document.createElement("a");
+      card.className = "studio-dashboard__card";
+      card.href = `/performers/${encodeURIComponent(performer.id)}`;
+      card.innerHTML = `
+        ${performer.metricTitle ? `<div class="studio-dashboard__card-kicker">${escapeHtml(performer.metricTitle)}</div>` : ""}
+        <div class="studio-dashboard__card-name studio-dashboard__performer-title">${formatPerformerName(performer)}</div>
+        ${performer.imagePath ? `<img src="${escapeHtml(performer.imagePath)}" alt="${escapeHtml(performer.name)}">` : ""}
+        ${showMeta ? `<div class="studio-dashboard__muted studio-dashboard__performer-meta">${formatPerformerMeta(performer)}</div>` : ""}
+      `;
+      grid.appendChild(card);
+    });
+    container.appendChild(grid);
+  }
+
+  function renderTagCards(container, studio, tags) {
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__tag-cards";
+    tags.forEach((tag) => {
+      const card = document.createElement("a");
+      card.className = "studio-dashboard__tag-card";
+      card.href = makeStudioTagUrl(studio, tag);
+      card.innerHTML = `
+        <span class="studio-dashboard__tag-image">
+          ${tag.imagePath ? `<img src="${escapeHtml(tag.imagePath)}" alt="${escapeHtml(tag.name)}">` : ""}
+        </span>
+        <span class="studio-dashboard__card-name">${escapeHtml(tag.name)}</span>
+        <span class="studio-dashboard__muted studio-dashboard__tag-meta">
+          <span class="studio-dashboard__meta-icon" title="Scenes">🎬</span><strong>${escapeHtml(tag.count)}</strong>
+        </span>
+      `;
+      grid.appendChild(card);
+    });
+    container.appendChild(grid);
+  }
+
+  function makeStudioTagUrl(studio, tag) {
+    return makeStudioScenesUrl(studio, [buildTagCriterion(tag)]);
+  }
+
+  function buildTagCriterion(tag, modifier = "INCLUDES") {
+    return buildTagListCriterion([tag], modifier);
+  }
+
+  function buildTagListCriterion(tags, modifier = "INCLUDES") {
+    const items = (tags || [])
+      .filter((tag) => tag?.id)
+      .map((tag) => ({ id: String(tag.id), label: String(tag.name || "Tag") }));
+    if (!items.length) return null;
+    return {
+      type: "tags",
+      value: {
+        items,
+        excluded: [],
+        depth: -1,
+      },
+      modifier,
+    };
+  }
+
+  function buildCountryFilterCriteria(includeItems, excludeItems) {
+    const criteria = [];
+    const included = normalizePerformerFilterItems(includeItems);
+    const excluded = normalizePerformerFilterItems(excludeItems);
+    if (included.length) {
+      criteria.push(buildPerformerCriterion(included, "INCLUDES"));
+    }
+    if (excluded.length) {
+      criteria.push(buildPerformerCriterion(excluded, "EXCLUDES"));
+    }
+    return criteria;
+  }
+
+  function buildPerformerGroupFilterCriteria(includeItems, excludeItems) {
+    const criteria = [];
+    const included = normalizePerformerFilterItems(includeItems);
+    const excluded = normalizePerformerFilterItems(excludeItems);
+    if (included.length) criteria.push(buildPerformerCriterion(included, "INCLUDES"));
+    if (excluded.length) criteria.push(buildPerformerCriterion(excluded, "EXCLUDES"));
+    return criteria;
+  }
+
+  function buildSceneTagFilterCriteria(includeItems, excludeItems) {
+    return [
+      ...includeItems.map((item) => item?.customExcludeTags?.length
+        ? buildTagListCriterion(item.customExcludeTags, "EXCLUDES")
+        : item?.customTag ? buildTagCriterion(item.customTag, "INCLUDES") : null),
+      ...excludeItems.map((item) => item?.customExcludeTags?.length
+        ? buildTagListCriterion(item.customExcludeTags, "INCLUDES")
+        : item?.customTag ? buildTagCriterion(item.customTag, "EXCLUDES") : null),
+    ].filter(Boolean);
+  }
+
+  function buildSceneRatingFilterCriteria(includeItems, excludeItems) {
+    return [
+      ...includeItems.map((item) => buildRatingCriterion(item, false)),
+      ...excludeItems.map((item) => buildRatingCriterion(item, true)),
+    ].filter(Boolean);
+  }
+
+  function buildSceneMetricFilterCriteria(metricType, includeItems, excludeItems) {
+    return [
+      ...includeItems.map((item) => buildMetricCriterion(metricType, item, false)),
+      ...excludeItems.map((item) => buildMetricCriterion(metricType, item, true)),
+    ].filter(Boolean);
+  }
+
+  function buildAgeFilterCriteria(includeItems, excludeItems) {
+    return [
+      ...includeItems.map((item) => item?.unknownAge || item?.otherAge
+        ? buildPerformerCriterion(normalizePerformerFilterItems([item]), "INCLUDES")
+        : buildPerformerAgeCriterion(item, false)),
+      ...excludeItems.map((item) => item?.unknownAge || item?.otherAge
+        ? buildPerformerCriterion(normalizePerformerFilterItems([item]), "EXCLUDES")
+        : buildPerformerAgeCriterion(item, true)),
+    ].filter(Boolean);
+  }
+
+  function normalizePerformerFilterItems(items) {
+    const performers = [];
+    (items || []).forEach((item) => {
+      if (Array.isArray(item?.performers) && item.performers.length) {
+        item.performers.forEach((performer) => {
+          if (performer?.id) performers.push({ id: String(performer.id), label: String(performer.name || "Performer") });
+        });
+        return;
+      }
+      (item?.performerIds || []).forEach((id) => performers.push({ id: String(id), label: String(item?.filterLabel || item?.label || "Performer") }));
+    });
+    const seen = new Set();
+    return performers.filter((performer) => {
+      if (!performer.id || seen.has(performer.id)) return false;
+      seen.add(performer.id);
+      return true;
+    });
+  }
+
+  function buildPerformerCriterion(items, modifier) {
+    if (!items.length) return null;
+    return {
+      type: "performers",
+      value: {
+        items: items.map((item) => ({ id: String(item.id), label: String(item.label || "Performer") })),
+        excluded: [],
+      },
+      modifier,
+    };
+  }
+
+  function buildPerformerAgeCriterion(item, exclude = false) {
+    if (!item) return null;
+    const min = item.min == null ? null : Number(item.min);
+    const max = item.max == null ? null : Number(item.max);
+    if (min != null && max != null && min === max) {
+      return {
+        type: "performer_age",
+        value: { value: min },
+        modifier: exclude ? "NOT_EQUALS" : "EQUALS",
+      };
+    }
+    if (min != null && max != null) {
+      return {
+        type: "performer_age",
+        value: { value: min, value2: max },
+        modifier: exclude ? "NOT_BETWEEN" : "BETWEEN",
+      };
+    }
+    if (min != null) {
+      return {
+        type: "performer_age",
+        value: { value: exclude ? min : Math.max(0, min - 1) },
+        modifier: exclude ? "LESS_THAN" : "GREATER_THAN",
+      };
+    }
+    if (max != null) {
+      return {
+        type: "performer_age",
+        value: { value: exclude ? max : max + 1 },
+        modifier: exclude ? "GREATER_THAN" : "LESS_THAN",
+      };
+    }
+    return null;
+  }
+
+  function buildRatingCriterion(item, exclude = false) {
+    if (!item || item.otherRating) return null;
+    if (item.unknownRating) {
+      return {
+        type: "rating",
+        value: { value: 0 },
+        modifier: exclude ? "NOT_EQUALS" : "EQUALS",
+      };
+    }
+    const min = item.min == null ? null : Math.round(Number(item.min) * 10);
+    const max = item.max == null ? null : Math.round(Number(item.max) * 10);
+    if (min != null && max != null && min === max) {
+      return {
+        type: "rating",
+        value: { value: min },
+        modifier: exclude ? "NOT_EQUALS" : "EQUALS",
+      };
+    }
+    if (min != null && max != null) {
+      return {
+        type: "rating",
+        value: { value: min, value2: max },
+        modifier: exclude ? "NOT_BETWEEN" : "BETWEEN",
+      };
+    }
+    if (min != null) {
+      return {
+        type: "rating",
+        value: { value: exclude ? min : Math.max(0, min - 1) },
+        modifier: exclude ? "LESS_THAN" : "GREATER_THAN",
+      };
+    }
+    if (max != null) {
+      return {
+        type: "rating",
+        value: { value: exclude ? max : max + 1 },
+        modifier: exclude ? "GREATER_THAN" : "LESS_THAN",
+      };
+    }
+    return null;
+  }
+
+  function buildMetricCriterion(metricType, item, exclude = false) {
+    if (!item || item.metricOther || item.metricUnknown) return null;
+    if (metricType === "resolution") return buildResolutionCriterion(item, exclude);
+    const type = metricType === "duration" ? "duration" : "resolution";
+    const multiplier = metricType === "duration" ? 60 : 1;
+    const min = item.min == null ? null : Math.round(Number(item.min) * multiplier);
+    const max = item.max == null ? null : Math.round(Number(item.max) * multiplier);
+    if (min != null && max != null && (min === max || item.exact)) {
+      return {
+        type,
+        value: { value: min },
+        modifier: exclude ? "NOT_EQUALS" : "EQUALS",
+      };
+    }
+    if (min != null && max != null) {
+      return {
+        type,
+        value: { value: min, value2: Math.max(min, max - 1) },
+        modifier: exclude ? "NOT_BETWEEN" : "BETWEEN",
+      };
+    }
+    if (min != null) {
+      return {
+        type,
+        value: { value: exclude ? min : Math.max(0, min - 1) },
+        modifier: exclude ? "LESS_THAN" : "GREATER_THAN",
+      };
+    }
+    if (max != null) {
+      return {
+        type,
+        value: { value: exclude ? Math.max(0, max - 1) : max },
+        modifier: exclude ? "GREATER_THAN" : "LESS_THAN",
+      };
+    }
+    return null;
+  }
+
+  function buildResolutionCriterion(item, exclude = false) {
+    if (!item?.enumValue) return null;
+    return {
+      type: "resolution",
+      value: {
+        id: item.enumValue,
+        value: item.enumValue,
+        label: item.label || item.enumValue,
+      },
+      modifier: exclude ? "NOT_EQUALS" : "EQUALS",
+    };
+  }
+
+  function buildDateCriterion(item) {
+    return {
+      type: "date",
+      value: {
+        value: item.startDate,
+        value2: item.endDate,
+      },
+      modifier: "BETWEEN",
+    };
+  }
+
+  function makeStudioScenesUrl(studio, criteria = []) {
+    const params = new URLSearchParams();
+    criteria.filter(Boolean).forEach((criterion) => params.append("c", JSON.stringify(criterion)));
+    const query = params.toString();
+    if (!studio?.id) return `/scenes${query ? `?${query}` : ""}`;
+    return `/studios/${encodeURIComponent(studio.id)}/scenes${query ? `?${query}` : ""}`;
+  }
+
+  function renderReleaseTimeline(container, studio, timeline) {
+    const items = getTimelineItems(timeline);
+    if (!items.length) return;
+
+    const isDashboard = Boolean(container?.closest?.(".studio-dashboard__page-dashboard"));
+    const section = isDashboard ? createPageSection(container, "RELEASE TIMELINE") : createSection(container);
+    if (!isDashboard) {
+      const title = document.createElement("div");
+      title.className = "studio-dashboard__section-title";
+      title.textContent = "Release timeline";
+      section.appendChild(title);
+    }
+
+    const chart = document.createElement("div");
+    chart.className = "studio-dashboard__timeline";
+    chart.style.setProperty("--studio-dashboard-timeline-count", String(items.length));
+    const yearGroups = getTimelineYearGroups(items);
+    const yearGroupMap = new Map(yearGroups.map((group, index) => [group.year, index]));
+    const yearRow = document.createElement("div");
+    yearRow.className = "studio-dashboard__timeline-years";
+    yearGroups.forEach((group, index) => {
+      const year = document.createElement("span");
+      year.className = `studio-dashboard__timeline-year ${index % 2 ? "is-alt" : "is-base"}`;
+      year.style.gridColumn = `span ${group.span}`;
+      year.textContent = group.year;
+      yearRow.appendChild(year);
+    });
+    chart.appendChild(yearRow);
+
+    const barRow = document.createElement("div");
+    barRow.className = "studio-dashboard__timeline-bars";
+    barRow.style.setProperty("--studio-dashboard-timeline-count", String(items.length));
+    items.forEach((item) => {
+      const bar = document.createElement("a");
+      const groupIndex = yearGroupMap.get(item.year) || 0;
+      bar.className = `studio-dashboard__timeline-bar ${groupIndex % 2 ? "is-alt" : "is-base"}`;
+      bar.href = makeStudioScenesUrl(studio, [buildDateCriterion(item)]);
+      if (!item.count) bar.classList.add("is-empty");
+      bar.style.setProperty("--studio-dashboard-bar-value", String(item.count / item.max));
+      bar.title = `${item.label}: ${item.count} scene${item.count === 1 ? "" : "s"}`;
+      bar.innerHTML = `
+        <span class="studio-dashboard__timeline-fill"></span>
+        <span class="studio-dashboard__timeline-count">${escapeHtml(item.count)}</span>
+        <span class="studio-dashboard__timeline-label">${escapeHtml(item.label)}</span>
+      `;
+      barRow.appendChild(bar);
+    });
+    chart.appendChild(barRow);
+    section.appendChild(chart);
+
+    const range = document.createElement("div");
+    range.className = "studio-dashboard__timeline-range";
+    range.textContent = `${items[0].label} - ${items[items.length - 1].label}`;
+    section.appendChild(range);
+  }
+
+  function renderSceneCard(container, scene, meta) {
+    const card = document.createElement("a");
+    card.className = "studio-dashboard__scene";
+    card.href = `/scenes/${encodeURIComponent(scene.id)}`;
+    card.innerHTML = `
+      <span class="studio-dashboard__scene-media">
+        ${scene.screenshot ? `<img src="${escapeHtml(scene.screenshot)}" alt="${escapeHtml(scene.title)}">` : ""}
+        ${scene.preview ? `<video src="${escapeHtml(scene.preview)}" muted loop playsinline preload="none"></video>` : ""}
+      </span>
+      <div class="studio-dashboard__scene-title">${escapeHtml(scene.title)}</div>
+      <div class="studio-dashboard__muted studio-dashboard__scene-meta">${formatSceneMeta(meta)}</div>
+    `;
+    const video = card.querySelector("video");
+    if (video instanceof HTMLVideoElement) {
+      card.addEventListener("mouseenter", () => {
+        video.currentTime = 0;
+        video.play().catch(() => {});
+      });
+      card.addEventListener("mouseleave", () => {
+        video.pause();
+        video.currentTime = 0;
+      });
+    }
+    container.appendChild(card);
+  }
+
+  function formatRating(rating100) {
+    const value = Number(rating100 || 0);
+    if (!value) return "Unrated";
+    return (value / 10).toFixed(1);
+  }
+
+  function formatContentRating(rating100) {
+    const value = Number(rating100 || 0);
+    return value > 0 ? formatRating(value) : "N/A";
+  }
+
+  function formatSceneMeta(meta) {
+    const text = String(meta || "").trim();
+    if (!text) return "";
+    if (/^\d+(?:\.\d+)?$/.test(text) || text === "Unrated") {
+      return `<span class="studio-dashboard__meta-icon" title="Rating">★</span><strong>${escapeHtml(text)}</strong>`;
+    }
+    if (/O(?:'s|-count)?$/i.test(text)) {
+      const value = text.replace(/\s*O(?:'s|-count)?$/i, "");
+      return `<span class="studio-dashboard__meta-icon" title="O's">${O_COUNT_ICON}</span><strong>${escapeHtml(value)}</strong>`;
+    }
+    return escapeHtml(text);
+  }
+
+  function formatDate(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    return text;
+  }
+
+  async function handleHoverEnter(event) {
+    const anchor = event.currentTarget;
+    if (!(anchor instanceof HTMLElement)) return;
+    if (!getDisplayProfile()) return;
+    if (
+      anchor.dataset.studioDashboardSource === "browser" &&
+      !getConfigBoolean(getSetting("a01ShowOnBrowserPages", "showOnBrowserPages"), false)
+    ) {
+      return;
+    }
+    const studio = {
+      id: anchor.getAttribute("data-studio-dashboard-id"),
+      name: anchor.getAttribute("data-studio-dashboard-name"),
+    };
+    const tooltip = createTooltip(anchor, studio);
+    try {
+      const stats = await fetchStudioStats(studio);
+      if (state.tooltip === tooltip) {
+        tooltip.innerHTML = `
+          <a class="studio-dashboard__hover-title" href="/studios/${encodeURIComponent(stats.studio.id)}">${escapeHtml(stats.studio.name)}</a>
+          <div class="studio-dashboard__hover-body"></div>
+        `;
+        renderStatsInto(tooltip.querySelector(".studio-dashboard__hover-body"), stats);
+        positionTooltip(anchor, tooltip);
+      }
+    } catch (err) {
+      console.warn("[StudioDashboard] Stats failed", err);
+      if (state.tooltip === tooltip) {
+        tooltip.innerHTML = `
+          <a class="studio-dashboard__hover-title" href="/studios/${encodeURIComponent(studio.id || "")}">${escapeHtml(studio.name || "Studio")}</a>
+          <div class="studio-dashboard__status">Could not load studio stats.</div>
+        `;
+      }
+    }
+  }
+
+  function handleHoverLeave(event) {
+    if (event.relatedTarget instanceof Node && state.tooltip?.contains(event.relatedTarget)) {
+      return;
+    }
+    if (event.currentTarget === state.tooltipAnchor) scheduleTooltipClose();
+  }
+
+  function cancelTooltipClose() {
+    window.clearTimeout(state.tooltipCloseTimer);
+    state.tooltipCloseTimer = 0;
+  }
+
+  function scheduleTooltipClose() {
+    cancelTooltipClose();
+    state.tooltipCloseTimer = window.setTimeout(closeTooltip, 140);
+  }
+
+  function closeTooltip() {
+    cancelTooltipClose();
+    state.tooltip?.remove();
+    state.tooltip = null;
+    state.tooltipAnchor = null;
+  }
+
+  function removeStudioPageDashboard() {
+    state.studioPageNav?.remove();
+    state.studioPageHost?.remove();
+    state.studioPageNav = null;
+    state.studioPageHost = null;
+    state.studioPageId = "";
+  }
+
+  function findStudioPageDashboardMount(studioId) {
+    const directRoot = document.querySelector(".studio-tabs");
+    const roots = [];
+    if (directRoot instanceof HTMLElement) roots.push(directRoot);
+
+    document.querySelectorAll(".nav-tabs").forEach((tabs) => {
+      if (!(tabs instanceof HTMLElement)) return;
+      const hasStudioLink = Array.from(tabs.querySelectorAll("a[href]")).some((link) => {
+        if (!(link instanceof HTMLAnchorElement)) return false;
+        return link.pathname.startsWith(`/studios/${studioId}/`) || link.pathname === `/studios/${studioId}`;
+      });
+      if (!hasStudioLink) return;
+      const root = tabs.closest(".studio-tabs") || tabs.parentElement;
+      if (root instanceof HTMLElement && !roots.includes(root)) roots.push(root);
+    });
+
+    for (const root of roots) {
+      const navTabs = root.querySelector(".nav-tabs");
+      const tabContent = root.querySelector(".tab-content");
+      if (navTabs instanceof HTMLElement && tabContent instanceof HTMLElement) {
+        return { navTabs, tabContent };
+      }
+    }
+
+    return null;
+  }
+
+  function setStudioDashboardStatus(panel, message) {
+    if (panel instanceof HTMLElement) {
+      panel.innerHTML = `<div class="studio-dashboard__status">${escapeHtml(message)}</div>`;
+    }
+  }
+
+  function activateStudioDashboardTab(nav, panel, mount) {
+    mount.navTabs.querySelectorAll(".nav-link").forEach((link) => link.classList.remove("active"));
+    mount.tabContent.querySelectorAll(".tab-pane").forEach((pane) => pane.classList.remove("active", "show"));
+    nav.classList.add("active");
+    panel.classList.add("active", "show");
+  }
+
+  function loadStudioPageDashboard(studioId, panel) {
+    if (!(panel instanceof HTMLElement) || panel.dataset.studioDashboardLoaded === "true") return;
+    const token = ++state.studioPageRenderToken;
+    panel.dataset.studioDashboardLoading = "true";
+    setStudioDashboardStatus(panel, "Loading studio dashboard...");
+
+    fetchStudioById(studioId)
+      .then((studio) => {
+        if (!studio?.id) throw new Error("Studio not found");
+        return fetchStudioStats(studio, {
+          onProgress: (message) => {
+            if (state.studioPageHost === panel) setStudioDashboardStatus(panel, message);
+          },
+        });
+      })
+      .then((stats) => {
+        if (
+          token !== state.studioPageRenderToken ||
+          state.studioPageId !== studioId ||
+          state.studioPageHost !== panel
+        ) {
+          return;
+        }
+        panel.dataset.studioDashboardLoaded = "true";
+        panel.dataset.studioDashboardLoading = "false";
+        renderStudioPageDashboard(panel, stats);
+      })
+      .catch((err) => {
+        console.warn("[StudioDashboard] Studio page dashboard failed", err);
+        if (state.studioPageHost === panel) {
+          panel.dataset.studioDashboardLoading = "false";
+          setStudioDashboardStatus(panel, "Could not load studio dashboard.");
+        }
+      });
+  }
+
+  function ensureStudioPageDashboard() {
+    const studioId = getStudioPageId();
+    if (!studioId) {
+      removeStudioPageDashboard();
+      return;
+    }
+
+    if (
+      state.studioPageHost?.isConnected &&
+      state.studioPageNav?.isConnected &&
+      state.studioPageId === studioId
+    ) {
+      return;
+    }
+
+    const mount = findStudioPageDashboardMount(studioId);
+    if (!mount?.navTabs || !mount?.tabContent) return;
+
+    removeStudioPageDashboard();
+    const nav = document.createElement("a");
+    nav.className = "nav-item nav-link studio-dashboard__dashboard-tab-link";
+    nav.href = "#";
+    nav.textContent = "Dashboard";
+    nav.dataset.rbEventKey = STUDIO_DASHBOARD_TAB_KEY;
+
+    const host = document.createElement("div");
+    host.className = "tab-pane fade studio-dashboard__page-dashboard";
+    host.dataset.rbEventKey = STUDIO_DASHBOARD_TAB_KEY;
+    host.dataset.studioDashboardStudioId = studioId;
+    host.innerHTML = `<div class="studio-dashboard__status">Select Dashboard to load studio stats.</div>`;
+    mount.navTabs.appendChild(nav);
+    mount.tabContent.appendChild(host);
+    nav.addEventListener("click", (event) => {
+      event.preventDefault();
+      activateStudioDashboardTab(nav, host, mount);
+      loadStudioPageDashboard(studioId, host);
+    });
+    mount.navTabs.addEventListener("click", (event) => {
+      const link = event.target instanceof Element ? event.target.closest(".nav-link") : null;
+      if (!link || link === nav) return;
+      nav.classList.remove("active");
+      host.classList.remove("active", "show");
+    });
+    state.studioPageNav = nav;
+    state.studioPageHost = host;
+    state.studioPageId = studioId;
+  }
+
+  function isStashDashboardRoute() {
+    return window.location.pathname === DASHBOARD_PATH;
+  }
+
+  function ensureStashDashboardNav() {
+    if (state.dashboardNav?.isConnected) return;
+    const navHost =
+      document.querySelector(".navbar-nav") ||
+      document.querySelector(".navbar-buttons") ||
+      document.querySelector(".navbar");
+    if (!(navHost instanceof HTMLElement)) return;
+
+    const nav = document.createElement("a");
+    nav.className = "nav-link stash-dashboard__nav-link";
+    nav.href = DASHBOARD_PATH;
+    nav.innerHTML = `<span class="stash-dashboard__nav-icon" aria-hidden="true"></span><span>Dashboard</span>`;
+    nav.addEventListener("click", (event) => {
+      event.preventDefault();
+      history.pushState({}, "", DASHBOARD_PATH);
+      ensureStashDashboardRoute();
+      window.dispatchEvent(new Event(ROUTE_EVENT));
+    });
+    if (navHost.classList.contains("navbar-nav")) {
+      const item = document.createElement("li");
+      item.className = "nav-item stash-dashboard__nav-item";
+      item.appendChild(nav);
+      navHost.appendChild(item);
+    } else {
+      navHost.appendChild(nav);
+    }
+    state.dashboardNav = nav;
+  }
+
+  function removeStashDashboardRoute() {
+    state.dashboardHost?.remove();
+    state.dashboardHost = null;
+  }
+
+  function setStashDashboardStatus(host, message) {
+    if (host instanceof HTMLElement) {
+      host.innerHTML = `<div class="studio-dashboard__status">${escapeHtml(message)}</div>`;
+    }
+  }
+
+  function ensureStashDashboardRoute() {
+    if (!isStashDashboardRoute()) {
+      removeStashDashboardRoute();
+      return;
+    }
+    if (!state.dashboardHost?.isConnected) {
+      const host = document.createElement("main");
+      host.className = "stash-dashboard__route";
+      document.body.appendChild(host);
+      state.dashboardHost = host;
+    }
+    loadStashDashboardRoute(false);
+  }
+
+  function getSelectedDashboardStudios(host) {
+    const ids = new Set(
+      Array.from(host.querySelectorAll(".stash-dashboard__studio-check:checked"))
+        .map((input) => String(input.value || ""))
+        .filter(Boolean)
+    );
+    return (state.dashboardStudios || []).filter((studio) => ids.has(studio.id));
+  }
+
+  function getStudioGroupKey(name) {
+    const first = String(name || "").trim().charAt(0).toUpperCase();
+    if (!first) return "#";
+    if (/^[A-Z]$/.test(first)) return first;
+    if (/^[0-9]$/.test(first)) return "#";
+    return "#";
+  }
+
+  function renderDashboardStudioList(host, studios) {
+    const list = host.querySelector(".stash-dashboard__studio-list");
+    const loadButton = host.querySelector(".stash-dashboard__load-selected");
+    if (!(list instanceof HTMLElement)) return;
+    const selectedIds = new Set(
+      Array.from(host.querySelectorAll(".stash-dashboard__studio-check:checked"))
+        .map((input) => String(input.value || ""))
+        .filter(Boolean)
+    );
+    const searchInput = host.querySelector(".stash-dashboard__studio-search");
+    const query = searchInput instanceof HTMLInputElement ? searchInput.value.trim().toLowerCase() : "";
+    const visibleStudios = query
+      ? studios.filter((studio) => String(studio.name || "").toLowerCase().includes(query))
+      : studios;
+    if (!studios.length) {
+      list.innerHTML = `<div class="studio-dashboard__status">No studios found.</div>`;
+      if (loadButton instanceof HTMLButtonElement) loadButton.disabled = true;
+      return;
+    }
+    if (!visibleStudios.length) {
+      list.innerHTML = `<div class="studio-dashboard__status">No studios match the search.</div>`;
+      return;
+    }
+    const groups = new Map();
+    visibleStudios.forEach((studio) => {
+      const key = getStudioGroupKey(studio.name);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(studio);
+    });
+    const sortedKeys = Array.from(groups.keys()).sort((left, right) => {
+      if (left === "#") return -1;
+      if (right === "#") return 1;
+      return left.localeCompare(right);
+    });
+    list.innerHTML = sortedKeys.map((key, index) => `
+      <section class="stash-dashboard__studio-group ${index % 2 ? "is-alt" : "is-base"}">
+        <div class="stash-dashboard__studio-group-title">${escapeHtml(key)}</div>
+        <div class="stash-dashboard__studio-group-grid">
+          ${groups.get(key).map((studio) => `
+            <label class="stash-dashboard__studio-row">
+              <input class="stash-dashboard__studio-check" type="checkbox" value="${escapeHtml(studio.id)}"${selectedIds.has(studio.id) ? " checked" : ""}>
+              <span>${escapeHtml(studio.name)}</span>
+            </label>
+          `).join("")}
+        </div>
+      </section>
+    `).join("");
+    if (loadButton instanceof HTMLButtonElement) loadButton.disabled = false;
+  }
+
+  function renderDashboardLoadNote(content, stats) {
+    const summary = stats?.loadSummary || {};
+    if (!(summary.limited || summary.skippedScenes || summary.failedStudios?.length)) return;
+    const note = document.createElement("div");
+    note.className = "stash-dashboard__load-note";
+    const parts = [];
+    if (summary.limited) {
+      parts.push(`Showing ${summary.loadedScenes} of ${summary.totalScenes} scenes. Set Scene Load Limit to 0 for a full scan.`);
+    }
+    if (summary.skippedScenes) {
+      parts.push(`Skipped ${summary.skippedScenes} scene${summary.skippedScenes === 1 ? "" : "s"} that failed dashboard loading.`);
+    }
+    if (summary.failedStudios?.length) {
+      parts.push(`Failed studio chunks: ${summary.failedStudios.slice(0, 5).join(", ")}${summary.failedStudios.length > 5 ? "..." : ""}.`);
+    }
+    note.textContent = parts.join(" ");
+    content.prepend(note);
+  }
+
+  function getCachedDashboardStudios() {
+    return (state.dashboardStudios || []).filter((studio) => state.dashboardLoadedStudioIds.has(studio.id));
+  }
+
+  function getDashboardFilterStudios(host) {
+    const selected = getSelectedDashboardStudios(host).filter((studio) => state.dashboardLoadedStudioIds.has(studio.id));
+    return selected.length ? selected : getCachedDashboardStudios();
+  }
+
+  async function renderCachedDashboardView(host, content, messagePrefix = "") {
+    const studios = getDashboardFilterStudios(host);
+    if (!studios.length) {
+      setStashDashboardStatus(content, "No cached studios loaded yet.");
+      return;
+    }
+    const stats = await buildStashStatsFromCachedStudios(studios);
+    if (!isStashDashboardRoute()) return;
+    renderStudioPageDashboard(content, stats);
+    renderDashboardLoadNote(content, stats);
+    const summary = document.createElement("div");
+    summary.className = "stash-dashboard__filter-note";
+    const selectedCount = getSelectedDashboardStudios(host).filter((studio) => state.dashboardLoadedStudioIds.has(studio.id)).length;
+    summary.textContent = `${messagePrefix}${selectedCount ? `Filtered to ${selectedCount}` : "Showing all"} cached studio${studios.length === 1 ? "" : "s"} (${studios.length} loaded).`;
+    content.prepend(summary);
+  }
+
+  function loadStashDashboardRoute(forceRefresh = false) {
+    const host = state.dashboardHost;
+    if (!(host instanceof HTMLElement)) return;
+    if (!forceRefresh && host.dataset.stashDashboardShell === "true") return;
+    const token = ++state.dashboardRenderToken;
+    if (forceRefresh) {
+      state.statsCache.clear();
+    }
+    host.dataset.stashDashboardLoaded = "false";
+    host.dataset.stashDashboardShell = "true";
+    host.innerHTML = `
+      <section class="stash-dashboard__shell">
+        <header class="stash-dashboard__header">
+          <div>
+            <h2>Stash Dashboard</h2>
+          </div>
+          <div class="stash-dashboard__header-actions">
+            <button type="button" class="btn btn-primary stash-dashboard__check-changes">Check changes</button>
+            <button type="button" class="btn btn-secondary stash-dashboard__refresh">Clear cache</button>
+          </div>
+        </header>
+        <details class="stash-dashboard__controls" open>
+          <summary class="stash-dashboard__controls-summary">
+            <span>Studio Cache & Filters</span>
+            <span class="stash-dashboard__controls-hint">collapse</span>
+          </summary>
+          <div class="stash-dashboard__controls-body">
+            <div class="stash-dashboard__control-actions">
+              <button type="button" class="btn btn-secondary stash-dashboard__select-all" disabled>Select all</button>
+              <button type="button" class="btn btn-secondary stash-dashboard__select-none" disabled>Clear selection</button>
+              <input class="form-control stash-dashboard__studio-search" type="search" placeholder="Search studios..." disabled>
+              <span class="stash-dashboard__control-spacer"></span>
+              <button type="button" class="btn btn-primary stash-dashboard__load-studios">Load studio list</button>
+              <button type="button" class="btn btn-success stash-dashboard__load-selected" disabled>Load selected studios</button>
+            </div>
+            <div class="stash-dashboard__studio-list">
+              <div class="studio-dashboard__status">No data loaded. Load the studio list, choose studios, then build the dashboard.</div>
+            </div>
+          </div>
+        </details>
+        <div class="stash-dashboard__content">
+          <div class="studio-dashboard__status">Dashboard output will appear here after loading selected studios.</div>
+        </div>
+      </section>
+    `;
+    const content = host.querySelector(".stash-dashboard__content");
+    const loadStudiosButton = host.querySelector(".stash-dashboard__load-studios");
+    const selectAllButton = host.querySelector(".stash-dashboard__select-all");
+    const selectNoneButton = host.querySelector(".stash-dashboard__select-none");
+    const loadSelectedButton = host.querySelector(".stash-dashboard__load-selected");
+    const checkChangesButton = host.querySelector(".stash-dashboard__check-changes");
+    const studioSearchInput = host.querySelector(".stash-dashboard__studio-search");
+    const loadStudioList = async () => {
+      loadStudiosButton.disabled = true;
+      setStashDashboardStatus(content, "Loading studio list...");
+      try {
+        state.dashboardStudios = (await fetchAllStudiosForDashboard()).filter(studioMatchesDashboardFilters);
+        renderDashboardStudioList(host, state.dashboardStudios);
+        selectAllButton.disabled = false;
+        selectNoneButton.disabled = false;
+        if (studioSearchInput instanceof HTMLInputElement) studioSearchInput.disabled = false;
+        setStashDashboardStatus(content, "Choose studios to filter the dashboard. Loading selected studios adds them to the dashboard cache.");
+        return state.dashboardStudios;
+      } catch (err) {
+        console.warn("[StashDashboard] Studio list failed", err);
+        setStashDashboardStatus(content, `Could not load studio list: ${err?.message || err}`);
+        return [];
+      } finally {
+        loadStudiosButton.disabled = false;
+      }
+    };
+    const loadStudiosToCache = async (studios) => {
+      if (!studios.length) {
+        setStashDashboardStatus(content, "Select at least one studio first.");
+        return;
+      }
+      loadSelectedButton.disabled = true;
+      const loadToken = ++state.dashboardRenderToken;
+      try {
+        await fetchStashStatsForStudios(studios, (message) => setStashDashboardStatus(content, message));
+        if (loadToken !== state.dashboardRenderToken || !isStashDashboardRoute()) return;
+        host.dataset.stashDashboardLoaded = "true";
+        await renderCachedDashboardView(host, content, "Cache refreshed. ");
+      } catch (err) {
+        console.warn("[StashDashboard] Selected dashboard load failed", err);
+        setStashDashboardStatus(content, "Could not load selected studios.");
+      } finally {
+        loadSelectedButton.disabled = false;
+      }
+    };
+    host.querySelector(".stash-dashboard__refresh")?.addEventListener("click", () => {
+      state.statsCache.clear();
+      state.dashboardLoadedStudioIds.clear();
+      state.dashboardFailedStudioNames = [];
+      state.dashboardStudioSceneCounts.clear();
+      state.dashboardStudioUpdatedAt.clear();
+      state.dashboardStudioPerformerUpdatedAt.clear();
+      state.dashboardTagUpdatedAt = "";
+      setStashDashboardStatus(content, "Dashboard cache cleared.");
+    });
+    checkChangesButton?.addEventListener("click", async () => {
+      const cachedStudios = getCachedDashboardStudios();
+      if (!cachedStudios.length) {
+        setStashDashboardStatus(content, "No cached studios to check yet.");
+        return;
+      }
+      checkChangesButton.disabled = true;
+      try {
+        const changedStudios = await findChangedCachedStudios((message) => setStashDashboardStatus(content, message));
+        if (!changedStudios.length) {
+          await renderCachedDashboardView(host, content, "No changed cached studios found. ");
+          return;
+        }
+        changedStudios.forEach((studio) => {
+          state.statsCache.delete(getDashboardStudioScopeCacheKey(studio));
+          state.dashboardLoadedStudioIds.delete(studio.id);
+          state.dashboardStudioSceneCounts.delete(studio.id);
+          state.dashboardStudioUpdatedAt.delete(studio.id);
+          state.dashboardStudioPerformerUpdatedAt.delete(studio.id);
+        });
+        await loadStudiosToCache(changedStudios);
+      } catch (err) {
+        console.warn("[StashDashboard] Change check failed", err);
+        setStashDashboardStatus(content, `Could not check changed content: ${err?.message || err}`);
+      } finally {
+        checkChangesButton.disabled = false;
+      }
+    });
+    loadStudiosButton?.addEventListener("click", async () => {
+      await loadStudioList();
+    });
+    selectAllButton?.addEventListener("click", () => {
+      host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => { input.checked = true; });
+      renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Cached all filter failed", err));
+    });
+    selectNoneButton?.addEventListener("click", () => {
+      host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => { input.checked = false; });
+      renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Cached clear filter failed", err));
+    });
+    host.addEventListener("change", (event) => {
+      if (!(event.target instanceof HTMLInputElement) || !event.target.classList.contains("stash-dashboard__studio-check")) return;
+      renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Cached filter failed", err));
+    });
+    studioSearchInput?.addEventListener("input", () => {
+      renderDashboardStudioList(host, state.dashboardStudios || []);
+    });
+    loadSelectedButton?.addEventListener("click", async () => {
+      await loadStudiosToCache(getSelectedDashboardStudios(host));
+    });
+    if (getAutoLoadDashboardOnOpen()) {
+      window.setTimeout(async () => {
+        if (!isStashDashboardRoute()) return;
+        const studios = await loadStudioList();
+        host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => { input.checked = true; });
+        await loadStudiosToCache(studios);
+      }, 250);
+    }
+  }
+
+  function enhanceCurrentPage() {
+    ensureStashDashboardNav();
+    ensureStashDashboardRoute();
+  }
+
+  async function refreshPage() {
+    const token = ++state.routeToken;
+    state.studioPageRenderToken += 1;
+    state.dashboardRenderToken += 1;
+    closeTooltip();
+    await loadConfig();
+    if (token !== state.routeToken) return;
+    enhanceCurrentPage();
+  }
+
+  function scheduleRefresh(delay = 120) {
+    window.clearTimeout(state.routeTimer);
+    state.routeTimer = window.setTimeout(() => {
+      refreshPage().catch((err) => console.warn("[StashDashboard] refresh failed", err));
+    }, delay);
+  }
+
+  function handleNavigation() {
+    if (window.location.pathname === state.lastPath) return;
+    state.lastPath = window.location.pathname;
+    if (isStashDashboardRoute()) ensureStashDashboardRoute();
+    scheduleRefresh();
+  }
+
+  function installNavigationHooks() {
+    if (window.__stashDashboardHistoryWrapped) return;
+    window.__stashDashboardHistoryWrapped = true;
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
+    history.pushState = function () {
+      const result = originalPushState.apply(this, arguments);
+      window.dispatchEvent(new Event(ROUTE_EVENT));
+      return result;
+    };
+    history.replaceState = function () {
+      const result = originalReplaceState.apply(this, arguments);
+      window.dispatchEvent(new Event(ROUTE_EVENT));
+      return result;
+    };
+    window.addEventListener("popstate", () => window.dispatchEvent(new Event(ROUTE_EVENT)));
+    window.addEventListener(ROUTE_EVENT, handleNavigation);
+  }
+
+  function installObserver() {
+    if (state.observer) return;
+    state.observer = new MutationObserver(() => enhanceCurrentPage());
+    state.observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  function init() {
+    installNavigationHooks();
+    installObserver();
+    state.lastPath = window.location.pathname;
+    scheduleRefresh(0);
+    window.addEventListener(
+      "scroll",
+      () => {
+        if (state.tooltip && state.tooltipAnchor) positionTooltip(state.tooltipAnchor, state.tooltip);
+      },
+      { passive: true }
+    );
+    window.addEventListener("resize", () => {
+      closeTooltip();
+      enhanceCurrentPage();
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    init();
+  }
+})();

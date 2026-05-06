@@ -1,0 +1,137 @@
+name: Stash Dashboard
+description: Adds a dedicated dashboard page for stash-wide performer highlights, top tags, scene release timelines, highlighted scenes, and configurable pie charts
+version: 0.1.0
+ui:
+  css:
+    - StashDashboard.css
+  javascript:
+    - StashDashboard.js
+settings:
+  a01DashboardSectionOrder:
+    displayName: Dashboard Section Order
+    type: STRING
+    description: "Comma-separated dashboard sections in display order. Omit a section to hide it. Valid sections: performerHighlights, performersMostScenes, performersMostOs, performersHighestRating, performersHighestRatedScenes, topTags, releaseTimeline, sceneHighlights, topRatedScenes, recentReleases, scenesMostOs, performerDemographics, sceneCharts. Empty uses the default order."
+  a04ExcludePaths:
+    displayName: Exclude Paths
+    type: STRING
+    description: Comma-separated path fragments to exclude from dashboard scene stats. Default empty.
+  a06ExcludeStudios:
+    displayName: Exclude Studios
+    type: STRING
+    description: Comma-separated studio names or IDs to exclude from dashboard scene stats. Default empty.
+  c01TopTagCategories:
+    displayName: Top Tag Categories
+    type: STRING
+    description: Comma-separated parent tag names or IDs to show as separate dashboard top tag rows. Empty shows one overall top tags row.
+  c02TopTagCategoryLayout:
+    displayName: Top Tag Category Layout
+    type: STRING
+    description: "Dashboard category layout: rows, columns, or flow. Default rows."
+  c03TopTagsPerCategory:
+    displayName: Top Tags Per Category
+    type: STRING
+    description: Number of top tags to show per dashboard category, from 1 to 10. Default 10.
+  c04TopTagWhitelist:
+    displayName: Top Tag Whitelist
+    type: STRING
+    description: Comma-separated tag names or IDs to consider for top tags, including descendants. Empty allows all tags.
+  c05TopTagBlacklist:
+    displayName: Top Tag Blacklist
+    type: STRING
+    description: Comma-separated tag names or IDs to exclude from top tags, including descendants. Default empty.
+  c06PieChartSliceMax:
+    displayName: Pie Chart Slice Max
+    type: STRING
+    description: Maximum known slices for non-nationality pie charts before overflow becomes Other. Set 0 for uncapped. Nationality always uses top 10 plus Other and Unknown. Default 0.
+  d02DemographicTooltipImageHeight:
+    displayName: Demographic Tooltip Image Height
+    type: STRING
+    description: Representative performer image height in demographic pie chart hover tooltips. Set 0 to hide images. Default 78.
+  d03AgeGroups:
+    displayName: Age Groups
+    type: STRING
+    description: "Comma-separated age buckets for Age at release, such as 18-22, 23-29, 30+, <=21, or =25. Up to 10 groups are used; unmatched known ages appear as Other. Default 18-20,21-24,25-29,30-34,35-39,40-44,45+."
+  d04RatingGroups:
+    displayName: Rating Groups
+    type: STRING
+    description: "Comma-separated rating buckets for performer rating pie charts, such as 0-0.9, 1-1.9, 8-10, 7+, <=3.9, or =10. Unrated performers appear as Unknown; rated values outside the buckets appear as Other. Default 0-0.9,1-1.9,2-2.9,3-3.9,4-4.9,5-5.9,6-6.9,7-7.9,8-8.9,9-9.9,10."
+  d05PerformerPieChart1Tag:
+    displayName: Performer Pie Chart 1 Tag
+    type: STRING
+    description: Optional parent performer tag, comma-separated performer tags, or up to 4 parenthesized groups. Prefix groups like Label(tag, tag). One tag uses child tags as slices; multiple tags become slices. Empty hides this chart.
+  d06PerformerPieChart1Label:
+    displayName: Performer Pie Chart 1 Label
+    type: STRING
+    description: Label for performer pie chart 1. Default Performer pie 1.
+  d07PerformerPieChart2Tag:
+    displayName: Performer Pie Chart 2 Tag
+    type: STRING
+    description: Optional parent performer tag, comma-separated performer tags, or up to 4 parenthesized groups. Prefix groups like Label(tag, tag). One tag uses child tags as slices; multiple tags become slices. Empty hides this chart.
+  d08PerformerPieChart2Label:
+    displayName: Performer Pie Chart 2 Label
+    type: STRING
+    description: Label for performer pie chart 2. Default Performer pie 2.
+  d09PerformerPieChart3Tag:
+    displayName: Performer Pie Chart 3 Tag
+    type: STRING
+    description: Optional parent performer tag, comma-separated performer tags, or up to 4 parenthesized groups. Prefix groups like Label(tag, tag). One tag uses child tags as slices; multiple tags become slices. Empty hides this chart.
+  d10PerformerPieChart3Label:
+    displayName: Performer Pie Chart 3 Label
+    type: STRING
+    description: Label for performer pie chart 3. Default Performer pie 3.
+  e01SceneRatingGroups:
+    displayName: Scene Rating Groups
+    type: STRING
+    description: "Comma-separated rating buckets for the scene rating pie chart, such as 0-0.9, 1-1.9, 8-10, 7+, <=3.9, or =10. Unrated scenes appear as Unknown; rated values outside the buckets appear as Other. Default 0-0.9,1-1.9,2-2.9,3-3.9,4-4.9,5-5.9,6-6.9,7-7.9,8-8.9,9-9.9,10."
+  e02SceneDurationGroups:
+    displayName: Scene Duration Groups
+    type: STRING
+    description: "Comma-separated duration buckets in minutes, such as <5m, 5-15m, 15-30m, 30-45m, 45-60m, 60-90m, 90-120m, 120m+. Empty uses the default buckets."
+  e03ScenePieChart1Tag:
+    displayName: Scene Pie Chart 1 Tag
+    type: STRING
+    description: Optional parent scene tag, comma-separated scene tags, or up to 4 parenthesized groups. Prefix groups like Label(tag, tag). One tag uses child tags as slices; multiple tags become slices. Empty hides this chart.
+  e04ScenePieChart1Label:
+    displayName: Scene Pie Chart 1 Label
+    type: STRING
+    description: Label for scene pie chart 1. Default Scene pie 1.
+  e05ScenePieChart2Tag:
+    displayName: Scene Pie Chart 2 Tag
+    type: STRING
+    description: Optional parent scene tag, comma-separated scene tags, or up to 4 parenthesized groups. Prefix groups like Label(tag, tag). One tag uses child tags as slices; multiple tags become slices. Empty hides this chart.
+  e06ScenePieChart2Label:
+    displayName: Scene Pie Chart 2 Label
+    type: STRING
+    description: Label for scene pie chart 2. Default Scene pie 2.
+  e07ScenePieChart3Tag:
+    displayName: Scene Pie Chart 3 Tag
+    type: STRING
+    description: Optional parent scene tag, comma-separated scene tags, or up to 4 parenthesized groups. Prefix groups like Label(tag, tag). One tag uses child tags as slices; multiple tags become slices. Empty hides this chart.
+  e08ScenePieChart3Label:
+    displayName: Scene Pie Chart 3 Label
+    type: STRING
+    description: Label for scene pie chart 3. Default Scene pie 3.
+  z01DashboardHeaderFontSize:
+    displayName: Dashboard Header Font Size
+    type: STRING
+    description: Dashboard-only main section header font size in pixels. Default 26.
+  z02DashboardSubheaderFontSize:
+    displayName: Dashboard Subheader Font Size
+    type: STRING
+    description: Dashboard-only card labels, names, titles, tag groups, and timeline year font size in pixels. Default 18.
+  z03DashboardContentFontSize:
+    displayName: Dashboard Content Font Size
+    type: STRING
+    description: Dashboard-only counts, metadata, secondary text, and timeline count font size in pixels. Default 15.
+  z04DashboardTagWidth:
+    displayName: Dashboard Tag Width
+    type: STRING
+    description: Dashboard-only fixed tag card width in pixels. Values below 100 are treated as 100. Default 200.
+  z05DashboardSurfaceBackgroundColor:
+    displayName: Dashboard Surface Background Color
+    type: STRING
+    description: Dashboard-only section/card background color. Default 000000.
+  z06DashboardSurfaceOpacity:
+    displayName: Dashboard Surface Background Opacity
+    type: STRING
+    description: Dashboard-only section/card background opacity, from 0 to 1. Default 0.15.
