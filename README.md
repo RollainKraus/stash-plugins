@@ -393,8 +393,6 @@ Adds a dashboard tab to studio pages to view top performers, top tags, scene rel
 - Customize which tags to show by group (works best with tag hierarchies) with black/whitelist and exclusion rules
 - Compares performer stats from studio content to all content
 
-Adds nothing new functionally, just an at-a-glance popout for studio content summaries and a more in depth dashboard tab.
-
 # Stash Dashboard
 
 Adds a dedicated dashboard page for stash-wide performer highlights, top tags, scene release timelines, highlighted scenes, and configurable pie charts
@@ -404,9 +402,6 @@ Adds a dedicated dashboard page for stash-wide performer highlights, top tags, s
 - Choose which studios to show on the dashboard, useful for summarizing content from specific studio selections
 - Up to 12 pie charts, 6 performer charts, 6 scene charts. 3 hardcoded charts each and 3 customizable charts each based on your tags
 - Customize which tags to show by group (works best with tag hierarchies) with black/whitelist and exclusion rules
-
-
-Adds nothing new functionally, just an at-a-glance popout for studio content summaries and a more in depth dashboard tab.
 
 ## License
 
