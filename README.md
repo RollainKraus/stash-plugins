@@ -395,6 +395,8 @@ Adds a dashboard tab to studio pages to view top performers, top tags, scene rel
 
 # Stash Dashboard
 
+*ALPHA ALPHA ALPHA
+
 Adds a dedicated dashboard page for stash-wide performer highlights, top tags, scene release timelines, highlighted scenes, and configurable pie charts
 
 - Similar to 'Studio Dashboard' but covers content across your entire stash with optional exclusion rules
@@ -402,6 +404,12 @@ Adds a dedicated dashboard page for stash-wide performer highlights, top tags, s
 - Choose which studios to show on the dashboard, useful for summarizing content from specific studio selections
 - Up to 12 pie charts, 6 performer charts, 6 scene charts. 3 hardcoded charts each and 3 customizable charts each based on your tags
 - Customize which tags to show by group (works best with tag hierarchies) with black/whitelist and exclusion rules
+
+How To:
+- Open the dashboard page
+- Load studio list
+- Select all studios or only the studios you want in the dashboard
+- Load selected studios (this takes a VERY long time depending on stash size)
 
 ## License
 
