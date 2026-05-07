@@ -10,7 +10,7 @@ settings:
   a01DashboardSectionOrder:
     displayName: Dashboard Section Order
     type: STRING
-    description: "Comma-separated dashboard sections in display order. Omit a section to hide it. Valid sections: performerHighlights, performersMostScenes, performersMostOs, performersHighestRating, performersHighestRatedScenes, topTags, releaseTimeline, sceneHighlights, topRatedScenes, recentReleases, scenesMostOs, performerDemographics, sceneCharts. Empty uses the default order."
+    description: "Comma-separated dashboard sections in display order. Omit a section to hide it. Valid sections: insights, performerHighlights, performersMostScenes, performersMostOs, performersHighestRating, performersHighestRatedScenes, topTags, releaseTimeline, sceneHighlights, topRatedScenes, recentReleases, scenesMostOs, performerDemographics, sceneCharts, needsAttention. Empty uses the default order."
   a02DashboardSectionDefaultState:
     displayName: Dashboard Section Default State
     type: STRING
