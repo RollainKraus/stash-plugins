@@ -11,6 +11,12 @@
   const DASHBOARD_COLLAPSED_SECTIONS_KEY = "StashDashboard.collapsedSections";
   const DASHBOARD_STUDIO_GROUPING_KEY = "StashDashboard.studioListGrouping";
   const DASHBOARD_INCLUDE_SUB_STUDIOS_KEY = "StashDashboard.includeSubStudios";
+  const DASHBOARD_HIDE_UNKNOWN_PERFORMER_CHARTS_KEY = "StashDashboard.hideUnknownPerformerCharts";
+  const DASHBOARD_HIDE_UNKNOWN_SCENE_CHARTS_KEY = "StashDashboard.hideUnknownSceneCharts";
+  const DASHBOARD_COMPARISON_LEFT_KEY = "StashDashboard.comparisonLeft";
+  const DASHBOARD_COMPARISON_RIGHT_KEY = "StashDashboard.comparisonRight";
+  const DASHBOARD_FILTER_PRESETS_KEY = "StashDashboard.filterPresets";
+  const DASHBOARD_SHOW_CACHED_ONLY_KEY = "StashDashboard.showCachedStudiosOnly";
   const DASHBOARD_FIND_SELECTOR = [
     ".studio-dashboard__page-section-header",
     ".studio-dashboard__card",
@@ -19,6 +25,8 @@
     ".studio-dashboard__demographic-chart",
     ".studio-dashboard__timeline-bar",
     ".studio-dashboard__tag-group",
+    ".studio-dashboard__comparison-metric",
+    ".studio-dashboard__comparison-highlight",
     ".studio-dashboard__attention-card",
     ".studio-dashboard__attention-item",
   ].join(",");
@@ -35,6 +43,7 @@
   const GRAPHQL_TIMEOUT_MS = 60000;
   const DEFAULT_DASHBOARD_SECTION_ORDER = [
     "insights",
+    "studioComparison",
     "performerHighlights",
     "topTags",
     "releaseTimeline",
@@ -48,6 +57,9 @@
     insights: "insights",
     overview: "insights",
     summary: "insights",
+    studiocomparison: "studioComparison",
+    comparison: "studioComparison",
+    compare: "studioComparison",
     performers: "performerHighlights",
     performer: "performerHighlights",
     performerhighlights: "performerHighlights",
@@ -418,6 +430,14 @@
     return getConfigBoolean(stored ?? getSetting("a04IncludeSubStudios", "includeSubStudios"), false);
   }
 
+  function getDashboardShowCachedStudiosOnly() {
+    return getConfigBoolean(getLocalStorageValue(DASHBOARD_SHOW_CACHED_ONLY_KEY), false);
+  }
+
+  function setDashboardShowCachedStudiosOnly(value) {
+    setLocalStorageValue(DASHBOARD_SHOW_CACHED_ONLY_KEY, value ? "true" : "false");
+  }
+
   function getLocalStorageValue(key) {
     try {
       return window.localStorage.getItem(key);
@@ -434,6 +454,67 @@
     }
   }
 
+  function getDashboardFilterPresets() {
+    try {
+      const parsed = JSON.parse(getLocalStorageValue(DASHBOARD_FILTER_PRESETS_KEY) || "[]");
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((preset) => ({
+          id: String(preset?.id || `preset-${Date.now()}-${Math.random().toString(36).slice(2)}`),
+          name: String(preset?.name || "").trim(),
+          studioIds: uniqueValues(preset?.studioIds || preset?.studios || []).map(String).filter(Boolean),
+        }))
+        .filter((preset) => preset.name && preset.studioIds.length)
+        .sort((left, right) => left.name.localeCompare(right.name));
+    } catch (_err) {
+      return [];
+    }
+  }
+
+  function setDashboardFilterPresets(presets) {
+    const normalized = (Array.isArray(presets) ? presets : [])
+      .map((preset) => ({
+        id: String(preset?.id || `preset-${Date.now()}-${Math.random().toString(36).slice(2)}`),
+        name: String(preset?.name || "").trim(),
+        studioIds: uniqueValues(preset?.studioIds || preset?.studios || []).map(String).filter(Boolean),
+      }))
+      .filter((preset) => preset.name && preset.studioIds.length)
+      .sort((left, right) => left.name.localeCompare(right.name));
+    setLocalStorageValue(DASHBOARD_FILTER_PRESETS_KEY, JSON.stringify(normalized));
+  }
+
+  function addDashboardFilterPreset(name, studioIds) {
+    const trimmed = String(name || "").trim();
+    const ids = uniqueValues(studioIds || []).map(String).filter(Boolean);
+    if (!trimmed || !ids.length) return null;
+    const presets = getDashboardFilterPresets().filter((preset) => preset.name.toLowerCase() !== trimmed.toLowerCase());
+    const preset = {
+      id: `preset-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      name: trimmed,
+      studioIds: ids,
+    };
+    setDashboardFilterPresets([...presets, preset]);
+    return preset;
+  }
+
+  function deleteDashboardFilterPreset(id) {
+    setDashboardFilterPresets(getDashboardFilterPresets().filter((preset) => preset.id !== id));
+  }
+
+  function minimizeDashboardStudioSelection(ids, studios = state.dashboardStudios || []) {
+    const selected = new Set(Array.from(ids || []).map(String).filter(Boolean));
+    if (!selected.size) return selected;
+    const { byId } = getDashboardStudioMaps(studios);
+    return new Set(Array.from(selected).filter((id) => {
+      let parentId = byId.get(id)?.parentId || "";
+      while (parentId) {
+        if (selected.has(parentId)) return false;
+        parentId = byId.get(parentId)?.parentId || "";
+      }
+      return true;
+    }));
+  }
+
   function getDashboardTopTagLimit() {
     return Math.round(getConfigNumber(getSetting("c03TopTagsPerCategory", "topTagsPerCategory"), 10, 1, TOP_TAG_MAX));
   }
@@ -447,6 +528,20 @@
     const value = Number(getSetting("c06PieChartSliceMax", "pieChartSliceMax") ?? 0);
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.round(value));
+  }
+
+  function getIncludeSubtagsInPieCharts() {
+    return getConfigBoolean(getSetting("c07IncludeSubtagsInPieCharts", "includeSubtagsInPieCharts"), false);
+  }
+
+  function getHideUnknownChartSlices(kind) {
+    const key = kind === "scene" ? DASHBOARD_HIDE_UNKNOWN_SCENE_CHARTS_KEY : DASHBOARD_HIDE_UNKNOWN_PERFORMER_CHARTS_KEY;
+    return getConfigBoolean(getLocalStorageValue(key), false);
+  }
+
+  function setHideUnknownChartSlices(kind, value) {
+    const key = kind === "scene" ? DASHBOARD_HIDE_UNKNOWN_SCENE_CHARTS_KEY : DASHBOARD_HIDE_UNKNOWN_PERFORMER_CHARTS_KEY;
+    setLocalStorageValue(key, value ? "true" : "false");
   }
 
   function getDemographicTooltipImageHeight() {
@@ -582,6 +677,8 @@
       dashboardPreferences: {
         studioListGrouping: getDashboardStudioListGrouping(),
         includeSubStudios: getDashboardIncludeSubStudios(),
+        showCachedStudiosOnly: getDashboardShowCachedStudiosOnly(),
+        filterPresets: getDashboardFilterPresets(),
       },
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -618,6 +715,12 @@
         DASHBOARD_INCLUDE_SUB_STUDIOS_KEY,
         getConfigBoolean(preferences.includeSubStudios, false) ? "true" : "false"
       );
+    }
+    if (Object.prototype.hasOwnProperty.call(preferences, "showCachedStudiosOnly")) {
+      setDashboardShowCachedStudiosOnly(getConfigBoolean(preferences.showCachedStudiosOnly, false));
+    }
+    if (Object.prototype.hasOwnProperty.call(preferences, "filterPresets")) {
+      setDashboardFilterPresets(preferences.filterPresets);
     }
   }
 
@@ -1656,6 +1759,8 @@
     const selectedTags = resolveCustomPieSliceTags(allTags, group.value);
     const sliceTags = selectedTags.sort((left, right) => left.name.localeCompare(right.name));
     if (!sliceTags.length) return { title: `Group ${index}`, total: 0, items: [] };
+    const tagMap = new Map((allTags || []).map((tag) => [tag.id, tag]));
+    const matchIdsByTagId = new Map(sliceTags.map((tag) => [tag.id, getCustomPieTagMatchIds(tag, tagMap)]));
     const groups = new Map(sliceTags.map((tag) => [tag.id, {
       key: tag.id,
       label: tag.name,
@@ -1667,8 +1772,11 @@
     }]));
     const unknownPerformers = new Map();
     (performers || []).forEach((performer) => {
-      const performerTags = performer?.tags || [];
-      const matchingTags = sliceTags.filter((tag) => performerTags.some((performerTag) => String(performerTag?.id || "") === tag.id));
+      const performerTagIds = new Set((performer?.tags || []).map((performerTag) => String(performerTag?.id || "")).filter(Boolean));
+      const matchingTags = sliceTags.filter((tag) => {
+        const matchIds = matchIdsByTagId.get(tag.id) || new Set([tag.id]);
+        return Array.from(matchIds).some((id) => performerTagIds.has(id));
+      });
       if (!matchingTags.length) {
         addDemographicPerformer(unknownPerformers, performer);
         return;
@@ -1744,6 +1852,8 @@
     const selectedTags = resolveCustomPieSliceTags(allTags, group.value);
     const sliceTags = selectedTags.sort((left, right) => left.name.localeCompare(right.name));
     if (!sliceTags.length) return { title: `Group ${index}`, total: 0, items: [] };
+    const tagMap = new Map((allTags || []).map((tag) => [tag.id, tag]));
+    const matchIdsByTagId = new Map(sliceTags.map((tag) => [tag.id, getCustomPieTagMatchIds(tag, tagMap)]));
     const groups = new Map(sliceTags.map((tag) => [tag.id, {
       key: tag.id,
       label: tag.name,
@@ -1754,8 +1864,11 @@
     }]));
     let unknownSceneCount = 0;
     (scenes || []).forEach((scene) => {
-      const sceneTags = scene?.tags || [];
-      const matchingTags = sliceTags.filter((tag) => sceneTags.some((sceneTag) => String(sceneTag?.id || "") === tag.id));
+      const sceneTagIds = new Set((scene?.tags || []).map((sceneTag) => String(sceneTag?.id || "")).filter(Boolean));
+      const matchingTags = sliceTags.filter((tag) => {
+        const matchIds = matchIdsByTagId.get(tag.id) || new Set([tag.id]);
+        return Array.from(matchIds).some((id) => sceneTagIds.has(id));
+      });
       if (!matchingTags.length) {
         unknownSceneCount += 1;
         return;
@@ -1846,6 +1959,14 @@
     return (parent.childIds || [])
       .map((id) => allTags.find((tag) => tag.id === id))
       .filter(Boolean);
+  }
+
+  function getCustomPieTagMatchIds(tag, tagMap) {
+    const ids = new Set([tag?.id].filter(Boolean));
+    if (getIncludeSubtagsInPieCharts()) {
+      collectDescendantTagIds(tag, tagMap, ids);
+    }
+    return ids;
   }
 
   function addDemographicPerformer(map, performer) {
@@ -2774,54 +2895,74 @@
       {
         key: "notOrganized",
         label: "Not organized",
+        target: "scenes",
+        criteria: [buildAttentionCriterion("organized")],
         items: sceneList.filter((scene) => scene?.organized !== true).map(normalizeSceneSummary).filter(Boolean),
       },
       {
         key: "missingStashIds",
         label: "Missing Stash IDs",
+        target: "scenes",
+        criteria: [buildAttentionCriterion("stashId")],
         items: sceneList.filter((scene) => !hasSceneStashIds(scene)).map(normalizeSceneSummary).filter(Boolean),
       },
       {
         key: "missingDates",
         label: "Missing dates",
+        target: "scenes",
+        criteria: [buildAttentionCriterion("date")],
         items: sceneList.filter((scene) => !String(scene?.date || "").trim()).map(normalizeSceneSummary).filter(Boolean),
       },
       {
         key: "unrated",
         label: "Unrated",
+        target: "scenes",
+        criteria: [buildRatingNullCriterion()],
         items: sceneList.filter((scene) => Number(scene?.rating100 || 0) <= 0).map(normalizeSceneSummary).filter(Boolean),
       },
       {
-        key: "noPerformers",
-        label: "No performers",
-        items: sceneList.filter((scene) => !(scene?.performers || []).length).map(normalizeSceneSummary).filter(Boolean),
+        key: "noStudios",
+        label: "No studios",
+        target: "scenes",
+        criteria: [buildAttentionCriterion("studios")],
+        items: sceneList.filter((scene) => !scene?.studio?.id).map(normalizeSceneSummary).filter(Boolean),
       },
     ];
     const performerBuckets = [
       {
         key: "missingCountry",
         label: "Missing nationality",
+        target: "performers",
+        criteria: [buildAttentionCriterion("country")],
         items: performerList.filter((performer) => !String(performer?.country || "").trim()).map(normalizeAttentionPerformer).filter(Boolean),
       },
       {
         key: "missingBirthdate",
         label: "Missing birthdate",
+        target: "performers",
+        criteria: [buildAttentionCriterion("birthdate")],
         items: performerList.filter((performer) => !String(performer?.birthdate || "").trim()).map(normalizeAttentionPerformer).filter(Boolean),
       },
       {
         key: "unrated",
         label: "Unrated",
+        target: "performers",
+        criteria: [buildRatingNullCriterion()],
         items: performerList.filter((performer) => Number(performer?.performerRating || 0) <= 0).map(normalizeAttentionPerformer).filter(Boolean),
       },
       {
         key: "missingImage",
         label: "Missing image",
+        target: "performers",
+        criteria: [buildAttentionCriterion("image")],
         items: performerList.filter((performer) => !String(performer?.imagePath || "").trim()).map(normalizeAttentionPerformer).filter(Boolean),
       },
       {
-        key: "noTags",
-        label: "No tags",
-        items: performerList.filter((performer) => !(performer?.tags || []).length).map(normalizeAttentionPerformer).filter(Boolean),
+        key: "noScenes",
+        label: "No scenes",
+        target: "performers",
+        criteria: [buildAttentionCriterion("scenes")],
+        items: performerList.filter((performer) => Number(performer?.count || 0) <= 0).map(normalizeAttentionPerformer).filter(Boolean),
       },
     ];
     return {
@@ -3308,6 +3449,7 @@
     const isStashDashboardPage = Boolean(container.closest(".stash-dashboard__shell"));
     container.innerHTML = "";
     container.className = `${isStashDashboardPage ? "stash-dashboard__content " : ""}tab-pane fade studio-dashboard__page-dashboard active show`;
+    container.studioDashboardStats = stats;
     container.dataset.studioDashboardStudioId = stats.studio.id;
     container.style.setProperty("--studio-dashboard-header-font-size", `${getDashboardHeaderFontSize()}px`);
     container.style.setProperty("--studio-dashboard-subheader-font-size", `${getDashboardSubheaderFontSize()}px`);
@@ -3323,6 +3465,9 @@
     const renderers = {
       insights: () => {
         renderDashboardInsights(body, stats);
+      },
+      studioComparison: () => {
+        renderStudioComparison(body);
       },
       performerHighlights: () => {
         const performerHighlights = Array.isArray(stats.performerHighlights) ? stats.performerHighlights : [];
@@ -3382,7 +3527,7 @@
 
   function buildDashboardInsights(stats) {
     const counts = stats?.counts || {};
-    const topResolution = stats?.sceneResolutions?.items?.[0];
+    const topResolution = getTopResolutionInsight(stats);
     const topPerformer = stats?.topPerformers?.[0];
     const topPerformerDetail = topPerformer
       ? `${topPerformer.name}: ${formatNumber(topPerformer.count)}, ${formatInsightPercent(topPerformer.count, counts.scenes)}`
@@ -3422,6 +3567,480 @@
     return items.filter(Boolean);
   }
 
+  function getTopResolutionInsight(stats) {
+    return (stats?.sceneResolutions?.items || [])
+      .filter((item) => item && !item.metricUnknown && !item.metricOther)
+      .slice()
+      .sort((left, right) => {
+        const countDelta = Number(right.count || 0) - Number(left.count || 0);
+        if (countDelta) return countDelta;
+        return String(left.label || "").localeCompare(String(right.label || ""));
+      })[0] || null;
+  }
+
+  function renderStudioComparison(container) {
+    const cachedStudios = getCachedDashboardStudios();
+    if (cachedStudios.length < 2) return;
+    const options = getStudioComparisonOptions(cachedStudios);
+    if (options.filter((option) => option.type === "studio").length < 2) return;
+    const selections = getStudioComparisonSelections(cachedStudios, options);
+    const section = createPageSection(container, "STUDIO COMPARISON");
+    const shell = document.createElement("div");
+    shell.className = "studio-dashboard__comparison";
+    section.appendChild(shell);
+    const leftStats = buildStudioComparisonStats("Left side", selections.leftRefs, cachedStudios, options);
+    const rightStats = buildStudioComparisonStats("Right side", selections.rightRefs, cachedStudios, options);
+    const maxes = getStudioComparisonMetricMaxes([leftStats, rightStats]);
+    renderStudioComparisonSide(shell, "left", "Left side", selections.leftRefs, selections.rightIds, cachedStudios, options, leftStats);
+    renderStudioComparisonMetricComparison(shell, leftStats, rightStats, maxes);
+    renderStudioComparisonSide(shell, "right", "Right side", selections.rightRefs, selections.leftIds, cachedStudios, options, rightStats);
+  }
+
+  function renderStudioComparisonSide(container, side, title, selectedRefs, disabledIds, cachedStudios, options, stats) {
+    const card = document.createElement("div");
+    card.className = `studio-dashboard__comparison-side studio-dashboard__comparison-side--${side}`;
+    card.studioDashboardComparisonStats = stats;
+    card.innerHTML = `
+      <div class="studio-dashboard__comparison-header">
+        <div class="studio-dashboard__comparison-heading">
+          <div class="studio-dashboard__comparison-title">${escapeHtml(title)}</div>
+          <button type="button" class="studio-dashboard__comparison-clear">Clear selection</button>
+        </div>
+        <input class="studio-dashboard__comparison-search" type="search" placeholder="Search cached studios..." aria-label="${escapeHtml(title)} studio search">
+      </div>
+    `;
+    const chooser = document.createElement("div");
+    chooser.className = "studio-dashboard__comparison-chooser";
+    const selectedList = document.createElement("div");
+    selectedList.className = "studio-dashboard__comparison-selected";
+    const picker = document.createElement("div");
+    picker.className = "studio-dashboard__comparison-picker";
+    chooser.append(selectedList, picker);
+    card.appendChild(chooser);
+    renderStudioComparisonSelectedList(selectedList, side, selectedRefs, options);
+    renderStudioComparisonPicker(picker, side, selectedRefs, disabledIds, options);
+    const search = card.querySelector(".studio-dashboard__comparison-search");
+    if (search instanceof HTMLInputElement) {
+      search.addEventListener("input", () => {
+        renderStudioComparisonPicker(picker, side, selectedRefs, disabledIds, options, search.value);
+      });
+    }
+    card.querySelector(".studio-dashboard__comparison-clear")?.addEventListener("click", () => {
+      setStudioComparisonSelectionRefs(side, []);
+      const dashboard = card.closest(".studio-dashboard__page-dashboard");
+      if (dashboard instanceof HTMLElement) renderStudioPageDashboard(dashboard, dashboard.studioDashboardStats);
+    });
+    renderStudioComparisonHighlights(card, stats);
+    container.appendChild(card);
+  }
+
+  function renderStudioComparisonSelectedList(container, side, selectedRefs, options) {
+    const selectedOptions = (selectedRefs || [])
+      .map((ref) => (options || []).find((option) => option.value === ref))
+      .filter(Boolean);
+    container.innerHTML = `
+      <div class="studio-dashboard__comparison-list-title">Selected studios</div>
+      <div class="studio-dashboard__comparison-selected-list">
+        ${selectedOptions.map((option) => `
+          <button type="button" class="studio-dashboard__comparison-selected-item" value="${escapeHtml(option.value)}" title="Remove ${escapeHtml(option.label)}">
+            ${escapeHtml(option.label)}
+          </button>
+        `).join("") || `<div class="studio-dashboard__comparison-empty">None selected.</div>`}
+      </div>
+    `;
+    container.querySelectorAll(".studio-dashboard__comparison-selected-item").forEach((button) => {
+      button.addEventListener("click", () => {
+        setStudioComparisonSelectionRefs(side, selectedRefs.filter((ref) => ref !== button.value));
+        const dashboard = container.closest(".studio-dashboard__page-dashboard");
+        if (dashboard instanceof HTMLElement) renderStudioPageDashboard(dashboard, dashboard.studioDashboardStats);
+      });
+    });
+  }
+
+  function renderStudioComparisonPicker(container, side, selectedRefs, disabledIds, options, query = "") {
+    const text = String(query || "").trim().toLowerCase();
+    const visible = (options || []).filter((option) => {
+      return !text || option.label.toLowerCase().includes(text);
+    });
+    container.innerHTML = `
+      <div class="studio-dashboard__comparison-list-title">Cached studios</div>
+      <div class="studio-dashboard__comparison-picker-list">
+        ${visible.map((option) => {
+          const selected = selectedRefs.includes(option.value);
+          const disabled = !selected && option.ids.some((id) => disabledIds.has(id));
+          return `
+            <label class="studio-dashboard__comparison-option ${disabled ? "is-disabled" : ""}">
+              <input type="checkbox" value="${escapeHtml(option.value)}"${selected ? " checked" : ""}${disabled ? " disabled" : ""}>
+              <span>${escapeHtml(option.label)}</span>
+            </label>
+          `;
+        }).join("") || `<div class="studio-dashboard__comparison-empty">No cached studios match.</div>`}
+      </div>
+    `;
+    container.querySelectorAll("input[type='checkbox']").forEach((input) => {
+      input.addEventListener("change", () => {
+        const refs = new Set(selectedRefs);
+        if (input.checked) refs.add(input.value);
+        else refs.delete(input.value);
+        setStudioComparisonSelectionRefs(side, Array.from(refs));
+        const dashboard = container.closest(".studio-dashboard__page-dashboard");
+        if (dashboard instanceof HTMLElement) renderStudioPageDashboard(dashboard, dashboard.studioDashboardStats);
+      });
+    });
+  }
+
+  function getStudioComparisonOptions(cachedStudios) {
+    const cachedIds = new Set((cachedStudios || []).map((studio) => studio.id));
+    const options = [];
+    const allStudios = state.dashboardStudios || [];
+    allStudios.forEach((studio) => {
+      if (!studio?.id || studio.synthetic) return;
+      const descendantIds = Array.from(getDashboardStudioDescendantIds(studio.id, allStudios)).filter((id) => cachedIds.has(id));
+      const ids = uniqueValues([
+        cachedIds.has(studio.id) ? studio.id : "",
+        ...descendantIds,
+      ]).filter(Boolean);
+      if (ids.length <= 1) return;
+      options.push({
+        type: "group",
+        value: `group:${studio.id}`,
+        label: `[Group] ${studio.name}`,
+        ids,
+      });
+    });
+    (cachedStudios || []).forEach((studio) => {
+      options.push({
+        type: "studio",
+        value: `studio:${studio.id}`,
+        label: studio.name || "Studio",
+        ids: [studio.id],
+      });
+    });
+    return options.sort((left, right) => {
+      if (left.type !== right.type) return left.type === "group" ? -1 : 1;
+      return left.label.localeCompare(right.label);
+    });
+  }
+
+  function getStudioComparisonSelections(cachedStudios, options) {
+    let leftRefs = normalizeStudioComparisonRefs(getStudioComparisonSelectionRefs("left"), options);
+    let rightRefs = normalizeStudioComparisonRefs(getStudioComparisonSelectionRefs("right"), options);
+    let leftIds = resolveStudioComparisonIds(leftRefs, options);
+    rightRefs = rightRefs.filter((ref) => {
+      const option = options.find((item) => item.value === ref);
+      return option && !option.ids.some((id) => leftIds.has(id));
+    });
+    const rightIds = resolveStudioComparisonIds(rightRefs, options);
+    leftRefs = leftRefs.filter((ref) => {
+      const option = options.find((item) => item.value === ref);
+      return option && !option.ids.some((id) => rightIds.has(id));
+    });
+    leftIds = resolveStudioComparisonIds(leftRefs, options);
+    return { leftRefs, rightRefs, leftIds, rightIds };
+  }
+
+  function getStudioComparisonSelectionRefs(side) {
+    const key = side === "right" ? DASHBOARD_COMPARISON_RIGHT_KEY : DASHBOARD_COMPARISON_LEFT_KEY;
+    try {
+      const parsed = JSON.parse(getLocalStorageValue(key) || "[]");
+      return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+    } catch (_err) {
+      return [];
+    }
+  }
+
+  function setStudioComparisonSelectionRefs(side, refs) {
+    const key = side === "right" ? DASHBOARD_COMPARISON_RIGHT_KEY : DASHBOARD_COMPARISON_LEFT_KEY;
+    setLocalStorageValue(key, JSON.stringify(uniqueValues(refs || [])));
+  }
+
+  function normalizeStudioComparisonRefs(refs, options) {
+    const valid = new Set((options || []).map((option) => option.value));
+    return uniqueValues(refs || []).filter((ref) => valid.has(ref));
+  }
+
+  function resolveStudioComparisonIds(refs, options) {
+    const ids = new Set();
+    (refs || []).forEach((ref) => {
+      const option = (options || []).find((item) => item.value === ref);
+      (option?.ids || []).forEach((id) => ids.add(id));
+    });
+    return ids;
+  }
+
+  function buildStudioComparisonStats(title, refs, cachedStudios, options) {
+    const selectedIds = resolveStudioComparisonIds(refs, options);
+    const selectedStudios = (cachedStudios || []).filter((studio) => selectedIds.has(studio.id));
+    const scenes = [];
+    const counts = { images: 0, galleries: 0, imageSizeBytes: 0 };
+    selectedStudios.forEach((studio) => {
+      const scope = getCachedDashboardScope(studio);
+      if (!scope) return;
+      scenes.push(...(scope.scenes || []));
+      counts.images += Number(scope.counts?.images || 0);
+      counts.galleries += Number(scope.counts?.galleries || 0);
+      counts.imageSizeBytes += Number(scope.counts?.imageSizeBytes || 0);
+    });
+    const performers = buildComparisonPerformerSummaries(scenes);
+    const ratedScenes = scenes.filter((scene) => Number(scene?.rating100 || 0) > 0);
+    const sceneOCount = scenes.reduce((total, scene) => total + Number(scene?.o_counter || 0), 0);
+    const totalDurationMinutes = scenes.reduce((total, scene) => total + getSceneDurationMinutes(scene), 0);
+    const totalSceneSizeBytes = scenes.reduce((total, scene) => total + getSceneSizeBytes(scene), 0);
+    return {
+      title,
+      refs,
+      studios: selectedStudios,
+      scenes,
+      performers,
+      counts: {
+        scenes: scenes.length,
+        duration: totalDurationMinutes,
+        size: totalSceneSizeBytes,
+        averageRating100: ratedScenes.length ? ratedScenes.reduce((total, scene) => total + Number(scene?.rating100 || 0), 0) / ratedScenes.length : 0,
+        oCount: sceneOCount,
+        performers: performers.length,
+        images: counts.images,
+        galleries: counts.galleries,
+        imageSizeBytes: counts.imageSizeBytes,
+      },
+      topPerformer: performers.slice().filter((performer) => Number(performer?.performerRating || 0) > 0).sort(byPerformerRatingThenName)[0] || null,
+      performerMostScenes: performers.slice().sort(byPerformerSceneCountThenName)[0] || null,
+      performerMostOs: performers.slice().filter((performer) => Number(performer?.oCount || 0) > 0).sort(byPerformerOCountThenName)[0] || null,
+      topRatedScene: scenes.slice().filter((scene) => Number(scene?.rating100 || 0) > 0).sort(bySceneRatingThenTitle)[0] || null,
+      sceneMostOs: scenes.slice().filter((scene) => Number(scene?.o_counter || 0) > 0).sort(bySceneOCountThenTitle)[0] || null,
+    };
+  }
+
+  function getCachedDashboardScope(studio) {
+    const value = state.statsCache.get(getDashboardStudioScopeCacheKey(studio));
+    if (!value || typeof value.then === "function" || !Array.isArray(value.scenes)) return null;
+    return value;
+  }
+
+  function buildComparisonPerformerSummaries(scenes) {
+    const performers = new Map();
+    (scenes || []).forEach((scene) => {
+      const sceneOCount = Number(scene?.o_counter || 0);
+      (scene?.performers || []).forEach((performer) => {
+        const id = String(performer?.id || "");
+        const name = String(performer?.name || "").trim();
+        if (!id || !name) return;
+        const existing = performers.get(id) || {
+          id,
+          name,
+          imagePath: String(performer?.image_path || ""),
+          count: 0,
+          oCount: 0,
+          performerRating: Number(performer?.rating100 || 0),
+        };
+        existing.count += 1;
+        existing.oCount += sceneOCount;
+        existing.imagePath = existing.imagePath || String(performer?.image_path || "");
+        existing.performerRating = Math.max(existing.performerRating || 0, Number(performer?.rating100 || 0));
+        performers.set(id, existing);
+      });
+    });
+    return Array.from(performers.values());
+  }
+
+  function renderStudioComparisonMetrics(container, stats, maxValues = {}) {
+    const metrics = getStudioComparisonMetrics(stats);
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__comparison-metrics";
+    metrics.forEach((metric) => {
+      const max = Math.max(1, Number(maxValues[metric.key] || metric.raw || 0));
+      const tile = document.createElement("div");
+      tile.className = "studio-dashboard__comparison-metric";
+      tile.style.setProperty("--studio-dashboard-comparison-value", String(Math.max(0.02, Number(metric.raw || 0) / max)));
+      tile.innerHTML = `
+        <div class="studio-dashboard__comparison-metric-label">${escapeHtml(metric.label)}</div>
+        <div class="studio-dashboard__comparison-metric-value">${escapeHtml(metric.value)}</div>
+        <div class="studio-dashboard__comparison-bar"><span></span></div>
+      `;
+      grid.appendChild(tile);
+    });
+    container.appendChild(grid);
+  }
+
+  function renderStudioComparisonMetricComparison(container, leftStats, rightStats, maxValues = {}) {
+    const panel = document.createElement("div");
+    panel.className = "studio-dashboard__comparison-center";
+    panel.innerHTML = `
+      <div class="studio-dashboard__comparison-center-title">Comparison</div>
+      <div class="studio-dashboard__comparison-legend">
+        <span><i class="is-left"></i>Left</span>
+        <span><i class="is-right"></i>Right</span>
+      </div>
+    `;
+    const graph = document.createElement("div");
+    graph.className = "studio-dashboard__comparison-graph";
+    const leftMetrics = getStudioComparisonMetrics(leftStats);
+    const rightMetrics = getStudioComparisonMetrics(rightStats);
+    leftMetrics.forEach((leftMetric, index) => {
+      const rightMetric = rightMetrics[index] || {};
+      const max = Math.max(1, Number(maxValues[leftMetric.key] || leftMetric.raw || rightMetric.raw || 0));
+      const row = document.createElement("div");
+      row.className = "studio-dashboard__comparison-graph-row";
+      const leftRaw = Number(leftMetric.raw || 0);
+      const rightRaw = Number(rightMetric.raw || 0);
+      row.style.setProperty("--studio-dashboard-comparison-left", String(leftRaw > 0 ? Math.max(0.02, leftRaw / max) : 0));
+      row.style.setProperty("--studio-dashboard-comparison-right", String(rightRaw > 0 ? Math.max(0.02, rightRaw / max) : 0));
+      row.innerHTML = `
+        <div class="studio-dashboard__comparison-graph-label">${escapeHtml(leftMetric.label)}</div>
+        <div class="studio-dashboard__comparison-graph-bars">
+          <span class="is-left"><i></i><b>${escapeHtml(leftMetric.value)}</b></span>
+          <span class="is-right"><i></i><b>${escapeHtml(rightMetric.value || "N/A")}</b></span>
+        </div>
+      `;
+      graph.appendChild(row);
+    });
+    panel.appendChild(graph);
+    container.appendChild(panel);
+  }
+
+  function getStudioComparisonMetrics(stats) {
+    const counts = stats?.counts || {};
+    return [
+      { key: "scenes", label: "Scenes", value: formatNumber(counts.scenes), raw: Number(counts.scenes || 0) },
+      { key: "images", label: "Images", value: formatNumber(counts.images), raw: Number(counts.images || 0) },
+      { key: "duration", label: "Duration", value: formatDurationMinutes(counts.duration), raw: Number(counts.duration || 0) },
+      { key: "size", label: "File size", value: formatBytes(counts.size), raw: Number(counts.size || 0) },
+      { key: "rating", label: "Avg rating", value: counts.averageRating100 ? formatRating(counts.averageRating100) : "N/A", raw: Number(counts.averageRating100 || 0) },
+      { key: "ocount", label: "O count", value: formatNumber(counts.oCount), raw: Number(counts.oCount || 0) },
+      { key: "performers", label: "Performers", value: formatNumber(counts.performers), raw: Number(counts.performers || 0) },
+    ];
+  }
+
+  function getStudioComparisonMetricMaxes(sideStats) {
+    const maxes = {};
+    (sideStats || []).forEach((stats) => {
+      getStudioComparisonMetrics(stats).forEach((metric) => {
+        maxes[metric.key] = Math.max(Number(maxes[metric.key] || 0), Number(metric.raw || 0));
+      });
+    });
+    return maxes;
+  }
+
+  function renderStudioComparisonHighlights(container, stats) {
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__comparison-highlights";
+    const performers = document.createElement("div");
+    performers.className = "studio-dashboard__comparison-performers";
+    [
+      { label: "Top performer", item: stats.topPerformer, value: stats.topPerformer ? formatRating(stats.topPerformer.performerRating) : "", empty: "No rated performers from selection" },
+      { label: "Most scenes", item: stats.performerMostScenes, value: stats.performerMostScenes ? formatNumber(stats.performerMostScenes.count) : "" },
+      { label: "Most O's", item: stats.performerMostOs, value: stats.performerMostOs ? formatNumber(stats.performerMostOs.oCount) : "", empty: "No performers with O's from selection" },
+    ].forEach((highlight) => renderComparisonPerformerHighlight(performers, highlight));
+    const scenes = document.createElement("div");
+    scenes.className = "studio-dashboard__comparison-scenes";
+    [
+      { label: "Top rated scene", scene: normalizeSceneSummary(stats.topRatedScene), value: stats.topRatedScene ? formatRating(stats.topRatedScene.rating100) : "", empty: "No rated scenes from selection" },
+      { label: "Scene with most O's", scene: normalizeSceneSummary(stats.sceneMostOs), value: stats.sceneMostOs ? formatNumber(stats.sceneMostOs.o_counter) : "", empty: "No scenes with O's from selection" },
+    ].forEach((highlight) => renderComparisonSceneHighlight(scenes, highlight));
+    grid.append(performers, scenes);
+    container.appendChild(grid);
+  }
+
+  function renderComparisonPerformerHighlight(container, highlight) {
+    const performer = highlight.item;
+    const card = document.createElement(performer?.id ? "a" : "div");
+    card.className = "studio-dashboard__comparison-performer";
+    if (performer?.id) {
+      card.href = makePerformerUrl(performer);
+      openLinkInNewTab(card);
+    }
+    card.innerHTML = `
+      <span class="studio-dashboard__comparison-highlight-label">${escapeHtml(highlight.label)}</span>
+      <span class="studio-dashboard__comparison-performer-image">
+        ${performer?.imagePath ? `<img src="${escapeHtml(performer.imagePath)}" alt="${escapeHtml(performer.name)}">` : ""}
+      </span>
+      <strong>${performer ? formatComparisonPerformerName(performer) : escapeHtml(highlight.empty || "No performer from selection")}</strong>
+      ${highlight.value ? `<small>${escapeHtml(highlight.value)}</small>` : ""}
+      ${performer ? `<div class="studio-dashboard__comparison-performer-meta">${formatComparisonPerformerMeta(performer)}</div>` : ""}
+    `;
+    container.appendChild(card);
+  }
+
+  function formatComparisonPerformerName(performer) {
+    if (!performer) return "N/A";
+    const rating = Number(performer.performerRating || 0);
+    return `${escapeHtml(performer.name)}${rating > 0 ? ` <span class="studio-dashboard__comparison-rating">★ ${escapeHtml(formatRating(rating))}</span>` : ""}`;
+  }
+
+  function formatComparisonPerformerMeta(performer) {
+    return `
+      <table class="studio-dashboard__performer-meta-table studio-dashboard__comparison-meta-table">
+        <tbody>
+          <tr>
+            <td><span class="studio-dashboard__meta-icon" title="Scenes">🎬</span><strong>${escapeHtml(formatNumber(performer.count))}</strong></td>
+            <td><span class="studio-dashboard__meta-icon" title="O's">${O_COUNT_ICON}</span><strong>${escapeHtml(formatNumber(performer.oCount))}</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    `;
+  }
+
+  function renderComparisonSceneHighlight(container, highlight) {
+    const scene = highlight.scene;
+    const card = document.createElement(scene?.id ? "a" : "div");
+    card.className = "studio-dashboard__comparison-scene";
+    if (scene?.id) {
+      card.href = makeSceneUrl(scene);
+      openLinkInNewTab(card);
+    }
+    card.innerHTML = `
+      <span class="studio-dashboard__comparison-highlight-label">${escapeHtml(highlight.label)}</span>
+      <span class="studio-dashboard__scene-media">
+        ${scene?.screenshot ? `<img src="${escapeHtml(scene.screenshot)}" alt="${escapeHtml(scene.title)}">` : ""}
+        ${scene?.preview ? `<video src="${escapeHtml(scene.preview)}" muted loop playsinline preload="none"></video>` : ""}
+      </span>
+      <strong>${escapeHtml(scene?.title || highlight.empty || "No scene from selection")}</strong>
+      ${highlight.value ? `<small>${escapeHtml(highlight.value)}</small>` : ""}
+    `;
+    const video = card.querySelector("video");
+    if (video instanceof HTMLVideoElement) {
+      card.addEventListener("mouseenter", () => {
+        video.currentTime = 0;
+        video.play().catch(() => {});
+      });
+      card.addEventListener("mouseleave", () => {
+        video.pause();
+        video.currentTime = 0;
+      });
+    }
+    container.appendChild(card);
+  }
+
+  function byPerformerRatingThenName(left, right) {
+    const ratingDiff = Number(right.performerRating || 0) - Number(left.performerRating || 0);
+    if (ratingDiff) return ratingDiff;
+    return String(left.name || "").localeCompare(String(right.name || ""));
+  }
+
+  function byPerformerSceneCountThenName(left, right) {
+    const countDiff = Number(right.count || 0) - Number(left.count || 0);
+    if (countDiff) return countDiff;
+    return String(left.name || "").localeCompare(String(right.name || ""));
+  }
+
+  function byPerformerOCountThenName(left, right) {
+    const countDiff = Number(right.oCount || 0) - Number(left.oCount || 0);
+    if (countDiff) return countDiff;
+    return String(left.name || "").localeCompare(String(right.name || ""));
+  }
+
+  function bySceneRatingThenTitle(left, right) {
+    const ratingDiff = Number(right?.rating100 || 0) - Number(left?.rating100 || 0);
+    if (ratingDiff) return ratingDiff;
+    return String(left?.title || "").localeCompare(String(right?.title || ""));
+  }
+
+  function bySceneOCountThenTitle(left, right) {
+    const oDiff = Number(right?.o_counter || 0) - Number(left?.o_counter || 0);
+    if (oDiff) return oDiff;
+    return String(left?.title || "").localeCompare(String(right?.title || ""));
+  }
+
   function renderNeedsAttention(container, stats) {
     const sceneBuckets = Array.isArray(stats?.needsAttention?.scenes) ? stats.needsAttention.scenes : [];
     const performerBuckets = Array.isArray(stats?.needsAttention?.performers) ? stats.needsAttention.performers : [];
@@ -3430,23 +4049,27 @@
     const section = createPageSection(container, "NEEDS ATTENTION");
     const grid = document.createElement("div");
     grid.className = "studio-dashboard__attention-grid";
-    sceneBuckets.forEach((bucket) => renderAttentionBucket(grid, "Scenes", bucket, makeSceneUrl));
-    performerBuckets.forEach((bucket) => renderAttentionBucket(grid, "Performers", bucket, makePerformerUrl));
+    sceneBuckets.forEach((bucket) => renderAttentionBucket(grid, "Scenes", bucket, makeSceneUrl, stats));
+    performerBuckets.forEach((bucket) => renderAttentionBucket(grid, "Performers", bucket, makePerformerUrl, stats));
     section.appendChild(grid);
   }
 
-  function renderAttentionBucket(container, entityLabel, bucket, hrefBuilder) {
+  function renderAttentionBucket(container, entityLabel, bucket, hrefBuilder, stats) {
     const items = Array.isArray(bucket?.items) ? bucket.items.filter(Boolean) : [];
     if (!items.length) return;
     const card = document.createElement("div");
     card.className = "studio-dashboard__attention-card";
     const visible = items.slice(0, NEEDS_ATTENTION_ITEM_LIMIT);
     const hiddenCount = Math.max(0, items.length - visible.length);
+    const bucketUrl = makeAttentionBucketUrl(bucket, stats);
+    const headingText = `
+      <span>${escapeHtml(bucket.label)}</span>
+      <strong>${escapeHtml(formatNumber(items.length))}</strong>
+    `;
     card.innerHTML = `
-      <div class="studio-dashboard__attention-heading">
-        <span>${escapeHtml(bucket.label)}</span>
-        <strong>${escapeHtml(formatNumber(items.length))}</strong>
-      </div>
+      ${bucketUrl
+        ? `<a class="studio-dashboard__attention-heading" href="${escapeHtml(bucketUrl)}" target="_blank" rel="noopener noreferrer">${headingText}</a>`
+        : `<div class="studio-dashboard__attention-heading">${headingText}</div>`}
       <div class="studio-dashboard__attention-type">${escapeHtml(entityLabel)}</div>
       <div class="studio-dashboard__attention-list">
         ${visible.map((item) => {
@@ -3463,6 +4086,13 @@
       </div>
     `;
     container.appendChild(card);
+  }
+
+  function makeAttentionBucketUrl(bucket, stats) {
+    const criteria = (bucket?.criteria || []).filter(Boolean);
+    if (!criteria.length) return "";
+    if (bucket?.target === "performers") return makePerformersUrl(criteria);
+    return makeDashboardScenesUrl(stats, criteria);
   }
 
   function getAttentionItemMeta(item) {
@@ -3487,7 +4117,7 @@
     return performer?.id ? `/performers/${encodeURIComponent(performer.id)}` : "";
   }
 
-  function createPageSection(container, titleText) {
+  function createPageSection(container, titleText, options = {}) {
     const section = document.createElement("div");
     section.className = "studio-dashboard__page-section";
     const body = document.createElement("div");
@@ -3497,10 +4127,12 @@
       const defaultState = getDashboardSectionDefaultState();
       const isCollapsed = defaultState === "collapsed" ||
         defaultState === "remember" && getCollapsedDashboardSections().has(collapsedKey);
-      const header = document.createElement("button");
-      header.type = "button";
+      const header = document.createElement("div");
       header.className = "studio-dashboard__page-section-header";
-      header.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+      const main = document.createElement("button");
+      main.type = "button";
+      main.className = "studio-dashboard__page-section-header-main";
+      main.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
       const caret = document.createElement("span");
       caret.className = "studio-dashboard__page-section-caret";
       caret.textContent = ">";
@@ -3510,13 +4142,18 @@
       const toggle = document.createElement("span");
       toggle.className = "studio-dashboard__page-section-toggle";
       toggle.textContent = isCollapsed ? "Expand" : "Collapse";
-      header.append(caret, title, toggle);
+      main.append(caret, title, toggle);
+      header.appendChild(main);
+      const actions = document.createElement("span");
+      actions.className = "studio-dashboard__page-section-actions";
+      (options.actions || []).filter(Boolean).forEach((action) => actions.appendChild(action));
+      if (actions.children.length) header.appendChild(actions);
       section.appendChild(header);
       if (isCollapsed) section.classList.add("is-collapsed");
-      header.addEventListener("click", () => {
+      main.addEventListener("click", () => {
         const nextCollapsed = !section.classList.contains("is-collapsed");
         section.classList.toggle("is-collapsed", nextCollapsed);
-        header.setAttribute("aria-expanded", nextCollapsed ? "false" : "true");
+        main.setAttribute("aria-expanded", nextCollapsed ? "false" : "true");
         toggle.textContent = nextCollapsed ? "Expand" : "Collapse";
         if (defaultState === "remember") setDashboardSectionCollapsed(collapsedKey, nextCollapsed);
       });
@@ -3672,6 +4309,25 @@
     section.appendChild(grid);
   }
 
+  function createHideUnknownChartsToggle(kind, onChange) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "studio-dashboard__section-action";
+    button.textContent = "Hide Unknown";
+    button.classList.toggle("is-active", getHideUnknownChartSlices(kind));
+    button.setAttribute("aria-pressed", getHideUnknownChartSlices(kind) ? "true" : "false");
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const next = !getHideUnknownChartSlices(kind);
+      setHideUnknownChartSlices(kind, next);
+      button.classList.toggle("is-active", next);
+      button.setAttribute("aria-pressed", next ? "true" : "false");
+      if (typeof onChange === "function") onChange(next);
+    });
+    return button;
+  }
+
   function renderPerformerDemographics(container, stats) {
     const demographics = stats?.performerDemographics;
     const hasCountries = Array.isArray(demographics?.countries) && demographics.countries.length;
@@ -3684,10 +4340,16 @@
     });
     if (!hasCountries && !hasAges && !hasRatings && !hasCustomPie && !demographics?.ageUnknown) return;
 
-    const section = createPageSection(container, "PERFORMER CHARTS");
+    const section = createPageSection(container, "PERFORMER CHARTS", {
+      actions: [createHideUnknownChartsToggle("performer", () => {
+        const dashboard = container.closest(".studio-dashboard__page-dashboard");
+        if (dashboard instanceof HTMLElement) renderStudioPageDashboard(dashboard, stats);
+      })],
+    });
     const grid = document.createElement("div");
     grid.className = "studio-dashboard__demographics";
     section.appendChild(grid);
+    const hideUnknown = getHideUnknownChartSlices("performer");
 
     renderDemographicChart(grid, {
       title: "Nationality",
@@ -3696,6 +4358,7 @@
       unit: "performers",
       type: "country",
       studio: stats.studio,
+      hideUnknown,
     });
 
     renderDemographicChart(grid, {
@@ -3705,6 +4368,7 @@
       unit: "appearances",
       type: "age",
       studio: stats.studio,
+      hideUnknown,
     });
 
     renderDemographicChart(grid, {
@@ -3714,6 +4378,7 @@
       unit: "performers",
       type: "performer-rating",
       studio: stats.studio,
+      hideUnknown,
     });
 
     customPies.forEach((chart, index) => {
@@ -3725,6 +4390,7 @@
         unit: "performers",
         type: "custom-performer",
         studio: stats.studio,
+        hideUnknown,
       });
     });
   }
@@ -3743,10 +4409,16 @@
     const hasSceneDurations = Array.isArray(sceneDurations.items) && sceneDurations.items.length;
     if (!visibleCharts.length && !hasSceneRatings && !hasSceneResolutions && !hasSceneDurations) return;
 
-    const section = createPageSection(container, "SCENE CHARTS");
+    const section = createPageSection(container, "SCENE CHARTS", {
+      actions: [createHideUnknownChartsToggle("scene", () => {
+        const dashboard = container.closest(".studio-dashboard__page-dashboard");
+        if (dashboard instanceof HTMLElement) renderStudioPageDashboard(dashboard, stats);
+      })],
+    });
     const grid = document.createElement("div");
     grid.className = "studio-dashboard__demographics";
     section.appendChild(grid);
+    const hideUnknown = getHideUnknownChartSlices("scene");
 
     if (hasSceneRatings) {
       renderDemographicChart(grid, {
@@ -3756,6 +4428,7 @@
         unit: "scenes",
         type: "scene-rating",
         studio: stats.studio,
+        hideUnknown,
       });
     }
 
@@ -3768,6 +4441,7 @@
         type: "scene-resolution",
         studio: stats.studio,
         footer: "Stash supports filtering by one resolution at a time.",
+        hideUnknown,
       });
     }
 
@@ -3779,6 +4453,7 @@
         unit: "scenes",
         type: "scene-duration",
         studio: stats.studio,
+        hideUnknown,
       });
     }
 
@@ -3791,20 +4466,23 @@
         unit: "scenes",
         type: "custom-scene",
         studio: stats.studio,
+        hideUnknown,
       });
     });
   }
 
-  function renderDemographicChart(container, { title, subtitle, items, subcharts, unit, type, studio, footer }) {
+  function renderDemographicChart(container, { title, subtitle, items, subcharts, unit, type, studio, footer, hideUnknown = false }) {
     const hasSubcharts = Array.isArray(subcharts) && subcharts.length;
     let nextItemIndex = 0;
     const displayItems = hasSubcharts
       ? []
-      : getDemographicDisplayItems(items || [], type).map((item) => ({ ...item, sourceIndex: nextItemIndex++ }));
+      : prepareDemographicItemsForDisplay(getDemographicDisplayItems(items || [], type), hideUnknown)
+        .map((item) => ({ ...item, sourceIndex: nextItemIndex++ }));
     const displaySubcharts = hasSubcharts
       ? subcharts.map((subchart) => ({
         ...subchart,
-        items: (subchart.items || []).map((item) => ({ ...item, sourceIndex: nextItemIndex++ })),
+        items: prepareDemographicItemsForDisplay(subchart.items || [], hideUnknown)
+          .map((item) => ({ ...item, sourceIndex: nextItemIndex++ })),
       }))
       : [];
     const allDisplayItems = hasSubcharts ? displaySubcharts.flatMap((subchart) => subchart.items || []) : displayItems;
@@ -3991,6 +4669,15 @@
   function getDemographicDisplayItems(items, type) {
     if (type !== "country") return items;
     return getPieItems(items);
+  }
+
+  function prepareDemographicItemsForDisplay(items, hideUnknown = false) {
+    const visible = (items || []).filter((item) => !hideUnknown || !isUnknownDemographicItem(item));
+    const total = visible.reduce((sum, item) => sum + Number(item.count || 0), 0);
+    return visible.map((item) => ({
+      ...item,
+      percent: formatPercent(Number(item.count || 0), total),
+    }));
   }
 
   function renderDemographicPie(container, items, unit, type) {
@@ -5021,6 +5708,26 @@
     };
   }
 
+  function buildAttentionCriterion(type) {
+    const filterTypes = {
+      organized: "organized",
+      stashId: "stash_id",
+      date: "date",
+      performers: "performers",
+      studios: "studios",
+      country: "country",
+      birthdate: "birthdate",
+      image: "image",
+      scenes: "scenes",
+    };
+    const filterType = filterTypes[type] || type;
+    if (!filterType) return null;
+    return {
+      type: filterType,
+      modifier: "IS_NULL",
+    };
+  }
+
   function buildStudioSelectionCriterion(studios) {
     const items = (studios || [])
       .filter((studio) => studio?.id && studio.id !== NO_STUDIO_ID)
@@ -5495,6 +6202,16 @@
     });
   }
 
+  function getCachedDashboardStudioIdSet() {
+    return new Set(Array.from(state.dashboardLoadedStudioIds || []).map(String).filter(Boolean));
+  }
+
+  function getPresetTargetStudioIds(studioIds, cachedIds = getCachedDashboardStudioIdSet()) {
+    const directIds = new Set((studioIds || []).map(String).filter((id) => cachedIds.has(id)));
+    if (!getDashboardIncludeSubStudios()) return directIds;
+    return new Set(Array.from(expandDashboardStudioIds(directIds)).filter((id) => cachedIds.has(id)));
+  }
+
   function setDashboardDescendantCheckboxes(host, studioId, checked) {
     const descendantIds = getDashboardStudioDescendantIds(studioId);
     host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => {
@@ -5525,9 +6242,12 @@
   }
 
   function createDashboardStudioGroups(studios, query) {
+    const sourceStudios = getDashboardShowCachedStudiosOnly()
+      ? (studios || []).filter((studio) => state.dashboardLoadedStudioIds.has(studio.id))
+      : studios;
     return getDashboardStudioListGrouping() === "parent"
-      ? createDashboardParentStudioGroups(studios, query)
-      : createDashboardAlphabeticalStudioGroups(studios, query);
+      ? createDashboardParentStudioGroups(sourceStudios, query)
+      : createDashboardAlphabeticalStudioGroups(sourceStudios, query);
   }
 
   function createDashboardAlphabeticalStudioGroups(studios, query) {
@@ -5634,7 +6354,8 @@
       return;
     }
     if (!groups.length) {
-      list.innerHTML = `<div class="studio-dashboard__status">No studios match the search.</div>`;
+      list.innerHTML = `<div class="studio-dashboard__status">${getDashboardShowCachedStudiosOnly() ? "No cached studios match." : "No studios match the search."}</div>`;
+      if (loadButton instanceof HTMLButtonElement) loadButton.disabled = true;
       return;
     }
     const { childrenByParent } = getDashboardStudioMaps(studios);
@@ -5645,7 +6366,7 @@
           ${group.studios.map((studio) => {
             const descendantCount = countDashboardStudioDescendants(studio.id, childrenByParent);
             return `
-            <label class="stash-dashboard__studio-row">
+            <label class="stash-dashboard__studio-row ${state.dashboardLoadedStudioIds.has(studio.id) ? "is-cached" : ""}">
               <input class="stash-dashboard__studio-check" type="checkbox" value="${escapeHtml(studio.id)}"${selectedIds.has(studio.id) ? " checked" : ""}>
               <span>${escapeHtml(studio.name)}</span>
               ${includeSubs && descendantCount ? `<small>+${descendantCount}</small>` : ""}
@@ -5656,6 +6377,65 @@
       </section>
     `).join("");
     if (loadButton instanceof HTMLButtonElement) loadButton.disabled = false;
+  }
+
+  function refreshDashboardPicker(host) {
+    renderDashboardStudioList(host, state.dashboardStudios || []);
+    renderDashboardPresetList(host);
+  }
+
+  function renderDashboardPresetList(host) {
+    const list = host.querySelector(".stash-dashboard__preset-list");
+    if (!(list instanceof HTMLElement)) return;
+    const presets = getDashboardFilterPresets();
+    if (!presets.length) {
+      list.innerHTML = `<div class="stash-dashboard__preset-empty">No presets yet.</div>`;
+      return;
+    }
+    const cachedIds = getCachedDashboardStudioIdSet();
+    const selectedIds = getDirectSelectedDashboardStudioIds(host);
+    list.innerHTML = presets.map((preset) => {
+      const availablePresetIds = preset.studioIds.filter((id) => cachedIds.has(id));
+      const availableCount = availablePresetIds.length;
+      const targetIds = getPresetTargetStudioIds(availablePresetIds, cachedIds);
+      const isActive = availableCount > 0 && Array.from(targetIds).every((id) => selectedIds.has(id));
+      return `
+        <div class="stash-dashboard__preset-row ${isActive ? "is-active" : ""}" data-preset-id="${escapeHtml(preset.id)}">
+          <button type="button" class="stash-dashboard__preset-apply" title="${isActive ? "Remove preset studios" : "Apply preset"}">
+            <span>${escapeHtml(preset.name)}</span>
+            <small>${escapeHtml(availableCount)} / ${escapeHtml(preset.studioIds.length)} available${isActive ? " - selected" : ""}</small>
+          </button>
+          <button type="button" class="stash-dashboard__preset-delete" title="Delete preset" aria-label="Delete ${escapeHtml(preset.name)}">x</button>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function applyDashboardFilterPreset(host, preset, content) {
+    if (!preset) return;
+    const searchInput = host.querySelector(".stash-dashboard__studio-search");
+    if (searchInput instanceof HTMLInputElement && searchInput.value) {
+      searchInput.value = "";
+      refreshDashboardPicker(host);
+    }
+    const cachedIds = getCachedDashboardStudioIdSet();
+    const presetIds = new Set(preset.studioIds.filter((id) => cachedIds.has(id)));
+    const targetIds = getPresetTargetStudioIds(presetIds, cachedIds);
+    const currentIds = getDirectSelectedDashboardStudioIds(host);
+    const isApplied = presetIds.size > 0 && Array.from(targetIds).every((id) => currentIds.has(id));
+    if (isApplied) {
+      targetIds.forEach((id) => currentIds.delete(id));
+    } else {
+      targetIds.forEach((id) => currentIds.add(id));
+    }
+    setDashboardStudioCheckboxes(host, currentIds);
+    if (getDashboardIncludeSubStudios()) syncDashboardSubStudioCheckboxes(host);
+    renderDashboardPresetList(host);
+    const skipped = preset.studioIds.length - presetIds.size;
+    const prefix = skipped > 0
+      ? `${isApplied ? "Removed" : "Applied"} preset "${preset.name}" (${skipped} unavailable skipped). `
+      : `${isApplied ? "Removed" : "Applied"} preset "${preset.name}". `;
+    renderCachedDashboardView(host, content, prefix).catch((err) => console.warn("[StashDashboard] Preset filter failed", err));
   }
 
   function countDashboardStudioDescendants(parentId, childrenByParent) {
@@ -5836,13 +6616,24 @@
             <div class="stash-dashboard__control-actions">
               <button type="button" class="btn btn-secondary stash-dashboard__select-all" disabled>Select all</button>
               <button type="button" class="btn btn-secondary stash-dashboard__select-none" disabled>Clear selection</button>
+              <button type="button" class="btn btn-secondary stash-dashboard__select-cached" disabled>Select cached</button>
+              <button type="button" class="btn btn-secondary stash-dashboard__show-cached-only" disabled>Cached only</button>
               <input class="form-control stash-dashboard__studio-search" type="search" placeholder="Search studios..." disabled>
               <span class="stash-dashboard__control-spacer"></span>
               <button type="button" class="btn btn-primary stash-dashboard__load-studios">Load studio list</button>
               <button type="button" class="btn btn-success stash-dashboard__load-selected" disabled>Load selected studios</button>
             </div>
-            <div class="stash-dashboard__studio-list">
-              <div class="studio-dashboard__status">No data loaded. Load the studio list, choose studios, then build the dashboard.</div>
+            <div class="stash-dashboard__picker-layout">
+              <div class="stash-dashboard__studio-list">
+                <div class="studio-dashboard__status">No data loaded. Load the studio list, choose studios, then build the dashboard.</div>
+              </div>
+              <aside class="stash-dashboard__preset-panel">
+                <div class="stash-dashboard__preset-header">
+                  <span>Presets</span>
+                  <button type="button" class="btn btn-secondary stash-dashboard__create-preset">Create</button>
+                </div>
+                <div class="stash-dashboard__preset-list"></div>
+              </aside>
             </div>
           </div>
         </details>
@@ -5855,6 +6646,8 @@
     const loadStudiosButton = host.querySelector(".stash-dashboard__load-studios");
     const selectAllButton = host.querySelector(".stash-dashboard__select-all");
     const selectNoneButton = host.querySelector(".stash-dashboard__select-none");
+    const selectCachedButton = host.querySelector(".stash-dashboard__select-cached");
+    const showCachedOnlyButton = host.querySelector(".stash-dashboard__show-cached-only");
     const loadSelectedButton = host.querySelector(".stash-dashboard__load-selected");
     const checkChangesButton = host.querySelector(".stash-dashboard__check-changes");
     const studioSearchInput = host.querySelector(".stash-dashboard__studio-search");
@@ -5862,21 +6655,28 @@
     const importSettingsInput = host.querySelector(".stash-dashboard__import-settings-input");
     const studioGroupingSelect = host.querySelector(".stash-dashboard__studio-grouping");
     const includeSubStudiosInput = host.querySelector(".stash-dashboard__include-sub-studios");
+    const createPresetButton = host.querySelector(".stash-dashboard__create-preset");
     if (studioGroupingSelect instanceof HTMLSelectElement) {
       studioGroupingSelect.value = getDashboardStudioListGrouping();
     }
     if (includeSubStudiosInput instanceof HTMLInputElement) {
       includeSubStudiosInput.checked = getDashboardIncludeSubStudios();
     }
+    if (showCachedOnlyButton instanceof HTMLElement) {
+      showCachedOnlyButton.classList.toggle("is-active", getDashboardShowCachedStudiosOnly());
+    }
+    renderDashboardPresetList(host);
     const loadStudioList = async () => {
       loadStudiosButton.disabled = true;
       setStashDashboardStatus(content, "Loading studio list...");
       try {
         state.dashboardStudios = (await fetchAllStudiosForDashboard()).filter(studioMatchesDashboardFilters);
         const hydrated = await hydratePersistentDashboardCacheForStudios(state.dashboardStudios);
-        renderDashboardStudioList(host, state.dashboardStudios);
+        refreshDashboardPicker(host);
         selectAllButton.disabled = false;
         selectNoneButton.disabled = false;
+        if (selectCachedButton instanceof HTMLButtonElement) selectCachedButton.disabled = false;
+        if (showCachedOnlyButton instanceof HTMLButtonElement) showCachedOnlyButton.disabled = false;
         if (studioSearchInput instanceof HTMLInputElement) studioSearchInput.disabled = false;
         setStashDashboardStatus(
           content,
@@ -5907,6 +6707,7 @@
         await fetchStashStatsForStudios(studios, (message) => setStashDashboardStatus(content, message));
         if (loadToken !== state.dashboardRenderToken || !isStashDashboardRoute()) return;
         host.dataset.stashDashboardLoaded = "true";
+        refreshDashboardPicker(host);
         await renderCachedDashboardView(host, content, "Cache refreshed. ");
       } catch (err) {
         console.warn("[StashDashboard] Selected dashboard load failed", err);
@@ -5924,6 +6725,7 @@
       state.dashboardStudioPerformerUpdatedAt.clear();
       state.dashboardTagUpdatedAt = "";
       clearPersistentDashboardCache().catch((err) => console.warn("[StashDashboard] Persistent cache clear failed", err));
+      refreshDashboardPicker(host);
       setStashDashboardStatus(content, "Dashboard cache cleared.");
     });
     host.querySelector(".stash-dashboard__export-settings")?.addEventListener("click", () => {
@@ -5945,7 +6747,8 @@
         importDashboardPreferences(payload);
         if (studioGroupingSelect instanceof HTMLSelectElement) studioGroupingSelect.value = getDashboardStudioListGrouping();
         if (includeSubStudiosInput instanceof HTMLInputElement) includeSubStudiosInput.checked = getDashboardIncludeSubStudios();
-        renderDashboardStudioList(host, state.dashboardStudios || []);
+        if (showCachedOnlyButton instanceof HTMLElement) showCachedOnlyButton.classList.toggle("is-active", getDashboardShowCachedStudiosOnly());
+        refreshDashboardPicker(host);
         setStashDashboardStatus(content, "Settings imported. Re-open plugin settings if you want to inspect the imported values.");
         await renderCachedDashboardView(host, content, "Settings imported. ");
       } catch (err) {
@@ -5987,23 +6790,47 @@
     });
     selectAllButton?.addEventListener("click", () => {
       host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => { input.checked = true; });
+      renderDashboardPresetList(host);
       renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Cached all filter failed", err));
     });
     selectNoneButton?.addEventListener("click", () => {
       host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => { input.checked = false; });
+      renderDashboardPresetList(host);
       renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Cached clear filter failed", err));
+    });
+    selectCachedButton?.addEventListener("click", () => {
+      const cachedIds = new Set(state.dashboardLoadedStudioIds || []);
+      if (!cachedIds.size) {
+        setStashDashboardStatus(content, "No cached studios loaded yet.");
+        return;
+      }
+      if (studioSearchInput instanceof HTMLInputElement && studioSearchInput.value) {
+        studioSearchInput.value = "";
+        refreshDashboardPicker(host);
+      }
+      setDashboardStudioCheckboxes(host, cachedIds);
+      renderDashboardPresetList(host);
+      setStashDashboardStatus(content, `Selected ${cachedIds.size} cached studio${cachedIds.size === 1 ? "" : "s"}.`);
+      renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Cached studio selection failed", err));
+    });
+    showCachedOnlyButton?.addEventListener("click", () => {
+      const nextValue = !getDashboardShowCachedStudiosOnly();
+      setDashboardShowCachedStudiosOnly(nextValue);
+      if (showCachedOnlyButton instanceof HTMLElement) showCachedOnlyButton.classList.toggle("is-active", nextValue);
+      refreshDashboardPicker(host);
+      setStashDashboardStatus(content, nextValue ? "Showing cached studios only." : "Showing all studios.");
     });
     studioGroupingSelect?.addEventListener("change", () => {
       if (!(studioGroupingSelect instanceof HTMLSelectElement)) return;
       setLocalStorageValue(DASHBOARD_STUDIO_GROUPING_KEY, studioGroupingSelect.value === "parent" ? "parent" : "alphabetical");
-      renderDashboardStudioList(host, state.dashboardStudios || []);
+      refreshDashboardPicker(host);
       renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Studio grouping refresh failed", err));
     });
     includeSubStudiosInput?.addEventListener("change", () => {
       if (!(includeSubStudiosInput instanceof HTMLInputElement)) return;
       setLocalStorageValue(DASHBOARD_INCLUDE_SUB_STUDIOS_KEY, includeSubStudiosInput.checked ? "true" : "false");
       syncDashboardSubStudioCheckboxes(host);
-      renderDashboardStudioList(host, state.dashboardStudios || []);
+      refreshDashboardPicker(host);
       renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Sub-studio refresh failed", err));
     });
     host.addEventListener("change", (event) => {
@@ -6012,10 +6839,45 @@
         if (!event.target.checked) setDashboardDescendantCheckboxes(host, event.target.value, false);
         syncDashboardSubStudioCheckboxes(host);
       }
+      renderDashboardPresetList(host);
       renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Cached filter failed", err));
     });
     studioSearchInput?.addEventListener("input", () => {
-      renderDashboardStudioList(host, state.dashboardStudios || []);
+      refreshDashboardPicker(host);
+    });
+    createPresetButton?.addEventListener("click", () => {
+      const selectedIds = Array.from(minimizeDashboardStudioSelection(getDirectSelectedDashboardStudioIds(host)));
+      if (!selectedIds.length) {
+        setStashDashboardStatus(content, "Select at least one studio before creating a preset.");
+        return;
+      }
+      const name = window.prompt("Name this dashboard preset:");
+      if (!name) return;
+      const preset = addDashboardFilterPreset(name, selectedIds);
+      if (!preset) {
+        setStashDashboardStatus(content, "Could not create preset.");
+        return;
+      }
+      renderDashboardPresetList(host);
+      setStashDashboardStatus(content, `Preset "${preset.name}" saved with ${preset.studioIds.length} studio${preset.studioIds.length === 1 ? "" : "s"}.`);
+    });
+    host.addEventListener("click", (event) => {
+      const deleteButton = event.target instanceof Element ? event.target.closest(".stash-dashboard__preset-delete") : null;
+      if (deleteButton) {
+        const row = deleteButton.closest(".stash-dashboard__preset-row");
+        const presetId = row?.getAttribute("data-preset-id") || "";
+        deleteDashboardFilterPreset(presetId);
+        renderDashboardPresetList(host);
+        setStashDashboardStatus(content, "Preset deleted.");
+        return;
+      }
+      const applyButton = event.target instanceof Element ? event.target.closest(".stash-dashboard__preset-apply") : null;
+      if (applyButton) {
+        const row = applyButton.closest(".stash-dashboard__preset-row");
+        const presetId = row?.getAttribute("data-preset-id") || "";
+        const preset = getDashboardFilterPresets().find((item) => item.id === presetId);
+        applyDashboardFilterPreset(host, preset, content);
+      }
     });
     dashboardSearchInput?.addEventListener("input", () => {
       applyDashboardSearch(host);
