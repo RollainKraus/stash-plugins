@@ -5,6 +5,11 @@
   const ROUTE_EVENT = "stash-dashboard:navigation";
   const DASHBOARD_PATH = "/stash-dashboard";
   const NO_STUDIO_ID = "__stash_dashboard_no_studio__";
+  const DASHBOARD_CACHE_DB = "StashDashboardCache";
+  const DASHBOARD_CACHE_STORE = "studioScopes";
+  const DASHBOARD_COLLAPSED_SECTIONS_KEY = "StashDashboard.collapsedSections";
+  const DASHBOARD_STUDIO_GROUPING_KEY = "StashDashboard.studioListGrouping";
+  const DASHBOARD_INCLUDE_SUB_STUDIOS_KEY = "StashDashboard.includeSubStudios";
   const TOP_PERFORMER_MAX = 6;
   const TOP_TAG_MAX = 10;
   const TOP_TAG_CATEGORY_MAX = 12;
@@ -65,17 +70,17 @@
     { label: "45+", min: 45, max: 120 },
   ];
   const RATING_BUCKETS = [
-    { label: "0-0.9", min: 0, max: 0.9 },
-    { label: "1-1.9", min: 1, max: 1.9 },
-    { label: "2-2.9", min: 2, max: 2.9 },
-    { label: "3-3.9", min: 3, max: 3.9 },
-    { label: "4-4.9", min: 4, max: 4.9 },
-    { label: "5-5.9", min: 5, max: 5.9 },
-    { label: "6-6.9", min: 6, max: 6.9 },
-    { label: "7-7.9", min: 7, max: 7.9 },
-    { label: "8-8.9", min: 8, max: 8.9 },
-    { label: "9-9.9", min: 9, max: 9.9 },
-    { label: "10", min: 10, max: 10 },
+    { label: "0.0-0.9", min: 0, max: 0.9 },
+    { label: "1.0-1.9", min: 1, max: 1.9 },
+    { label: "2.0-2.9", min: 2, max: 2.9 },
+    { label: "3.0-3.9", min: 3, max: 3.9 },
+    { label: "4.0-4.9", min: 4, max: 4.9 },
+    { label: "5.0-5.9", min: 5, max: 5.9 },
+    { label: "6.0-6.9", min: 6, max: 6.9 },
+    { label: "7.0-7.9", min: 7, max: 7.9 },
+    { label: "8.0-8.9", min: 8, max: 8.9 },
+    { label: "9.0-9.9", min: 9, max: 9.9 },
+    { label: "10.0", min: 10, max: 10 },
   ];
   const RESOLUTION_BUCKETS = [
     { label: "144p", enumValue: "VERY_LOW", max: 144 },
@@ -187,6 +192,85 @@
       .finally(() => window.clearTimeout(timer));
   }
 
+  function openDashboardCacheDb() {
+    if (!window.indexedDB) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const request = window.indexedDB.open(DASHBOARD_CACHE_DB, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(DASHBOARD_CACHE_STORE)) {
+          db.createObjectStore(DASHBOARD_CACHE_STORE, { keyPath: "key" });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => {
+        console.warn("[StashDashboard] Persistent cache open failed", request.error);
+        resolve(null);
+      };
+    });
+  }
+
+  async function withDashboardCacheStore(mode, callback) {
+    const db = await openDashboardCacheDb();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      const tx = db.transaction(DASHBOARD_CACHE_STORE, mode);
+      const store = tx.objectStore(DASHBOARD_CACHE_STORE);
+      let result = null;
+      try {
+        result = callback(store);
+      } catch (err) {
+        console.warn("[StashDashboard] Persistent cache operation failed", err);
+      }
+      tx.oncomplete = () => {
+        db.close();
+        resolve(result);
+      };
+      tx.onerror = () => {
+        console.warn("[StashDashboard] Persistent cache transaction failed", tx.error);
+        db.close();
+        resolve(null);
+      };
+    });
+  }
+
+  async function getPersistentDashboardScope(key) {
+    return withDashboardCacheStore("readonly", (store) => new Promise((resolve) => {
+      const request = store.get(key);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => resolve(null);
+    }));
+  }
+
+  async function setPersistentDashboardScope(key, studio, scope) {
+    await withDashboardCacheStore("readwrite", (store) => {
+      store.put({
+        key,
+        configKey: state.configKey || "default",
+        studio: {
+          id: studio.id,
+          name: studio.name,
+          imagePath: studio.imagePath || "",
+          synthetic: Boolean(studio.synthetic),
+        },
+        scope,
+        savedAt: new Date().toISOString(),
+      });
+    });
+  }
+
+  async function deletePersistentDashboardScope(key) {
+    await withDashboardCacheStore("readwrite", (store) => {
+      store.delete(key);
+    });
+  }
+
+  async function clearPersistentDashboardCache() {
+    await withDashboardCacheStore("readwrite", (store) => {
+      store.clear();
+    });
+  }
+
   function getConfigBoolean(value, fallback) {
     if (typeof value === "boolean") return value;
     const normalized = String(value ?? "").trim().toLowerCase();
@@ -264,10 +348,6 @@
     return 50;
   }
 
-  function getAutoLoadDashboardOnOpen() {
-    return false;
-  }
-
   function normalizeDashboardSectionKey(value) {
     const key = String(value || "").trim().replace(/[\s_-]+/g, "").toLowerCase();
     if (!key) return "";
@@ -288,6 +368,44 @@
         return true;
       });
     return order.length ? order : DEFAULT_DASHBOARD_SECTION_ORDER.slice();
+  }
+
+  function getDashboardSectionDefaultState() {
+    const value = getConfigString(
+      getSetting("a02DashboardSectionDefaultState", "dashboardSectionDefaultState"),
+      "expanded"
+    ).toLowerCase();
+    if (["collapsed", "collapse", "closed"].includes(value)) return "collapsed";
+    if (["remember", "saved", "local"].includes(value)) return "remember";
+    return "expanded";
+  }
+
+  function getDashboardStudioListGrouping() {
+    const stored = getLocalStorageValue(DASHBOARD_STUDIO_GROUPING_KEY);
+    const value = getConfigString(stored ?? getSetting("a03StudioListGrouping", "studioListGrouping"), "alphabetical").toLowerCase();
+    if (["parent", "parents", "parentstudio", "parent-studio", "hierarchy"].includes(value)) return "parent";
+    return "alphabetical";
+  }
+
+  function getDashboardIncludeSubStudios() {
+    const stored = getLocalStorageValue(DASHBOARD_INCLUDE_SUB_STUDIOS_KEY);
+    return getConfigBoolean(stored ?? getSetting("a04IncludeSubStudios", "includeSubStudios"), false);
+  }
+
+  function getLocalStorageValue(key) {
+    try {
+      return window.localStorage.getItem(key);
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  function setLocalStorageValue(key, value) {
+    try {
+      window.localStorage.setItem(key, String(value));
+    } catch (_err) {
+      // Dashboard picker preferences are conveniences; storage failures are safe to ignore.
+    }
   }
 
   function getDashboardTopTagLimit() {
@@ -329,6 +447,15 @@
     const configured = getConfigString(getSetting("e01SceneRatingGroups", "sceneRatingGroups"), "");
     const buckets = parseRatingBuckets(configured);
     return buckets.length ? buckets : RATING_BUCKETS;
+  }
+
+  function getRatingDisplayScale(buckets) {
+    const values = (buckets || [])
+      .flatMap((bucket) => [bucket?.min, bucket?.max])
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    if (!values.length) return 10;
+    return Math.max(...values) <= 5 ? 5 : 10;
   }
 
   function getResolutionBuckets() {
@@ -378,6 +505,13 @@
       .replace(/'/g, "&#39;");
   }
 
+  function openLinkInNewTab(link) {
+    if (!(link instanceof HTMLAnchorElement)) return link;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    return link;
+  }
+
   async function loadConfig() {
     const data = await gql(`
       query StashDashboardConfig {
@@ -394,6 +528,71 @@
     }
     state.config = nextConfig;
     state.configKey = nextKey;
+  }
+
+  async function saveConfig(nextConfig) {
+    const config = nextConfig && typeof nextConfig === "object" && !Array.isArray(nextConfig) ? nextConfig : {};
+    await gql(
+      `mutation ConfigureStashDashboard($pluginId: ID!, $input: Map!) {
+        configurePlugin(plugin_id: $pluginId, input: $input)
+      }`,
+      { pluginId: PLUGIN_ID, input: config }
+    );
+    state.config = config;
+    state.configKey = JSON.stringify(config);
+    state.statsCache.clear();
+  }
+
+  function clonePlainObject(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function exportDashboardSettings() {
+    const payload = {
+      plugin: PLUGIN_ID,
+      exportedAt: new Date().toISOString(),
+      settings: clonePlainObject(state.config),
+      dashboardPreferences: {
+        studioListGrouping: getDashboardStudioListGrouping(),
+        includeSubStudios: getDashboardIncludeSubStudios(),
+      },
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const date = new Date().toISOString().slice(0, 10);
+    link.href = url;
+    link.download = `stash-dashboard-settings-${date}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function normalizeImportedDashboardSettings(payload) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+    if (payload.plugin && payload.plugin !== PLUGIN_ID) return null;
+    const settings = payload.settings || payload.config || payload;
+    if (!settings || typeof settings !== "object" || Array.isArray(settings)) return null;
+    return clonePlainObject(settings);
+  }
+
+  function importDashboardPreferences(payload) {
+    const preferences = payload?.dashboardPreferences || payload?.dashboard || {};
+    if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) return;
+    if (Object.prototype.hasOwnProperty.call(preferences, "studioListGrouping")) {
+      setLocalStorageValue(
+        DASHBOARD_STUDIO_GROUPING_KEY,
+        String(preferences.studioListGrouping).toLowerCase() === "parent" ? "parent" : "alphabetical"
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(preferences, "includeSubStudios")) {
+      setLocalStorageValue(
+        DASHBOARD_INCLUDE_SUB_STUDIOS_KEY,
+        getConfigBoolean(preferences.includeSubStudios, false) ? "true" : "false"
+      );
+    }
   }
 
   function getPageEntity() {
@@ -421,7 +620,7 @@
 
     const queryByType = {
       scene: `
-        query StudioDashboardSceneStudio($id: ID!) {
+        query StashDashboardSceneStudio($id: ID!) {
           findScene(id: $id) {
             id
             studio { id name image_path }
@@ -429,7 +628,7 @@
         }
       `,
       image: `
-        query StudioDashboardImageStudio($id: ID!) {
+        query StashDashboardImageStudio($id: ID!) {
           findImage(id: $id) {
             id
             studio { id name image_path }
@@ -437,7 +636,7 @@
         }
       `,
       gallery: `
-        query StudioDashboardGalleryStudio($id: ID!) {
+        query StashDashboardGalleryStudio($id: ID!) {
           findGallery(id: $id) {
             id
             studio { id name image_path }
@@ -454,7 +653,7 @@
   async function fetchStudioById(id) {
     if (!id) return null;
     const data = await gql(`
-      query StudioDashboardStudio($id: ID!) {
+      query StashDashboardStudio($id: ID!) {
         findStudio(id: $id) {
           id
           name
@@ -495,7 +694,7 @@
   async function fetchAllTags() {
     if (state.allTags) return state.allTags;
     const data = await gql(`
-      query StudioDashboardAllTags {
+      query StashDashboardAllTags {
         findTags(filter: { per_page: -1, sort: "name", direction: ASC }) {
           tags {
             id
@@ -579,7 +778,7 @@
       });
       return categories;
     } catch (err) {
-      console.warn("[StudioDashboard] Top tag categories failed", err);
+      console.warn("[StashDashboard] Top tag categories failed", err);
       return [];
     }
   }
@@ -606,7 +805,7 @@
         whitelist: whitelist.length ? expand(whitelist) : null,
       };
     } catch (err) {
-      console.warn("[StudioDashboard] Tag filter hierarchy failed", err);
+      console.warn("[StashDashboard] Tag filter hierarchy failed", err);
       return {
         blacklist: new Set(blacklist.flatMap((item) => [`id:${item}`, `name:${item}`])),
         whitelist: whitelist.length
@@ -651,7 +850,7 @@
 
   function sceneMatchesPathFilters(scene) {
     const includePaths = [];
-    const excludePaths = parseList(getSetting("a04ExcludePaths", "excludePaths"));
+    const excludePaths = parseList(getSetting("a05ExcludePaths", "a04ExcludePaths", "excludePaths"));
     if (!includePaths.length && !excludePaths.length) return true;
     const paths = (scene?.files || []).map((file) => String(file?.path || "").toLowerCase()).filter(Boolean);
     const includeOk = !includePaths.length || paths.some((path) => includePaths.some((fragment) => path.includes(fragment)));
@@ -916,7 +1115,7 @@
       try {
         const data = await gql(
           `
-            query StudioDashboardPerformerGlobalStats($sceneFilter: SceneFilterType) {
+            query StashDashboardPerformerGlobalStats($sceneFilter: SceneFilterType) {
               findScenes(scene_filter: $sceneFilter, filter: { per_page: -1 }) {
                 count
                 scenes {
@@ -945,7 +1144,7 @@
           .filter((item) => item.id === performer.id)
           .forEach((item) => Object.assign(item, globalStats));
       } catch (err) {
-        console.warn("[StudioDashboard] Performer global stats failed", performer.id, err);
+        console.warn("[StashDashboard] Performer global stats failed", performer.id, err);
       }
     }));
   }
@@ -968,6 +1167,21 @@
 
   function lastDayOfMonth(year, month) {
     return new Date(Date.UTC(year, month, 0)).getUTCDate();
+  }
+
+  function formatDateFromUtc(date) {
+    return formatDateLabel(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+  }
+
+  function getDateBeforeMonth(year, month) {
+    const date = new Date(Date.UTC(year, month - 1, 1));
+    date.setUTCDate(date.getUTCDate() - 1);
+    return formatDateFromUtc(date);
+  }
+
+  function getDateAfterMonth(year, month) {
+    const date = new Date(Date.UTC(year, month, 1));
+    return formatDateFromUtc(date);
   }
 
   function buildReleaseTimeline(scenes) {
@@ -1043,11 +1257,18 @@
     const bucketSize = totalMonths <= 36 ? 1 : totalMonths <= 96 ? 3 : 12;
     const monthCounts = new Map(timeline.months.map((item) => [item.label, item.count]));
     const buckets = [];
+    const first = bucketSize === 12
+      ? { year: startYear, month: 1 }
+      : bucketSize === 3
+        ? { year: startYear, month: Math.floor((startMonth - 1) / 3) * 3 + 1 }
+        : { year: startYear, month: startMonth };
 
-    for (let offset = 0; offset < totalMonths; offset += bucketSize) {
-      const start = addMonths(startYear, startMonth, offset);
-      const remaining = totalMonths - offset;
-      const monthsInBucket = Math.min(bucketSize, remaining);
+    for (
+      let start = first;
+      start.year < endYear || (start.year === endYear && start.month <= endMonth);
+      start = addMonths(start.year, start.month, bucketSize)
+    ) {
+      const monthsInBucket = bucketSize;
       const end = addMonths(start.year, start.month, monthsInBucket - 1);
       let count = 0;
       for (let inner = 0; inner < monthsInBucket; inner += 1) {
@@ -1066,6 +1287,8 @@
         count,
         startDate: formatDateLabel(start.year, start.month, 1),
         endDate: formatDateLabel(end.year, end.month, lastDayOfMonth(end.year, end.month)),
+        filterStartDate: getDateBeforeMonth(start.year, start.month),
+        filterEndDate: getDateAfterMonth(end.year, end.month),
       });
     }
 
@@ -1228,6 +1451,8 @@
 
   function buildRatingDistribution(items, options = {}) {
     const buckets = options.buckets || getRatingBuckets();
+    const ratingScale = Number(options.ratingScale || getRatingDisplayScale(buckets) || 10);
+    const divisor = 100 / Math.max(1, ratingScale);
     const counts = new Map(buckets.map((bucket) => [bucket.label, 0]));
     const entityGroups = new Map(buckets.map((bucket) => [bucket.label, []]));
     const otherEntities = [];
@@ -1238,7 +1463,7 @@
         unknownEntities.push(options.getEntity ? options.getEntity(item) : item);
         return;
       }
-      const rating = rating100 / 10;
+      const rating = rating100 / divisor;
       const bucket = buckets.find((candidate) => ratingMatchesBucket(rating, candidate));
       if (bucket) {
         counts.set(bucket.label, (counts.get(bucket.label) || 0) + 1);
@@ -1395,7 +1620,7 @@
         items: subchart.items,
       };
     } catch (err) {
-      console.warn("[StudioDashboard] Custom tag pie failed", err);
+      console.warn("[StashDashboard] Custom tag pie failed", err);
       return { total: 0, items: [] };
     }
   }
@@ -1483,7 +1708,7 @@
         items: subchart.items,
       };
     } catch (err) {
-      console.warn("[StudioDashboard] Custom scene tag pie failed", err);
+      console.warn("[StashDashboard] Custom scene tag pie failed", err);
       return { total: 0, items: [] };
     }
   }
@@ -1756,24 +1981,30 @@
     if (match) {
       const min = Number(match[1]);
       const max = Number(match[2]);
-      if (min <= max) return { label: `${formatBucketNumber(min)}-${formatBucketNumber(max)}`, min, max, modifier: "BETWEEN" };
+      if (min <= max) return { label: `${formatRatingBucketNumber(min)}-${formatRatingBucketNumber(max)}`, min, max, modifier: "BETWEEN" };
     }
     match = normalized.match(/^(\d{1,2}(?:\.\d+)?)\+$/);
-    if (match) return { label: `${formatBucketNumber(Number(match[1]))}+`, min: Number(match[1]), max: null, modifier: "GREATER_THAN" };
+    if (match) return { label: `${formatRatingBucketNumber(Number(match[1]))}+`, min: Number(match[1]), max: null, modifier: "GREATER_THAN" };
     match = normalized.match(/^>=?(\d{1,2}(?:\.\d+)?)$/);
-    if (match) return { label: `${formatBucketNumber(Number(match[1]))}+`, min: Number(match[1]), max: null, modifier: "GREATER_THAN" };
+    if (match) return { label: `${formatRatingBucketNumber(Number(match[1]))}+`, min: Number(match[1]), max: null, modifier: "GREATER_THAN" };
     match = normalized.match(/^<=?(\d{1,2}(?:\.\d+)?)$/);
-    if (match) return { label: `<=${formatBucketNumber(Number(match[1]))}`, min: null, max: Number(match[1]), modifier: "LESS_THAN" };
+    if (match) return { label: `<=${formatRatingBucketNumber(Number(match[1]))}`, min: null, max: Number(match[1]), modifier: "LESS_THAN" };
     match = normalized.match(/^=?(\d{1,2}(?:\.\d+)?)$/);
     if (match) {
       const exact = Number(match[1]);
-      return { label: formatBucketNumber(exact), min: exact, max: exact, modifier: "EQUALS" };
+      return { label: formatRatingBucketNumber(exact), min: exact, max: exact, modifier: "EQUALS" };
     }
     return null;
   }
 
   function formatBucketNumber(value) {
     return String(Number(value));
+  }
+
+  function formatRatingBucketNumber(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return String(value || "");
+    return Number.isInteger(numeric) ? numeric.toFixed(1) : String(numeric);
   }
 
   function parseAgeBucket(value) {
@@ -1975,12 +2206,14 @@
         id: String(studio?.id || ""),
         name: String(studio?.name || "Studio"),
         imagePath: String(studio?.image_path || ""),
+        parentId: String(studio?.parent_studio?.id || ""),
+        parentName: String(studio?.parent_studio?.name || ""),
       }))
       .filter((studio) => studio.id);
     const data = await gql(`
       query StashDashboardStudios {
         findStudios(filter: { per_page: -1, sort: "name", direction: ASC }) {
-          studios { id name image_path }
+          studios { id name image_path parent_studio { id name } }
         }
       }
     `);
@@ -1994,7 +2227,7 @@
       query StashDashboardStudiosFromScenes {
         findScenes(filter: { per_page: 1000, sort: "date", direction: DESC }) {
           scenes {
-            studio { id name image_path }
+            studio { id name image_path parent_studio { id name } }
           }
         }
       }
@@ -2277,11 +2510,13 @@
         if (oDiff) return oDiff;
         return String(left?.title || "").localeCompare(String(right?.title || ""));
       })[0];
+    const sceneRatingBuckets = getSceneRatingBuckets();
     const sceneRatingDistribution = buildRatingDistribution(scenes, {
       getRating: (scene) => Number(scene?.rating100 || 0),
       getEntity: normalizeSceneSummary,
       entityKey: "scenes",
-      buckets: getSceneRatingBuckets(),
+      buckets: sceneRatingBuckets,
+      ratingScale: getRatingDisplayScale(sceneRatingBuckets),
     });
     const sceneResolutionDistribution = buildResolutionDistribution(scenes);
     const sceneDurationDistribution = buildDurationDistribution(scenes);
@@ -2422,19 +2657,38 @@
     return `scope:${studio.id}:${state.configKey || "default"}`;
   }
 
+  function rememberDashboardScope(studio, scope) {
+    const key = getDashboardStudioScopeCacheKey(studio);
+    state.statsCache.set(key, scope);
+    state.dashboardLoadedStudioIds.add(studio.id);
+    state.dashboardStudioSceneCounts.set(studio.id, Number(scope.sceneCount || 0));
+    state.dashboardStudioUpdatedAt.set(studio.id, scope.latestUpdatedAt || "");
+    state.dashboardStudioPerformerUpdatedAt.set(studio.id, scope.latestPerformerUpdatedAt || "");
+    if (scope.latestTagUpdatedAt && scope.latestTagUpdatedAt > state.dashboardTagUpdatedAt) {
+      state.dashboardTagUpdatedAt = scope.latestTagUpdatedAt;
+    }
+  }
+
+  async function hydratePersistentDashboardCacheForStudios(studios) {
+    let hydrated = 0;
+    for (const studio of studios || []) {
+      const key = getDashboardStudioScopeCacheKey(studio);
+      if (state.statsCache.has(key)) continue;
+      const record = await getPersistentDashboardScope(key);
+      if (!record?.scope) continue;
+      rememberDashboardScope(studio, record.scope);
+      hydrated += 1;
+    }
+    return hydrated;
+  }
+
   async function fetchDashboardStudioScopeCached(studio, onProgress) {
     const key = getDashboardStudioScopeCacheKey(studio);
     if (state.statsCache.has(key)) return state.statsCache.get(key);
     const promise = fetchDashboardSceneScope(studio, onProgress)
       .then((scope) => {
-        state.statsCache.set(key, scope);
-        state.dashboardLoadedStudioIds.add(studio.id);
-        state.dashboardStudioSceneCounts.set(studio.id, Number(scope.sceneCount || 0));
-        state.dashboardStudioUpdatedAt.set(studio.id, scope.latestUpdatedAt || "");
-        state.dashboardStudioPerformerUpdatedAt.set(studio.id, scope.latestPerformerUpdatedAt || "");
-        if (scope.latestTagUpdatedAt && scope.latestTagUpdatedAt > state.dashboardTagUpdatedAt) {
-          state.dashboardTagUpdatedAt = scope.latestTagUpdatedAt;
-        }
+        rememberDashboardScope(studio, scope);
+        setPersistentDashboardScope(key, studio, scope).catch((err) => console.warn("[StashDashboard] Persistent cache write failed", err));
         return scope;
       })
       .catch((err) => {
@@ -2462,13 +2716,7 @@
         const scope = await fetchDashboardStudioScopeCached(studio, (message) => {
           if (onProgress) onProgress(`${studio.name}: ${message}`);
         });
-        state.dashboardLoadedStudioIds.add(studio.id);
-        state.dashboardStudioSceneCounts.set(studio.id, Number(scope.sceneCount || 0));
-        state.dashboardStudioUpdatedAt.set(studio.id, scope.latestUpdatedAt || "");
-        state.dashboardStudioPerformerUpdatedAt.set(studio.id, scope.latestPerformerUpdatedAt || "");
-        if (scope.latestTagUpdatedAt && scope.latestTagUpdatedAt > state.dashboardTagUpdatedAt) {
-          state.dashboardTagUpdatedAt = scope.latestTagUpdatedAt;
-        }
+        rememberDashboardScope(studio, scope);
         scenes.push(...scope.scenes);
         counts.scenes += scope.scenes.length;
         counts.images += Number(scope.counts?.images || 0);
@@ -2682,7 +2930,7 @@
     const tooltip = document.createElement("div");
     tooltip.className = `studio-dashboard__hover studio-dashboard__hover--${getDisplayProfile()}`;
     tooltip.innerHTML = `
-      <a class="studio-dashboard__hover-title" href="/studios/${encodeURIComponent(studio?.id || "")}">${escapeHtml(studio?.name || "Studio")}</a>
+      <a class="studio-dashboard__hover-title" href="/studios/${encodeURIComponent(studio?.id || "")}" target="_blank" rel="noopener noreferrer">${escapeHtml(studio?.name || "Studio")}</a>
       <div class="studio-dashboard__status">Loading studio stats...</div>
     `;
     document.body.appendChild(tooltip);
@@ -2820,14 +3068,69 @@
   function createPageSection(container, titleText) {
     const section = document.createElement("div");
     section.className = "studio-dashboard__page-section";
+    const body = document.createElement("div");
+    body.className = "studio-dashboard__page-section-body";
     if (titleText) {
-      const title = document.createElement("h5");
+      const collapsedKey = getDashboardSectionCollapseKey(titleText);
+      const defaultState = getDashboardSectionDefaultState();
+      const isCollapsed = defaultState === "collapsed" ||
+        defaultState === "remember" && getCollapsedDashboardSections().has(collapsedKey);
+      const header = document.createElement("button");
+      header.type = "button";
+      header.className = "studio-dashboard__page-section-header";
+      header.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+      const caret = document.createElement("span");
+      caret.className = "studio-dashboard__page-section-caret";
+      caret.textContent = ">";
+      const title = document.createElement("span");
       title.className = "studio-dashboard__page-section-title";
       title.textContent = titleText;
-      section.appendChild(title);
+      const toggle = document.createElement("span");
+      toggle.className = "studio-dashboard__page-section-toggle";
+      toggle.textContent = isCollapsed ? "Expand" : "Collapse";
+      header.append(caret, title, toggle);
+      section.appendChild(header);
+      if (isCollapsed) section.classList.add("is-collapsed");
+      header.addEventListener("click", () => {
+        const nextCollapsed = !section.classList.contains("is-collapsed");
+        section.classList.toggle("is-collapsed", nextCollapsed);
+        header.setAttribute("aria-expanded", nextCollapsed ? "false" : "true");
+        toggle.textContent = nextCollapsed ? "Expand" : "Collapse";
+        if (defaultState === "remember") setDashboardSectionCollapsed(collapsedKey, nextCollapsed);
+      });
     }
+    section.appendChild(body);
     container.appendChild(section);
-    return section;
+    return body;
+  }
+
+  function getDashboardSectionCollapseKey(titleText) {
+    return String(titleText || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+  }
+
+  function getCollapsedDashboardSections() {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(DASHBOARD_COLLAPSED_SECTIONS_KEY) || "[]");
+      return new Set(Array.isArray(parsed) ? parsed.filter(Boolean).map(String) : []);
+    } catch (_err) {
+      return new Set();
+    }
+  }
+
+  function setDashboardSectionCollapsed(key, isCollapsed) {
+    if (!key) return;
+    const collapsed = getCollapsedDashboardSections();
+    if (isCollapsed) collapsed.add(key);
+    else collapsed.delete(key);
+    try {
+      window.localStorage.setItem(DASHBOARD_COLLAPSED_SECTIONS_KEY, JSON.stringify([...collapsed]));
+    } catch (_err) {
+      // Collapsed state is only a convenience, so storage failures are harmless.
+    }
   }
 
   function renderDashboardTopTags(container, stats) {
@@ -2959,7 +3262,7 @@
     });
     if (!hasCountries && !hasAges && !hasRatings && !hasCustomPie && !demographics?.ageUnknown) return;
 
-    const section = createPageSection(container, "PERFORMER DEMOGRAPHICS");
+    const section = createPageSection(container, "PERFORMER CHARTS");
     const grid = document.createElement("div");
     grid.className = "studio-dashboard__demographics";
     section.appendChild(grid);
@@ -2974,7 +3277,7 @@
     });
 
     renderDemographicChart(grid, {
-      title: "Age at release",
+      title: "Age at release / Age",
       subtitle: `${demographics.ageTotal || 0} performer appearance${demographics.ageTotal === 1 ? "" : "s"}`,
       items: demographics.ages || [],
       unit: "appearances",
@@ -3089,6 +3392,7 @@
     chart.studioDashboardSubcharts = displaySubcharts;
     chart.studioDashboardUnit = unit;
     chart.studioDashboardType = type;
+    chart.studioDashboardTagMatchMode = "any";
     chart.innerHTML = `
       <div class="studio-dashboard__demographic-heading">
         <span>${escapeHtml(title)}</span>
@@ -3103,7 +3407,7 @@
     } else {
     const list = document.createElement("div");
     list.className = "studio-dashboard__demographic-list";
-    if (type !== "scene-resolution" && displayItems.some((item) => item.filterable !== false)) {
+    if (type !== "scene-resolution" && type !== "scene-rating" && displayItems.some((item) => item.filterable !== false)) {
       const toolbar = document.createElement("div");
       toolbar.className = "studio-dashboard__demographic-select-all";
       toolbar.innerHTML = `
@@ -3176,17 +3480,35 @@
       controls.className = "studio-dashboard__demographic-controls";
       controls.innerHTML = `
         <button type="button" data-demo-action="go" disabled>Go to scenes</button>
+        ${isPerformerDemographicType(type) ? `<button type="button" data-demo-action="performers" disabled>Go to performers</button>` : ""}
+        ${isCustomTagChartType(type) ? `
+          <button type="button" data-tag-match-mode="any" class="is-active">Any</button>
+          <button type="button" data-tag-match-mode="all">All</button>
+        ` : ""}
         <button type="button" data-demo-action="update" disabled>Update chart</button>
+        <button type="button" data-demo-action="reset">Reset</button>
       `;
+      controls.querySelectorAll("[data-tag-match-mode]").forEach((button) => {
+        button.addEventListener("click", () => {
+          setTagMatchMode(chart, button.dataset.tagMatchMode === "all" ? "all" : "any");
+        });
+      });
       controls.querySelector("[data-demo-action='go']")?.addEventListener("click", () => {
         openDemographicScenes(studio, type, allDisplayItems, Array.from(chart.querySelectorAll(".studio-dashboard__demographic-row")));
+      });
+      controls.querySelector("[data-demo-action='performers']")?.addEventListener("click", () => {
+        openDemographicPerformers(type, allDisplayItems, Array.from(chart.querySelectorAll(".studio-dashboard__demographic-row")));
       });
       controls.querySelector("[data-demo-action='update']")?.addEventListener("click", () => {
         updateDemographicChartView(chart);
       });
+      controls.querySelector("[data-demo-action='reset']")?.addEventListener("click", () => {
+        resetDemographicChartView(chart);
+      });
       chart.appendChild(controls);
       updateDemographicGoState(chart);
     }
+    if (type === "scene-rating") updateSceneRatingRangeControls(chart);
     container.appendChild(chart);
   }
 
@@ -3525,6 +3847,11 @@
   }
 
   function toggleDemographicSelection(row, mode) {
+    const chart = row.closest(".studio-dashboard__demographic-chart");
+    if (chart?.studioDashboardType === "scene-rating") {
+      toggleSceneRatingSelection(row, mode, chart);
+      return;
+    }
     const current = row.dataset.filterMode || "";
     setDemographicSelection(row, current === mode ? "" : mode);
   }
@@ -3545,6 +3872,97 @@
     });
     syncDemographicSliceSelection(chart, row.dataset.itemIndex || "", mode);
     updateDemographicGoState(chart);
+    if (chart?.studioDashboardType === "scene-rating") updateSceneRatingRangeControls(chart);
+  }
+
+  function toggleSceneRatingSelection(row, mode, chart) {
+    if (!(chart instanceof HTMLElement) || row?.dataset?.filterable === "false") return;
+    const button = row.querySelector(`[data-filter-mode="${escapeSelectorValue(mode)}"]`);
+    if (button instanceof HTMLButtonElement && button.disabled) return;
+    const current = row.dataset.filterMode || "";
+    if (current === mode) {
+      setDemographicSelection(row, "");
+      return;
+    }
+    const selectedMode = getSceneRatingSelectionMode(chart);
+    if (selectedMode && selectedMode !== mode) {
+      chart.querySelectorAll(".studio-dashboard__demographic-row").forEach((otherRow) => setDemographicSelection(otherRow, ""));
+    }
+    setDemographicSelection(row, mode);
+  }
+
+  function getSceneRatingSelectionMode(chart) {
+    const selected = Array.from(chart?.querySelectorAll?.(".studio-dashboard__demographic-row") || [])
+      .find((row) => row.dataset.filterMode === "include" || row.dataset.filterMode === "exclude");
+    return selected?.dataset?.filterMode || "";
+  }
+
+  function getSceneRatingRangeRows(chart) {
+    const items = chart?.studioDashboardItems || [];
+    return Array.from(chart?.querySelectorAll?.(".studio-dashboard__demographic-row") || [])
+      .filter((row) => {
+        const item = items[Number(row.dataset.itemIndex)];
+        return isRatingRangeItem(item);
+      });
+  }
+
+  function isRatingRangeItem(item) {
+    return Boolean(item && !item.unknownRating && !item.otherRating && Number.isFinite(Number(item.min)) && Number.isFinite(Number(item.max)));
+  }
+
+  function updateSceneRatingRangeControls(chart) {
+    if (!(chart instanceof HTMLElement)) return;
+    const rows = Array.from(chart.querySelectorAll(".studio-dashboard__demographic-row"));
+    const items = chart.studioDashboardItems || [];
+    const selectedRows = rows.filter((row) => row.dataset.filterMode === "include" || row.dataset.filterMode === "exclude");
+    const selectedMode = selectedRows[0]?.dataset?.filterMode || "";
+    const rangeRows = getSceneRatingRangeRows(chart);
+    const selectedRangeRows = selectedRows.filter((row) => rangeRows.includes(row));
+    const selectedRangePositions = selectedRangeRows
+      .map((row) => rangeRows.indexOf(row))
+      .filter((index) => index >= 0)
+      .sort((left, right) => left - right);
+    const minPosition = selectedRangePositions[0] ?? -1;
+    const maxPosition = selectedRangePositions[selectedRangePositions.length - 1] ?? -1;
+    const selectedHasSpecial = selectedRows.some((row) => {
+      const item = items[Number(row.dataset.itemIndex)];
+      return item?.unknownRating || item?.otherRating;
+    });
+
+    rows.forEach((row) => {
+      const item = items[Number(row.dataset.itemIndex)];
+      const currentMode = row.dataset.filterMode || "";
+      const rangePosition = rangeRows.indexOf(row);
+      const isRange = rangePosition >= 0;
+      const isSelected = currentMode === "include" || currentMode === "exclude";
+      const canClearSelected = !isRange ||
+        selectedRangeRows.length <= 2 ||
+        rangePosition === minPosition ||
+        rangePosition === maxPosition;
+      const canExtendRange = isRange &&
+        selectedMode &&
+        !selectedHasSpecial &&
+        !isSelected &&
+        (rangePosition === minPosition - 1 || rangePosition === maxPosition + 1);
+      const noSelection = !selectedRows.length;
+      row.classList.toggle("is-range-locked", isSelected && !canClearSelected);
+      row.querySelectorAll("[data-filter-mode]").forEach((button) => {
+        if (!(button instanceof HTMLButtonElement)) return;
+        const buttonMode = button.dataset.filterMode || "";
+        let disabled = false;
+        if (noSelection) {
+          disabled = false;
+        } else if (isSelected) {
+          disabled = buttonMode !== currentMode || !canClearSelected;
+        } else if (canExtendRange) {
+          disabled = buttonMode !== selectedMode;
+        } else {
+          disabled = true;
+        }
+        if (item?.otherRating) disabled = true;
+        button.disabled = disabled;
+      });
+    });
   }
 
   function syncDemographicSliceSelection(chart, itemIndex, mode) {
@@ -3560,7 +3978,7 @@
     const hasSelection = Array.from(chart.querySelectorAll(".studio-dashboard__demographic-row")).some((row) => {
       return row.dataset.filterMode === "include" || row.dataset.filterMode === "exclude";
     });
-    chart.querySelectorAll("[data-demo-action='go'], [data-demo-action='update']").forEach((button) => {
+    chart.querySelectorAll("[data-demo-action='go'], [data-demo-action='performers'], [data-demo-action='update']").forEach((button) => {
       if (!(button instanceof HTMLButtonElement)) return;
       button.disabled = !hasSelection;
       button.classList.toggle("is-ready", hasSelection);
@@ -3622,7 +4040,16 @@
     });
   }
 
+  function resetDemographicChartView(chart) {
+    if (!(chart instanceof HTMLElement)) return;
+    chart.querySelectorAll(".studio-dashboard__demographic-row").forEach((row) => setDemographicSelection(row, ""));
+    updateDemographicChartView(chart);
+    if (chart.studioDashboardType === "scene-rating") updateSceneRatingRangeControls(chart);
+  }
+
   function openDemographicScenes(studio, type, items, rows) {
+    const chart = rows[0]?.closest?.(".studio-dashboard__demographic-chart");
+    const tagMatchMode = getTagMatchMode(chart);
     const includeItems = [];
     const excludeItems = [];
     rows.forEach((row, index) => {
@@ -3634,7 +4061,7 @@
     if (type === "country") {
       criteria = buildCountryFilterCriteria(includeItems, excludeItems);
     } else if (type === "custom-scene") {
-      criteria = buildSceneTagFilterCriteria(includeItems, excludeItems);
+      criteria = buildSceneTagFilterCriteria(includeItems, excludeItems, tagMatchMode);
     } else if (type === "scene-rating") {
       criteria = buildSceneRatingFilterCriteria(includeItems, excludeItems);
     } else if (type === "scene-resolution") {
@@ -3646,7 +4073,47 @@
     } else {
       criteria = buildAgeFilterCriteria(includeItems, excludeItems);
     }
-    window.location.href = makeStudioScenesUrl(studio, criteria);
+    openDashboardTarget(makeStudioScenesUrl(studio, criteria));
+  }
+
+  function openDemographicPerformers(type, items, rows) {
+    const chart = rows[0]?.closest?.(".studio-dashboard__demographic-chart");
+    const tagMatchMode = getTagMatchMode(chart);
+    const includeItems = [];
+    const excludeItems = [];
+    rows.forEach((row, index) => {
+      const mode = row.dataset.filterMode || "";
+      if (mode === "include") includeItems.push(items[index]);
+      if (mode === "exclude") excludeItems.push(items[index]);
+    });
+    const criteria = buildPerformerBrowserCriteria(type, includeItems, excludeItems, tagMatchMode);
+    openDashboardTarget(makePerformersUrl(criteria));
+  }
+
+  function isPerformerDemographicType(type) {
+    return type === "country" || type === "age" || type === "performer-rating" || type === "custom-performer";
+  }
+
+  function isCustomTagChartType(type) {
+    return type === "custom-performer" || type === "custom-scene";
+  }
+
+  function openDashboardTarget(url) {
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  function getTagMatchMode(chart) {
+    return chart?.studioDashboardTagMatchMode === "all" ? "all" : "any";
+  }
+
+  function setTagMatchMode(chart, mode) {
+    if (!(chart instanceof HTMLElement)) return;
+    const normalized = mode === "all" ? "all" : "any";
+    chart.studioDashboardTagMatchMode = normalized;
+    chart.querySelectorAll("[data-tag-match-mode]").forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.tagMatchMode === normalized);
+    });
   }
 
   function formatPerformerMeta(performer) {
@@ -3685,13 +4152,13 @@
   function formatRatingLink(performer, scope, rating) {
     const label = formatContentRating(rating);
     if (Number(rating || 0) <= 0) return `<strong>${escapeHtml(label)}</strong>`;
-    return `<a class="studio-dashboard__meta-link" href="${escapeHtml(makePerformerScenesUrl(performer, scope, "rating"))}"><strong>${escapeHtml(label)}</strong></a>`;
+    return `<a class="studio-dashboard__meta-link" href="${escapeHtml(makePerformerScenesUrl(performer, scope, "rating"))}" target="_blank" rel="noopener noreferrer"><strong>${escapeHtml(label)}</strong></a>`;
   }
 
   function formatPerformerMetricLink(performer, scope, value, sortBy) {
     const count = Number(value || 0);
     if (count <= 0) return `<strong>${escapeHtml(count)}</strong>`;
-    return `<a class="studio-dashboard__meta-link" href="${escapeHtml(makePerformerScenesUrl(performer, scope, sortBy))}"><strong>${escapeHtml(count)}</strong></a>`;
+    return `<a class="studio-dashboard__meta-link" href="${escapeHtml(makePerformerScenesUrl(performer, scope, sortBy))}" target="_blank" rel="noopener noreferrer"><strong>${escapeHtml(count)}</strong></a>`;
   }
 
   function makePerformerScenesUrl(performer, scope, sortBy) {
@@ -3731,6 +4198,7 @@
       const card = document.createElement("a");
       card.className = "studio-dashboard__card";
       card.href = `/performers/${encodeURIComponent(performer.id)}`;
+      openLinkInNewTab(card);
       card.innerHTML = `
         ${performer.metricTitle ? `<div class="studio-dashboard__card-kicker">${escapeHtml(performer.metricTitle)}</div>` : ""}
         <div class="studio-dashboard__card-name studio-dashboard__performer-title">${formatPerformerName(performer)}</div>
@@ -3749,6 +4217,7 @@
       const card = document.createElement("a");
       card.className = "studio-dashboard__tag-card";
       card.href = makeStudioTagUrl(studio, tag);
+      openLinkInNewTab(card);
       card.innerHTML = `
         <span class="studio-dashboard__tag-image">
           ${tag.imagePath ? `<img src="${escapeHtml(tag.imagePath)}" alt="${escapeHtml(tag.name)}">` : ""}
@@ -3809,21 +4278,94 @@
     return criteria;
   }
 
-  function buildSceneTagFilterCriteria(includeItems, excludeItems) {
+  function buildPerformerBrowserCriteria(type, includeItems, excludeItems, tagMatchMode = "any") {
+    if (type === "country") return buildPerformerCountryCriteria(includeItems, excludeItems);
+    if (type === "age") return buildPerformerBrowserAgeCriteria(includeItems, excludeItems);
+    if (type === "performer-rating") return buildPerformerRatingCriteria(includeItems, excludeItems);
+    if (type === "custom-performer") return buildPerformerTagFilterCriteria(includeItems, excludeItems, tagMatchMode);
+    return [];
+  }
+
+  function buildPerformerCountryCriteria(includeItems, excludeItems) {
     return [
-      ...includeItems.map((item) => item?.customExcludeTags?.length
-        ? buildTagListCriterion(item.customExcludeTags, "EXCLUDES")
-        : item?.customTag ? buildTagCriterion(item.customTag, "INCLUDES") : null),
-      ...excludeItems.map((item) => item?.customExcludeTags?.length
-        ? buildTagListCriterion(item.customExcludeTags, "INCLUDES")
-        : item?.customTag ? buildTagCriterion(item.customTag, "EXCLUDES") : null),
+      ...includeItems.map((item) => buildCountryCriterion(item, false)),
+      ...excludeItems.map((item) => buildCountryCriterion(item, true)),
+    ].filter(Boolean);
+  }
+
+  function buildCountryCriterion(item, exclude = false) {
+    const values = uniqueValues([
+      ...(item?.countryValues || []),
+      item?.countryValue,
+    ]).filter((value) => value && value !== "Unknown");
+    if (item?.countryValue === "Unknown" || item?.label === "Unknown") {
+      return {
+        type: "country",
+        modifier: exclude ? "NOT_NULL" : "IS_NULL",
+      };
+    }
+    if (!values.length) return null;
+    return {
+      type: "country",
+      value: values.length === 1 ? values[0] : values,
+      modifier: exclude ? "NOT_EQUALS" : "EQUALS",
+    };
+  }
+
+  function buildPerformerBrowserAgeCriteria(includeItems, excludeItems) {
+    return [
+      ...includeItems.map((item) => buildPerformerBrowserAgeCriterion(item, false)),
+      ...excludeItems.map((item) => buildPerformerBrowserAgeCriterion(item, true)),
+    ].filter(Boolean);
+  }
+
+  function buildPerformerBrowserAgeCriterion(item, exclude = false) {
+    if (item?.unknownAge) {
+      return {
+        type: "age",
+        modifier: exclude ? "NOT_NULL" : "IS_NULL",
+      };
+    }
+    return buildGenericNumberCriterion("age", item, exclude);
+  }
+
+  function buildPerformerRatingCriteria(includeItems, excludeItems) {
+    return [
+      buildGenericRatingRangeCriterion("rating100", includeItems, false),
+      buildGenericRatingRangeCriterion("rating100", excludeItems, true),
+    ].filter(Boolean);
+  }
+
+  function buildPerformerTagFilterCriteria(includeItems, excludeItems, tagMatchMode = "any") {
+    const includeTags = includeItems.map((item) => item?.customTag).filter(Boolean);
+    const includeExclusions = includeItems.flatMap((item) => item?.customExcludeTags || []);
+    const excludeTags = excludeItems.map((item) => item?.customTag).filter(Boolean);
+    const excludeExclusions = excludeItems.flatMap((item) => item?.customExcludeTags || []);
+    return [
+      includeTags.length ? buildTagListCriterion(includeTags, tagMatchMode === "all" ? "INCLUDES_ALL" : "INCLUDES") : null,
+      includeExclusions.length ? buildTagListCriterion(includeExclusions, "EXCLUDES") : null,
+      excludeTags.length ? buildTagListCriterion(excludeTags, "EXCLUDES") : null,
+      excludeExclusions.length ? buildTagListCriterion(excludeExclusions, "INCLUDES") : null,
+    ].filter(Boolean);
+  }
+
+  function buildSceneTagFilterCriteria(includeItems, excludeItems, tagMatchMode = "any") {
+    const includeTags = includeItems.map((item) => item?.customTag).filter(Boolean);
+    const includeExclusions = includeItems.flatMap((item) => item?.customExcludeTags || []);
+    const excludeTags = excludeItems.map((item) => item?.customTag).filter(Boolean);
+    const excludeExclusions = excludeItems.flatMap((item) => item?.customExcludeTags || []);
+    return [
+      includeTags.length ? buildTagListCriterion(includeTags, tagMatchMode === "all" ? "INCLUDES_ALL" : "INCLUDES") : null,
+      includeExclusions.length ? buildTagListCriterion(includeExclusions, "EXCLUDES") : null,
+      excludeTags.length ? buildTagListCriterion(excludeTags, "EXCLUDES") : null,
+      excludeExclusions.length ? buildTagListCriterion(excludeExclusions, "INCLUDES") : null,
     ].filter(Boolean);
   }
 
   function buildSceneRatingFilterCriteria(includeItems, excludeItems) {
     return [
-      ...includeItems.map((item) => buildRatingCriterion(item, false)),
-      ...excludeItems.map((item) => buildRatingCriterion(item, true)),
+      buildGenericRatingRangeCriterion("rating100", includeItems, false),
+      buildGenericRatingRangeCriterion("rating100", excludeItems, true),
     ].filter(Boolean);
   }
 
@@ -3877,33 +4419,37 @@
   }
 
   function buildPerformerAgeCriterion(item, exclude = false) {
+    return buildGenericNumberCriterion("performer_age", item, exclude);
+  }
+
+  function buildGenericNumberCriterion(type, item, exclude = false) {
     if (!item) return null;
     const min = item.min == null ? null : Number(item.min);
     const max = item.max == null ? null : Number(item.max);
     if (min != null && max != null && min === max) {
       return {
-        type: "performer_age",
+        type,
         value: { value: min },
         modifier: exclude ? "NOT_EQUALS" : "EQUALS",
       };
     }
     if (min != null && max != null) {
       return {
-        type: "performer_age",
+        type,
         value: { value: min, value2: max },
         modifier: exclude ? "NOT_BETWEEN" : "BETWEEN",
       };
     }
     if (min != null) {
       return {
-        type: "performer_age",
+        type,
         value: { value: exclude ? min : Math.max(0, min - 1) },
         modifier: exclude ? "LESS_THAN" : "GREATER_THAN",
       };
     }
     if (max != null) {
       return {
-        type: "performer_age",
+        type,
         value: { value: exclude ? max : max + 1 },
         modifier: exclude ? "GREATER_THAN" : "LESS_THAN",
       };
@@ -3911,46 +4457,65 @@
     return null;
   }
 
-  function buildRatingCriterion(item, exclude = false) {
+  function buildRatingCriterion(type, item, exclude = false) {
     if (!item || item.otherRating) return null;
     if (item.unknownRating) {
       return {
-        type: "rating",
-        value: { value: 0 },
-        modifier: exclude ? "NOT_EQUALS" : "EQUALS",
+        type,
+        modifier: exclude ? "NOT_NULL" : "IS_NULL",
       };
     }
-    const min = item.min == null ? null : Math.round(Number(item.min) * 10);
-    const max = item.max == null ? null : Math.round(Number(item.max) * 10);
+    const min = item.min == null ? null : Number(item.min);
+    const max = item.max == null ? null : Number(item.max);
     if (min != null && max != null && min === max) {
       return {
-        type: "rating",
-        value: { value: min },
+        type,
+        value: { value: getRatingFilterRating100(min) },
         modifier: exclude ? "NOT_EQUALS" : "EQUALS",
       };
     }
     if (min != null && max != null) {
       return {
-        type: "rating",
-        value: { value: min, value2: max },
+        type,
+        value: {
+          value: getRatingFilterRating100(min),
+          value2: getRatingFilterRating100(max),
+        },
         modifier: exclude ? "NOT_BETWEEN" : "BETWEEN",
       };
     }
     if (min != null) {
       return {
-        type: "rating",
-        value: { value: exclude ? min : Math.max(0, min - 1) },
+        type,
+        value: { value: getRatingFilterRating100(exclude ? min : Math.max(0, min - 0.1)) },
         modifier: exclude ? "LESS_THAN" : "GREATER_THAN",
       };
     }
     if (max != null) {
       return {
-        type: "rating",
-        value: { value: exclude ? max : max + 1 },
+        type,
+        value: { value: getRatingFilterRating100(exclude ? max : max + 0.1) },
         modifier: exclude ? "GREATER_THAN" : "LESS_THAN",
       };
     }
     return null;
+  }
+
+  function buildGenericRatingRangeCriterion(type, items, exclude = false) {
+    const selected = (items || []).filter(Boolean);
+    const unknown = selected.find((item) => item.unknownRating);
+    const rangeItems = selected.filter(isRatingRangeItem);
+    if (unknown && !rangeItems.length) return buildRatingCriterion(type, unknown, exclude);
+    if (!rangeItems.length) return null;
+    const min = Math.min(...rangeItems.map((item) => Number(item.min)));
+    const max = Math.max(...rangeItems.map((item) => Number(item.max)));
+    return buildRatingCriterion(type, { min, max }, exclude);
+  }
+
+  function getRatingFilterRating100(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 0;
+    return Math.round(Math.max(0, numeric) * 10);
   }
 
   function buildMetricCriterion(metricType, item, exclude = false) {
@@ -3963,28 +4528,29 @@
     if (min != null && max != null && (min === max || item.exact)) {
       return {
         type,
-        value: { value: min },
+        value: min,
         modifier: exclude ? "NOT_EQUALS" : "EQUALS",
       };
     }
     if (min != null && max != null) {
       return {
         type,
-        value: { value: min, value2: Math.max(min, max - 1) },
+        value: min,
+        value2: Math.max(min, max - 1),
         modifier: exclude ? "NOT_BETWEEN" : "BETWEEN",
       };
     }
     if (min != null) {
       return {
         type,
-        value: { value: exclude ? min : Math.max(0, min - 1) },
+        value: exclude ? min : Math.max(0, min - 1),
         modifier: exclude ? "LESS_THAN" : "GREATER_THAN",
       };
     }
     if (max != null) {
       return {
         type,
-        value: { value: exclude ? Math.max(0, max - 1) : max },
+        value: exclude ? Math.max(0, max - 1) : max,
         modifier: exclude ? "GREATER_THAN" : "LESS_THAN",
       };
     }
@@ -3995,11 +4561,7 @@
     if (!item?.enumValue) return null;
     return {
       type: "resolution",
-      value: {
-        id: item.enumValue,
-        value: item.enumValue,
-        label: item.label || item.enumValue,
-      },
+      value: item.label || item.enumValue,
       modifier: exclude ? "NOT_EQUALS" : "EQUALS",
     };
   }
@@ -4008,8 +4570,8 @@
     return {
       type: "date",
       value: {
-        value: item.startDate,
-        value2: item.endDate,
+        value: item.filterStartDate || item.startDate,
+        value2: item.filterEndDate || item.endDate,
       },
       modifier: "BETWEEN",
     };
@@ -4021,6 +4583,13 @@
     const query = params.toString();
     if (!studio?.id) return `/scenes${query ? `?${query}` : ""}`;
     return `/studios/${encodeURIComponent(studio.id)}/scenes${query ? `?${query}` : ""}`;
+  }
+
+  function makePerformersUrl(criteria = []) {
+    const params = new URLSearchParams();
+    criteria.filter(Boolean).forEach((criterion) => params.append("c", JSON.stringify(criterion)));
+    const query = params.toString();
+    return `/performers${query ? `?${query}` : ""}`;
   }
 
   function renderReleaseTimeline(container, studio, timeline) {
@@ -4060,6 +4629,7 @@
       const groupIndex = yearGroupMap.get(item.year) || 0;
       bar.className = `studio-dashboard__timeline-bar ${groupIndex % 2 ? "is-alt" : "is-base"}`;
       bar.href = makeStudioScenesUrl(studio, [buildDateCriterion(item)]);
+      openLinkInNewTab(bar);
       if (!item.count) bar.classList.add("is-empty");
       bar.style.setProperty("--studio-dashboard-bar-value", String(item.count / item.max));
       bar.title = `${item.label}: ${item.count} scene${item.count === 1 ? "" : "s"}`;
@@ -4083,6 +4653,7 @@
     const card = document.createElement("a");
     card.className = "studio-dashboard__scene";
     card.href = `/scenes/${encodeURIComponent(scene.id)}`;
+    openLinkInNewTab(card);
     card.innerHTML = `
       <span class="studio-dashboard__scene-media">
         ${scene.screenshot ? `<img src="${escapeHtml(scene.screenshot)}" alt="${escapeHtml(scene.title)}">` : ""}
@@ -4154,17 +4725,17 @@
       const stats = await fetchStudioStats(studio);
       if (state.tooltip === tooltip) {
         tooltip.innerHTML = `
-          <a class="studio-dashboard__hover-title" href="/studios/${encodeURIComponent(stats.studio.id)}">${escapeHtml(stats.studio.name)}</a>
+          <a class="studio-dashboard__hover-title" href="/studios/${encodeURIComponent(stats.studio.id)}" target="_blank" rel="noopener noreferrer">${escapeHtml(stats.studio.name)}</a>
           <div class="studio-dashboard__hover-body"></div>
         `;
         renderStatsInto(tooltip.querySelector(".studio-dashboard__hover-body"), stats);
         positionTooltip(anchor, tooltip);
       }
     } catch (err) {
-      console.warn("[StudioDashboard] Stats failed", err);
+      console.warn("[StashDashboard] Stats failed", err);
       if (state.tooltip === tooltip) {
         tooltip.innerHTML = `
-          <a class="studio-dashboard__hover-title" href="/studios/${encodeURIComponent(studio.id || "")}">${escapeHtml(studio.name || "Studio")}</a>
+          <a class="studio-dashboard__hover-title" href="/studios/${encodeURIComponent(studio.id || "")}" target="_blank" rel="noopener noreferrer">${escapeHtml(studio.name || "Studio")}</a>
           <div class="studio-dashboard__status">Could not load studio stats.</div>
         `;
       }
@@ -4271,7 +4842,7 @@
         renderStudioPageDashboard(panel, stats);
       })
       .catch((err) => {
-        console.warn("[StudioDashboard] Studio page dashboard failed", err);
+        console.warn("[StashDashboard] Studio page dashboard failed", err);
         if (state.studioPageHost === panel) {
           panel.dataset.studioDashboardLoading = "false";
           setStudioDashboardStatus(panel, "Could not load studio dashboard.");
@@ -4342,12 +4913,12 @@
     const nav = document.createElement("a");
     nav.className = "nav-link stash-dashboard__nav-link";
     nav.href = DASHBOARD_PATH;
+    nav.target = "_blank";
+    nav.rel = "noopener noreferrer";
     nav.innerHTML = `<span class="stash-dashboard__nav-icon" aria-hidden="true"></span><span>Dashboard</span>`;
     nav.addEventListener("click", (event) => {
       event.preventDefault();
-      history.pushState({}, "", DASHBOARD_PATH);
-      ensureStashDashboardRoute();
-      window.dispatchEvent(new Event(ROUTE_EVENT));
+      window.open(DASHBOARD_PATH, "_blank", "noopener,noreferrer");
     });
     if (navHost.classList.contains("navbar-nav")) {
       const item = document.createElement("li");
@@ -4386,12 +4957,84 @@
   }
 
   function getSelectedDashboardStudios(host) {
-    const ids = new Set(
+    const ids = getSelectedDashboardStudioIds(host);
+    return (state.dashboardStudios || []).filter((studio) => ids.has(studio.id));
+  }
+
+  function getDirectSelectedDashboardStudioIds(host) {
+    return new Set(
       Array.from(host.querySelectorAll(".stash-dashboard__studio-check:checked"))
         .map((input) => String(input.value || ""))
         .filter(Boolean)
     );
-    return (state.dashboardStudios || []).filter((studio) => ids.has(studio.id));
+  }
+
+  function getSelectedDashboardStudioIds(host) {
+    const selectedIds = getDirectSelectedDashboardStudioIds(host);
+    return getDashboardIncludeSubStudios() ? expandDashboardStudioIds(selectedIds) : selectedIds;
+  }
+
+  function getDashboardStudioMaps(studios = state.dashboardStudios || []) {
+    const byId = new Map();
+    const childrenByParent = new Map();
+    (studios || []).forEach((studio) => {
+      if (!studio?.id) return;
+      byId.set(studio.id, studio);
+      if (!studio.synthetic && studio.parentId) {
+        if (!childrenByParent.has(studio.parentId)) childrenByParent.set(studio.parentId, []);
+        childrenByParent.get(studio.parentId).push(studio);
+      }
+    });
+    return { byId, childrenByParent };
+  }
+
+  function expandDashboardStudioIds(ids, studios = state.dashboardStudios || []) {
+    const expanded = new Set(ids || []);
+    const { childrenByParent } = getDashboardStudioMaps(studios);
+    const queue = Array.from(expanded);
+    while (queue.length) {
+      const parentId = queue.shift();
+      (childrenByParent.get(parentId) || []).forEach((child) => {
+        if (expanded.has(child.id)) return;
+        expanded.add(child.id);
+        queue.push(child.id);
+      });
+    }
+    return expanded;
+  }
+
+  function getDashboardStudioDescendantIds(parentId, studios = state.dashboardStudios || []) {
+    const descendants = new Set();
+    if (!parentId) return descendants;
+    const { childrenByParent } = getDashboardStudioMaps(studios);
+    const queue = (childrenByParent.get(parentId) || []).slice();
+    while (queue.length) {
+      const studio = queue.shift();
+      if (!studio?.id || descendants.has(studio.id)) continue;
+      descendants.add(studio.id);
+      queue.push(...(childrenByParent.get(studio.id) || []));
+    }
+    return descendants;
+  }
+
+  function setDashboardStudioCheckboxes(host, ids) {
+    host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => {
+      if (input instanceof HTMLInputElement) input.checked = ids.has(String(input.value || ""));
+    });
+  }
+
+  function setDashboardDescendantCheckboxes(host, studioId, checked) {
+    const descendantIds = getDashboardStudioDescendantIds(studioId);
+    host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => {
+      if (input instanceof HTMLInputElement && descendantIds.has(String(input.value || ""))) {
+        input.checked = checked;
+      }
+    });
+  }
+
+  function syncDashboardSubStudioCheckboxes(host) {
+    if (!getDashboardIncludeSubStudios()) return;
+    setDashboardStudioCheckboxes(host, expandDashboardStudioIds(getDirectSelectedDashboardStudioIds(host)));
   }
 
   function getStudioGroupKey(name) {
@@ -4402,31 +5045,22 @@
     return "#";
   }
 
-  function renderDashboardStudioList(host, studios) {
-    const list = host.querySelector(".stash-dashboard__studio-list");
-    const loadButton = host.querySelector(".stash-dashboard__load-selected");
-    if (!(list instanceof HTMLElement)) return;
-    const selectedIds = new Set(
-      Array.from(host.querySelectorAll(".stash-dashboard__studio-check:checked"))
-        .map((input) => String(input.value || ""))
-        .filter(Boolean)
-    );
-    const searchInput = host.querySelector(".stash-dashboard__studio-search");
-    const query = searchInput instanceof HTMLInputElement ? searchInput.value.trim().toLowerCase() : "";
-    const visibleStudios = query
-      ? studios.filter((studio) => String(studio.name || "").toLowerCase().includes(query))
-      : studios;
-    if (!studios.length) {
-      list.innerHTML = `<div class="studio-dashboard__status">No studios found.</div>`;
-      if (loadButton instanceof HTMLButtonElement) loadButton.disabled = true;
-      return;
-    }
-    if (!visibleStudios.length) {
-      list.innerHTML = `<div class="studio-dashboard__status">No studios match the search.</div>`;
-      return;
-    }
+  function studioMatchesDashboardSearch(studio, query) {
+    if (!query) return true;
+    return [studio?.name, studio?.parentName]
+      .map((value) => String(value || "").toLowerCase())
+      .some((value) => value.includes(query));
+  }
+
+  function createDashboardStudioGroups(studios, query) {
+    return getDashboardStudioListGrouping() === "parent"
+      ? createDashboardParentStudioGroups(studios, query)
+      : createDashboardAlphabeticalStudioGroups(studios, query);
+  }
+
+  function createDashboardAlphabeticalStudioGroups(studios, query) {
     const groups = new Map();
-    visibleStudios.forEach((studio) => {
+    (studios || []).filter((studio) => studioMatchesDashboardSearch(studio, query)).forEach((studio) => {
       const key = getStudioGroupKey(studio.name);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(studio);
@@ -4436,20 +5070,135 @@
       if (right === "#") return 1;
       return left.localeCompare(right);
     });
-    list.innerHTML = sortedKeys.map((key, index) => `
+    return sortedKeys.map((key) => ({ key, title: key, studios: sortDashboardStudios(groups.get(key)) }));
+  }
+
+  function createDashboardParentStudioGroups(studios, query) {
+    const { byId, childrenByParent } = getDashboardStudioMaps(studios);
+    const parentIds = new Set(childrenByParent.keys());
+    const namedGroups = new Map();
+    const noParent = [];
+    (studios || []).forEach((studio) => {
+      if (!studio?.id) return;
+      const hasChildren = parentIds.has(studio.id);
+      const parentStudio = studio.parentId ? byId.get(studio.parentId) : null;
+      const includeBySearch = studioMatchesDashboardSearch(studio, query);
+      const children = childrenByParent.get(studio.id) || [];
+      const matchingChildren = children.filter((child) => studioMatchesDashboardSearch(child, query));
+      if (hasChildren) {
+        const childRows = !query || includeBySearch ? children : matchingChildren;
+        const rows = [studio, ...childRows.filter((child) => child.id !== studio.id)];
+        if (!query || includeBySearch || matchingChildren.length) {
+          namedGroups.set(studio.id, {
+            key: studio.id,
+            title: studio.name,
+            studios: sortDashboardStudios(rows, studio.id),
+          });
+        }
+      } else if (parentStudio) {
+        if (includeBySearch || studioMatchesDashboardSearch(parentStudio, query)) {
+          if (!namedGroups.has(parentStudio.id)) {
+            namedGroups.set(parentStudio.id, {
+              key: parentStudio.id,
+              title: parentStudio.name,
+              studios: parentIds.has(parentStudio.id) ? [parentStudio] : [],
+            });
+          }
+          const group = namedGroups.get(parentStudio.id);
+          if (!group.studios.some((item) => item.id === studio.id)) group.studios.push(studio);
+        }
+      } else if (studio.parentId) {
+        const parentKey = `missing:${studio.parentId}`;
+        if (!namedGroups.has(parentKey)) {
+          namedGroups.set(parentKey, {
+            key: parentKey,
+            title: studio.parentName || "Unknown parent studio",
+            studios: [],
+          });
+        }
+        namedGroups.get(parentKey).studios.push(studio);
+      } else if (includeBySearch) {
+        noParent.push(studio);
+      }
+    });
+    const parentGroups = Array.from(namedGroups.values())
+      .map((group) => ({
+        ...group,
+        studios: sortDashboardStudios(group.studios, group.key),
+      }))
+      .filter((group) => group.studios.length)
+      .sort((left, right) => left.title.localeCompare(right.title));
+    const groups = [];
+    if (noParent.length) {
+      groups.push({ key: "__no_parent__", title: "No parent studio", studios: sortDashboardStudios(noParent) });
+    }
+    groups.push(...parentGroups);
+    return groups;
+  }
+
+  function sortDashboardStudios(studios, parentId = "") {
+    return (studios || []).slice().sort((left, right) => {
+      if (parentId && left.id === parentId) return -1;
+      if (parentId && right.id === parentId) return 1;
+      if (left.synthetic && !right.synthetic) return -1;
+      if (!left.synthetic && right.synthetic) return 1;
+      return String(left.name || "").localeCompare(String(right.name || ""));
+    });
+  }
+
+  function renderDashboardStudioList(host, studios) {
+    const list = host.querySelector(".stash-dashboard__studio-list");
+    const loadButton = host.querySelector(".stash-dashboard__load-selected");
+    if (!(list instanceof HTMLElement)) return;
+    const directSelectedIds = getDirectSelectedDashboardStudioIds(host);
+    const includeSubs = getDashboardIncludeSubStudios();
+    const selectedIds = includeSubs ? expandDashboardStudioIds(directSelectedIds, studios) : directSelectedIds;
+    const searchInput = host.querySelector(".stash-dashboard__studio-search");
+    const query = searchInput instanceof HTMLInputElement ? searchInput.value.trim().toLowerCase() : "";
+    const groups = createDashboardStudioGroups(studios, query);
+    if (!studios.length) {
+      list.innerHTML = `<div class="studio-dashboard__status">No studios found.</div>`;
+      if (loadButton instanceof HTMLButtonElement) loadButton.disabled = true;
+      return;
+    }
+    if (!groups.length) {
+      list.innerHTML = `<div class="studio-dashboard__status">No studios match the search.</div>`;
+      return;
+    }
+    const { childrenByParent } = getDashboardStudioMaps(studios);
+    list.innerHTML = groups.map((group, index) => `
       <section class="stash-dashboard__studio-group ${index % 2 ? "is-alt" : "is-base"}">
-        <div class="stash-dashboard__studio-group-title">${escapeHtml(key)}</div>
+        <div class="stash-dashboard__studio-group-title">${escapeHtml(group.title)}</div>
         <div class="stash-dashboard__studio-group-grid">
-          ${groups.get(key).map((studio) => `
+          ${group.studios.map((studio) => {
+            const descendantCount = countDashboardStudioDescendants(studio.id, childrenByParent);
+            return `
             <label class="stash-dashboard__studio-row">
               <input class="stash-dashboard__studio-check" type="checkbox" value="${escapeHtml(studio.id)}"${selectedIds.has(studio.id) ? " checked" : ""}>
               <span>${escapeHtml(studio.name)}</span>
+              ${includeSubs && descendantCount ? `<small>+${descendantCount}</small>` : ""}
             </label>
-          `).join("")}
+          `;
+          }).join("")}
         </div>
       </section>
     `).join("");
     if (loadButton instanceof HTMLButtonElement) loadButton.disabled = false;
+  }
+
+  function countDashboardStudioDescendants(parentId, childrenByParent) {
+    if (!parentId) return 0;
+    let count = 0;
+    const seen = new Set([parentId]);
+    const queue = (childrenByParent.get(parentId) || []).slice();
+    while (queue.length) {
+      const studio = queue.shift();
+      if (!studio?.id || seen.has(studio.id)) continue;
+      seen.add(studio.id);
+      count += 1;
+      queue.push(...(childrenByParent.get(studio.id) || []));
+    }
+    return count;
   }
 
   function renderDashboardLoadNote(content, stats) {
@@ -4459,7 +5208,7 @@
     note.className = "stash-dashboard__load-note";
     const parts = [];
     if (summary.limited) {
-      parts.push(`Showing ${summary.loadedScenes} of ${summary.totalScenes} scenes. Set Scene Load Limit to 0 for a full scan.`);
+      parts.push(`Loaded ${summary.loadedScenes} of ${summary.totalScenes} scenes for this dashboard scope. Load smaller studio selections if you need more complete detail for very large libraries.`);
     }
     if (summary.skippedScenes) {
       parts.push(`Skipped ${summary.skippedScenes} scene${summary.skippedScenes === 1 ? "" : "s"} that failed dashboard loading.`);
@@ -4501,7 +5250,7 @@
     const host = state.dashboardHost;
     if (!(host instanceof HTMLElement)) return;
     if (!forceRefresh && host.dataset.stashDashboardShell === "true") return;
-    const token = ++state.dashboardRenderToken;
+    state.dashboardRenderToken += 1;
     if (forceRefresh) {
       state.statsCache.clear();
     }
@@ -4516,6 +5265,9 @@
           <div class="stash-dashboard__header-actions">
             <button type="button" class="btn btn-primary stash-dashboard__check-changes">Check changes</button>
             <button type="button" class="btn btn-secondary stash-dashboard__refresh">Clear cache</button>
+            <button type="button" class="btn btn-secondary stash-dashboard__export-settings">Export settings</button>
+            <button type="button" class="btn btn-secondary stash-dashboard__import-settings">Import settings</button>
+            <input class="stash-dashboard__import-settings-input" type="file" accept="application/json,.json" hidden>
           </div>
         </header>
         <details class="stash-dashboard__controls" open>
@@ -4524,6 +5276,19 @@
             <span class="stash-dashboard__controls-hint">collapse</span>
           </summary>
           <div class="stash-dashboard__controls-body">
+            <div class="stash-dashboard__picker-options">
+              <label class="stash-dashboard__picker-option">
+                <span>Group studios</span>
+                <select class="form-control stash-dashboard__studio-grouping">
+                  <option value="alphabetical">Alphabetical</option>
+                  <option value="parent">Parent studio</option>
+                </select>
+              </label>
+              <label class="stash-dashboard__picker-option stash-dashboard__picker-option--check">
+                <input class="stash-dashboard__include-sub-studios" type="checkbox">
+                <span>Include sub-studios</span>
+              </label>
+            </div>
             <div class="stash-dashboard__control-actions">
               <button type="button" class="btn btn-secondary stash-dashboard__select-all" disabled>Select all</button>
               <button type="button" class="btn btn-secondary stash-dashboard__select-none" disabled>Clear selection</button>
@@ -4549,16 +5314,34 @@
     const loadSelectedButton = host.querySelector(".stash-dashboard__load-selected");
     const checkChangesButton = host.querySelector(".stash-dashboard__check-changes");
     const studioSearchInput = host.querySelector(".stash-dashboard__studio-search");
+    const importSettingsInput = host.querySelector(".stash-dashboard__import-settings-input");
+    const studioGroupingSelect = host.querySelector(".stash-dashboard__studio-grouping");
+    const includeSubStudiosInput = host.querySelector(".stash-dashboard__include-sub-studios");
+    if (studioGroupingSelect instanceof HTMLSelectElement) {
+      studioGroupingSelect.value = getDashboardStudioListGrouping();
+    }
+    if (includeSubStudiosInput instanceof HTMLInputElement) {
+      includeSubStudiosInput.checked = getDashboardIncludeSubStudios();
+    }
     const loadStudioList = async () => {
       loadStudiosButton.disabled = true;
       setStashDashboardStatus(content, "Loading studio list...");
       try {
         state.dashboardStudios = (await fetchAllStudiosForDashboard()).filter(studioMatchesDashboardFilters);
+        const hydrated = await hydratePersistentDashboardCacheForStudios(state.dashboardStudios);
         renderDashboardStudioList(host, state.dashboardStudios);
         selectAllButton.disabled = false;
         selectNoneButton.disabled = false;
         if (studioSearchInput instanceof HTMLInputElement) studioSearchInput.disabled = false;
-        setStashDashboardStatus(content, "Choose studios to filter the dashboard. Loading selected studios adds them to the dashboard cache.");
+        setStashDashboardStatus(
+          content,
+          hydrated
+            ? `Choose studios to filter the dashboard. Restored ${hydrated} cached studio${hydrated === 1 ? "" : "s"}.`
+            : "Choose studios to filter the dashboard. Loading selected studios adds them to the dashboard cache."
+        );
+        if (hydrated) {
+          await renderCachedDashboardView(host, content, "Restored cache. ");
+        }
         return state.dashboardStudios;
       } catch (err) {
         console.warn("[StashDashboard] Studio list failed", err);
@@ -4595,7 +5378,35 @@
       state.dashboardStudioUpdatedAt.clear();
       state.dashboardStudioPerformerUpdatedAt.clear();
       state.dashboardTagUpdatedAt = "";
+      clearPersistentDashboardCache().catch((err) => console.warn("[StashDashboard] Persistent cache clear failed", err));
       setStashDashboardStatus(content, "Dashboard cache cleared.");
+    });
+    host.querySelector(".stash-dashboard__export-settings")?.addEventListener("click", () => {
+      exportDashboardSettings();
+    });
+    host.querySelector(".stash-dashboard__import-settings")?.addEventListener("click", () => {
+      if (importSettingsInput instanceof HTMLInputElement) importSettingsInput.click();
+    });
+    importSettingsInput?.addEventListener("change", async () => {
+      if (!(importSettingsInput instanceof HTMLInputElement)) return;
+      const file = importSettingsInput.files?.[0];
+      importSettingsInput.value = "";
+      if (!file) return;
+      try {
+        const payload = JSON.parse(await file.text());
+        const settings = normalizeImportedDashboardSettings(payload);
+        if (!settings) throw new Error("The selected file does not look like Stash Dashboard settings.");
+        await saveConfig(settings);
+        importDashboardPreferences(payload);
+        if (studioGroupingSelect instanceof HTMLSelectElement) studioGroupingSelect.value = getDashboardStudioListGrouping();
+        if (includeSubStudiosInput instanceof HTMLInputElement) includeSubStudiosInput.checked = getDashboardIncludeSubStudios();
+        renderDashboardStudioList(host, state.dashboardStudios || []);
+        setStashDashboardStatus(content, "Settings imported. Re-open plugin settings if you want to inspect the imported values.");
+        await renderCachedDashboardView(host, content, "Settings imported. ");
+      } catch (err) {
+        console.warn("[StashDashboard] Settings import failed", err);
+        setStashDashboardStatus(content, `Could not import settings: ${err?.message || err}`);
+      }
     });
     checkChangesButton?.addEventListener("click", async () => {
       const cachedStudios = getCachedDashboardStudios();
@@ -4612,6 +5423,7 @@
         }
         changedStudios.forEach((studio) => {
           state.statsCache.delete(getDashboardStudioScopeCacheKey(studio));
+          deletePersistentDashboardScope(getDashboardStudioScopeCacheKey(studio)).catch((err) => console.warn("[StashDashboard] Persistent cache delete failed", err));
           state.dashboardLoadedStudioIds.delete(studio.id);
           state.dashboardStudioSceneCounts.delete(studio.id);
           state.dashboardStudioUpdatedAt.delete(studio.id);
@@ -4636,8 +5448,25 @@
       host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => { input.checked = false; });
       renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Cached clear filter failed", err));
     });
+    studioGroupingSelect?.addEventListener("change", () => {
+      if (!(studioGroupingSelect instanceof HTMLSelectElement)) return;
+      setLocalStorageValue(DASHBOARD_STUDIO_GROUPING_KEY, studioGroupingSelect.value === "parent" ? "parent" : "alphabetical");
+      renderDashboardStudioList(host, state.dashboardStudios || []);
+      renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Studio grouping refresh failed", err));
+    });
+    includeSubStudiosInput?.addEventListener("change", () => {
+      if (!(includeSubStudiosInput instanceof HTMLInputElement)) return;
+      setLocalStorageValue(DASHBOARD_INCLUDE_SUB_STUDIOS_KEY, includeSubStudiosInput.checked ? "true" : "false");
+      syncDashboardSubStudioCheckboxes(host);
+      renderDashboardStudioList(host, state.dashboardStudios || []);
+      renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Sub-studio refresh failed", err));
+    });
     host.addEventListener("change", (event) => {
       if (!(event.target instanceof HTMLInputElement) || !event.target.classList.contains("stash-dashboard__studio-check")) return;
+      if (getDashboardIncludeSubStudios()) {
+        if (!event.target.checked) setDashboardDescendantCheckboxes(host, event.target.value, false);
+        syncDashboardSubStudioCheckboxes(host);
+      }
       renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Cached filter failed", err));
     });
     studioSearchInput?.addEventListener("input", () => {
@@ -4646,14 +5475,21 @@
     loadSelectedButton?.addEventListener("click", async () => {
       await loadStudiosToCache(getSelectedDashboardStudios(host));
     });
-    if (getAutoLoadDashboardOnOpen()) {
+    let autoLoadStarted = false;
+    [50, 250, 750].forEach((delay) => {
       window.setTimeout(async () => {
-        if (!isStashDashboardRoute()) return;
-        const studios = await loadStudioList();
-        host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => { input.checked = true; });
-        await loadStudiosToCache(studios);
-      }, 250);
-    }
+        if (autoLoadStarted || !isStashDashboardRoute() || !host.isConnected || host.dataset.stashDashboardShell !== "true") return;
+        if (loadStudiosButton instanceof HTMLButtonElement && loadStudiosButton.disabled) return;
+        autoLoadStarted = true;
+        try {
+          const studios = await loadStudioList();
+          if (!studios.length) autoLoadStarted = false;
+        } catch (err) {
+          autoLoadStarted = false;
+          console.warn("[StashDashboard] Delayed studio list load failed", err);
+        }
+      }, delay);
+    });
   }
 
   function enhanceCurrentPage() {
