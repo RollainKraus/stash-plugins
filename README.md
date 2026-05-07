@@ -13,6 +13,7 @@
 - [Background Images Slideshow](#Background-Images-Slideshow)
 - [Studio Dashboard](#Studio-Dashboard)
 - [Stash Dashboard](#Stash-Dashboard)
+- [O Stickers](#O-Stickers)
 
 ## Installation
 
@@ -412,6 +413,15 @@ How To:
 - Load studio list
 - Select all studios or only the studios you want in the dashboard
 - Load selected studios (this takes a VERY long time depending on stash size)
+
+
+# O Stickers
+
+Adds O count 'stickers' to scenes, images, studios and performers based on o count.
+
+- Emoji or local .png images
+- Supports custom images as long as they follow the naming convention 1.png, 2.png, 3.png etc
+- Customizable animations and styling
 
 ## License
 
