@@ -46,7 +46,7 @@ settings:
   c06PieChartSliceMax:
     displayName: Pie Chart Slice Max
     type: STRING
-    description: Maximum known slices for non-nationality pie charts before overflow becomes Other. Set 0 for uncapped. Nationality always uses top 10 plus Other and Unknown. Default 0.
+    description: Maximum named slices for user tag-based pie charts before the smallest results are grouped into Other. Set 0 for uncapped. Default 0.
   c07IncludeSubtagsInPieCharts:
     displayName: Include Subtags In Pie Charts
     type: BOOLEAN
