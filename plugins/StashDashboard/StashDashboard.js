@@ -3786,6 +3786,8 @@
     const sceneOCount = scenes.reduce((total, scene) => total + Number(scene?.o_counter || 0), 0);
     const totalDurationMinutes = scenes.reduce((total, scene) => total + getSceneDurationMinutes(scene), 0);
     const totalSceneSizeBytes = scenes.reduce((total, scene) => total + getSceneSizeBytes(scene), 0);
+    const longestSceneMinutes = scenes.reduce((max, scene) => Math.max(max, getSceneDurationMinutes(scene)), 0);
+    const largestSceneSizeBytes = scenes.reduce((max, scene) => Math.max(max, getSceneSizeBytes(scene)), 0);
     return {
       title,
       refs,
@@ -3796,6 +3798,8 @@
         scenes: scenes.length,
         duration: totalDurationMinutes,
         size: totalSceneSizeBytes,
+        longestScene: longestSceneMinutes,
+        largestFile: largestSceneSizeBytes,
         averageRating100: ratedScenes.length ? ratedScenes.reduce((total, scene) => total + Number(scene?.rating100 || 0), 0) / ratedScenes.length : 0,
         oCount: sceneOCount,
         performers: performers.length,
@@ -3808,6 +3812,7 @@
       performerMostOs: performers.slice().filter((performer) => Number(performer?.oCount || 0) > 0).sort(byPerformerOCountThenName)[0] || null,
       topRatedScene: scenes.slice().filter((scene) => Number(scene?.rating100 || 0) > 0).sort(bySceneRatingThenTitle)[0] || null,
       sceneMostOs: scenes.slice().filter((scene) => Number(scene?.o_counter || 0) > 0).sort(bySceneOCountThenTitle)[0] || null,
+      resolutionDistribution: buildResolutionDistribution(scenes),
     };
   }
 
@@ -3895,6 +3900,7 @@
       graph.appendChild(row);
     });
     panel.appendChild(graph);
+    renderStudioComparisonResolutionBreakdown(panel, leftStats, rightStats);
     container.appendChild(panel);
   }
 
@@ -3905,10 +3911,84 @@
       { key: "images", label: "Images", value: formatNumber(counts.images), raw: Number(counts.images || 0) },
       { key: "duration", label: "Duration", value: formatDurationMinutes(counts.duration), raw: Number(counts.duration || 0) },
       { key: "size", label: "File size", value: formatBytes(counts.size), raw: Number(counts.size || 0) },
+      { key: "longest", label: "Longest scene", value: formatDurationMinutes(counts.longestScene), raw: Number(counts.longestScene || 0) },
+      { key: "largest", label: "Largest file", value: formatBytes(counts.largestFile), raw: Number(counts.largestFile || 0) },
       { key: "rating", label: "Avg rating", value: counts.averageRating100 ? formatRating(counts.averageRating100) : "N/A", raw: Number(counts.averageRating100 || 0) },
       { key: "ocount", label: "O count", value: formatNumber(counts.oCount), raw: Number(counts.oCount || 0) },
       { key: "performers", label: "Performers", value: formatNumber(counts.performers), raw: Number(counts.performers || 0) },
     ];
+  }
+
+  function renderStudioComparisonResolutionBreakdown(container, leftStats, rightStats) {
+    const items = getStudioComparisonResolutionItems(leftStats, rightStats);
+    if (!items.length) return;
+    const leftTotal = Math.max(0, Number(leftStats?.resolutionDistribution?.total || 0));
+    const rightTotal = Math.max(0, Number(rightStats?.resolutionDistribution?.total || 0));
+    const panel = document.createElement("div");
+    panel.className = "studio-dashboard__comparison-resolution";
+    panel.innerHTML = `
+      <div class="studio-dashboard__comparison-resolution-title">Video resolution</div>
+      ${renderStudioComparisonResolutionBar("Left", items, leftTotal, "left")}
+      ${renderStudioComparisonResolutionBar("Right", items, rightTotal, "right")}
+      <div class="studio-dashboard__comparison-resolution-legend">
+        ${items.map((item, index) => {
+          const color = DEMOGRAPHIC_COLORS[index % DEMOGRAPHIC_COLORS.length];
+          const tip = `${item.label}: Left ${formatNumber(item.leftCount)} (${formatInsightPercent(item.leftCount, leftTotal)}), Right ${formatNumber(item.rightCount)} (${formatInsightPercent(item.rightCount, rightTotal)})`;
+          return `
+            <span style="--studio-dashboard-comparison-resolution-color: ${escapeHtml(color)}" data-comparison-tooltip="${escapeHtml(tip)}">
+              <i></i>${escapeHtml(item.label)}
+            </span>
+          `;
+        }).join("")}
+      </div>
+    `;
+    container.appendChild(panel);
+  }
+
+  function getStudioComparisonResolutionItems(leftStats, rightStats) {
+    const byLabel = new Map();
+    const absorb = (stats, side) => {
+      (stats?.resolutionDistribution?.items || []).forEach((item) => {
+        if (!item || item.metricUnknown || item.metricOther) return;
+        const label = String(item.label || "").trim();
+        if (!label) return;
+        const existing = byLabel.get(label) || { label, leftCount: 0, rightCount: 0 };
+        existing[side === "right" ? "rightCount" : "leftCount"] = Number(item.count || 0);
+        byLabel.set(label, existing);
+      });
+    };
+    absorb(leftStats, "left");
+    absorb(rightStats, "right");
+    const order = new Map(RESOLUTION_BUCKETS.map((bucket, index) => [bucket.label, index]));
+    return Array.from(byLabel.values()).sort((left, right) => {
+      const leftOrder = order.has(left.label) ? order.get(left.label) : Number.MAX_SAFE_INTEGER;
+      const rightOrder = order.has(right.label) ? order.get(right.label) : Number.MAX_SAFE_INTEGER;
+      if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+      return left.label.localeCompare(right.label);
+    });
+  }
+
+  function renderStudioComparisonResolutionBar(label, items, total, side) {
+    const safeTotal = Math.max(0, Number(total || 0));
+    const segments = safeTotal > 0
+      ? items.map((item, index) => {
+        const count = Number(side === "right" ? item.rightCount || 0 : item.leftCount || 0);
+        if (count <= 0) return "";
+        const color = DEMOGRAPHIC_COLORS[index % DEMOGRAPHIC_COLORS.length];
+        const percent = formatInsightPercent(count, safeTotal);
+        return `
+          <span style="--studio-dashboard-comparison-resolution-color: ${escapeHtml(color)}; --studio-dashboard-comparison-resolution-size: ${(count / safeTotal) * 100}%" data-comparison-tooltip="${escapeHtml(`${label} ${item.label}: ${formatNumber(count)} (${percent})`)}"></span>
+        `;
+      }).join("")
+      : "";
+    return `
+      <div class="studio-dashboard__comparison-resolution-row">
+        <b>${escapeHtml(label)}</b>
+        <div class="studio-dashboard__comparison-resolution-bar">
+          ${segments || `<em>No scenes</em>`}
+        </div>
+      </div>
+    `;
   }
 
   function getStudioComparisonMetricMaxes(sideStats) {
