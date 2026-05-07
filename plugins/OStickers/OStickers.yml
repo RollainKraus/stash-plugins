@@ -13,6 +13,10 @@ settings:
     displayName: Max Stickers
     type: NUMBER
     description: Maximum number of overlays to render per card. Default 50.
+  stickersPerOCount:
+    displayName: Stickers Per O Count
+    type: NUMBER
+    description: Multiplier for repeat, incremental, and thresholds modes. Single mode still renders one sticker. Default 1.
   mode:
     displayName: Mode
     type: STRING
