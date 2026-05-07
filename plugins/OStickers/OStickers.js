@@ -14,6 +14,7 @@
 
   const DEFAULTS = {
     maxStickers: 50,
+    stickersPerOCount: 1,
     mode: "incremental",
     type: "image",
     emoji: "💦",
@@ -155,6 +156,7 @@
       const raw = data?.configuration?.plugins?.[PLUGIN_ID] || {};
       state.config = {
         maxStickers: getConfigNumber(raw.maxStickers, DEFAULTS.maxStickers, 1, 500),
+        stickersPerOCount: Math.round(getConfigNumber(raw.stickersPerOCount, DEFAULTS.stickersPerOCount, 1, 100)),
         mode: normalizeEnum(raw.mode, MODES, DEFAULTS.mode),
         type: normalizeEnum(raw.type, STICKER_TYPES, DEFAULTS.type),
         emoji: getConfigString(raw.emoji, DEFAULTS.emoji),
@@ -395,17 +397,19 @@
 
     const mode = state.config.mode;
     const maxStickers = Math.round(state.config.maxStickers);
+    const stickersPerOCount = Math.max(1, Math.round(state.config.stickersPerOCount || 1));
     const thresholds = parseThresholds();
-    let count = 0;
+    let countUnits = 0;
 
     if (mode === "single") {
-      count = 1;
+      countUnits = 1;
     } else if (mode === "thresholds") {
-      count = thresholds.filter((threshold) => oCount >= threshold).length;
+      countUnits = thresholds.filter((threshold) => oCount >= threshold).length;
     } else {
-      count = oCount;
+      countUnits = oCount;
     }
 
+    let count = mode === "single" ? 1 : countUnits * stickersPerOCount;
     count = Math.min(Math.max(0, count), maxStickers);
     if (!count) return [];
 
@@ -499,8 +503,10 @@
     layer.style.setProperty("--ostickers-overflow", state.config.allowOverflow ? "visible" : "hidden");
 
     const stickerSizePx = getStickerSizePx(rect.width, rect.height);
+    const placements = [];
     stickers.forEach((sticker, index) => {
-      const placement = getPlacement(info, rect, stickerSizePx, index);
+      const placement = getPlacement(info, rect, stickerSizePx, index, placements);
+      placements.push(placement);
       const element = createStickerElement(sticker, stickerSizePx, placement, index);
       layer.appendChild(element);
     });
@@ -515,37 +521,78 @@
     return Math.max(8, Math.min(maxSize, size));
   }
 
-  function getPlacement(info, rect, stickerSizePx, index) {
+  function getPlacement(info, rect, stickerSizePx, index, priorPlacements = []) {
     const halfWidthPercent = (stickerSizePx / rect.width) * 50;
     const halfHeightPercent = (stickerSizePx / rect.height) * 50;
     const seed = hashString(`${info.cacheKey}:${index + 1}`);
     const isRain = state.config.animation === "rain";
-
-    if (isRain) {
-      const duration = Math.max(200, state.config.animationSpeedMs);
-      return {
-        leftPercent: randomBetween(seed + 17, state.config.allowOverflow ? -halfWidthPercent : halfWidthPercent, state.config.allowOverflow ? 100 + halfWidthPercent : 100 - halfWidthPercent),
-        topPercent: -halfHeightPercent - randomBetween(seed + 31, 2, 12),
-        rotation: randomBetween(seed + 43, -10, 10),
-        delay: -Math.round(randomBetween(seed + 59, 0, duration)),
-        rainOffsetPercent: Math.round(randomBetween(seed + 71, 8, 22)),
-        rainDistancePx: Math.round(rect.height + stickerSizePx * randomBetween(seed + 83, 1.25, 2)),
-      };
-    }
-
     const minX = state.config.allowOverflow ? -halfWidthPercent : halfWidthPercent;
     const maxX = state.config.allowOverflow ? 100 + halfWidthPercent : 100 - halfWidthPercent;
     const minY = state.config.allowOverflow ? -halfHeightPercent : halfHeightPercent;
     const maxY = state.config.allowOverflow ? 100 + halfHeightPercent : 100 - halfHeightPercent;
+    const duration = Math.max(200, state.config.animationSpeedMs);
+    const desiredSpacingPx = stickerSizePx * (isRain ? 0.92 : 0.84);
+    const attemptCount = isRain ? 24 : 18;
+    let bestCandidate = null;
+    let bestScore = -1;
 
-    return {
+    for (let attempt = 0; attempt < attemptCount; attempt += 1) {
+      const attemptSeed = seed + attempt * 97;
+      const candidate = isRain
+        ? {
+            leftPercent: randomBetween(attemptSeed + 17, minX, Math.max(minX, maxX)),
+            topPercent: -halfHeightPercent - randomBetween(attemptSeed + 31, 2, 12),
+            rotation: randomBetween(attemptSeed + 43, -10, 10),
+            delay: -Math.round(randomBetween(attemptSeed + 59, 0, duration)),
+            rainOffsetPercent: Math.round(randomBetween(attemptSeed + 71, 8, 22)),
+            rainDistancePx: Math.round(rect.height + stickerSizePx * randomBetween(attemptSeed + 83, 1.25, 2)),
+          }
+        : {
+            leftPercent: randomBetween(attemptSeed + 17, minX, Math.max(minX, maxX)),
+            topPercent: randomBetween(attemptSeed + 31, minY, Math.max(minY, maxY)),
+            rotation: randomBetween(attemptSeed + 43, -14, 14),
+            delay: Math.round(randomBetween(attemptSeed + 59, 0, Math.min(duration * 0.6, 3000))),
+            rainOffsetPercent: Math.round(randomBetween(attemptSeed + 71, 8, 22)),
+            rainDistancePx: Math.round(rect.height + stickerSizePx),
+          };
+
+      const score = scorePlacement(candidate, priorPlacements, rect, isRain);
+      if (score > bestScore) {
+        bestScore = score;
+        bestCandidate = candidate;
+      }
+      if (score >= desiredSpacingPx) {
+        return candidate;
+      }
+    }
+
+    return bestCandidate || {
       leftPercent: randomBetween(seed + 17, minX, Math.max(minX, maxX)),
-      topPercent: randomBetween(seed + 31, minY, Math.max(minY, maxY)),
+      topPercent: isRain ? -halfHeightPercent - 6 : randomBetween(seed + 31, minY, Math.max(minY, maxY)),
       rotation: randomBetween(seed + 43, -14, 14),
-      delay: Math.round(randomBetween(seed + 59, 0, Math.min(state.config.animationSpeedMs * 0.6, 3000))),
-      rainOffsetPercent: Math.round(randomBetween(seed + 71, 8, 22)),
+      delay: isRain ? -Math.round(randomBetween(seed + 59, 0, duration)) : Math.round(randomBetween(seed + 59, 0, Math.min(duration * 0.6, 3000))),
+      rainOffsetPercent: 12,
       rainDistancePx: Math.round(rect.height + stickerSizePx),
     };
+  }
+
+  function scorePlacement(candidate, priorPlacements, rect, isRain) {
+    if (!priorPlacements.length) return Number.POSITIVE_INFINITY;
+
+    const candidateX = (candidate.leftPercent / 100) * rect.width;
+    const candidateY = (candidate.topPercent / 100) * rect.height;
+    let minDistance = Number.POSITIVE_INFINITY;
+
+    priorPlacements.forEach((placement) => {
+      const previousX = (placement.leftPercent / 100) * rect.width;
+      const previousY = (placement.topPercent / 100) * rect.height;
+      const dx = Math.abs(candidateX - previousX);
+      const dy = Math.abs(candidateY - previousY);
+      const distance = isRain ? dx : Math.hypot(dx, dy);
+      minDistance = Math.min(minDistance, distance);
+    });
+
+    return minDistance;
   }
 
   function createStickerElement(sticker, stickerSizePx, placement, index) {
