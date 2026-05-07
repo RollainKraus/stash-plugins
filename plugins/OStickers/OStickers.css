@@ -1,0 +1,119 @@
+.ostickers-card {
+  position: relative !important;
+  isolation: isolate;
+}
+
+.ostickers-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 999;
+  pointer-events: none;
+  border-radius: inherit;
+  overflow: var(--ostickers-overflow, hidden);
+}
+
+.ostickers-sticker {
+  position: absolute;
+  left: var(--osticker-left, 0px);
+  top: var(--osticker-top, 0px);
+  width: var(--osticker-size, 24px);
+  height: var(--osticker-size, 24px);
+  opacity: var(--osticker-opacity, 0.5);
+  transform: translate(-50%, -50%) rotate(var(--osticker-rotation, 0deg));
+  transform-origin: center;
+  filter: drop-shadow(0 0.16rem 0.22rem rgba(0, 0, 0, 0.45));
+  user-select: none;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.ostickers-sticker img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.ostickers-sticker--emoji {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--osticker-size, 24px);
+  line-height: 1;
+  text-shadow:
+    0 0.08rem 0.18rem rgba(0, 0, 0, 0.72),
+    0 0 0.16rem rgba(255, 255, 255, 0.25);
+}
+
+.ostickers-sticker--wiggle {
+  animation: ostickers-wiggle var(--osticker-animation-duration, 5000ms) ease-in-out infinite;
+  animation-delay: var(--osticker-animation-delay, 0ms);
+}
+
+.ostickers-sticker--pulse {
+  animation: ostickers-pulse var(--osticker-animation-duration, 5000ms) ease-in-out infinite;
+  animation-delay: var(--osticker-animation-delay, 0ms);
+}
+
+.ostickers-sticker--float {
+  animation: ostickers-float var(--osticker-animation-duration, 5000ms) ease-in-out infinite;
+  animation-delay: var(--osticker-animation-delay, 0ms);
+}
+
+.ostickers-sticker--rain {
+  animation: ostickers-rain var(--osticker-animation-duration, 5000ms) linear infinite;
+  animation-delay: var(--osticker-animation-delay, 0ms);
+}
+
+@keyframes ostickers-wiggle {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) rotate(var(--osticker-rotation, 0deg));
+  }
+
+  50% {
+    transform: translate(-50%, -50%) rotate(calc(var(--osticker-rotation, 0deg) + 7deg));
+  }
+}
+
+@keyframes ostickers-pulse {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) rotate(var(--osticker-rotation, 0deg)) scale(1);
+  }
+
+  50% {
+    transform: translate(-50%, -50%) rotate(var(--osticker-rotation, 0deg)) scale(1.12);
+  }
+}
+
+@keyframes ostickers-float {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) translateY(0) rotate(var(--osticker-rotation, 0deg));
+  }
+
+  50% {
+    transform: translate(-50%, -50%) translateY(-8%) rotate(var(--osticker-rotation, 0deg));
+  }
+}
+
+@keyframes ostickers-rain {
+  0% {
+    opacity: calc(var(--osticker-opacity, 0.5) * 0.95);
+    transform: translate(-50%, calc(-50% - var(--osticker-rain-offset, 12%))) rotate(var(--osticker-rotation, 0deg));
+  }
+
+  12% {
+    opacity: var(--osticker-opacity, 0.5);
+  }
+
+  78% {
+    opacity: calc(var(--osticker-opacity, 0.5) * 0.42);
+  }
+
+  100% {
+    opacity: calc(var(--osticker-opacity, 0.5) * 0.28);
+    transform: translate(-50%, calc(-50% + var(--osticker-rain-distance, 240px))) rotate(var(--osticker-rotation, 0deg));
+  }
+}

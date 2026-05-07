@@ -1,0 +1,59 @@
+name: O Stickers
+description: Randomly overlays O-count stickers or emoji on scene, image, studio, and performer cards.
+version: 0.1.0
+ui:
+  css:
+    - OStickers.css
+  javascript:
+    - OStickers.js
+  assets:
+    /: assets
+settings:
+  maxStickers:
+    displayName: Max Stickers
+    type: NUMBER
+    description: Maximum number of overlays to render per card. Default 50.
+  mode:
+    displayName: Mode
+    type: STRING
+    description: repeat, incremental, single, or thresholds. Default incremental.
+  type:
+    displayName: Sticker Type
+    type: STRING
+    description: image or emoji. Default image.
+  emoji:
+    displayName: Emoji
+    type: STRING
+    description: Emoji to use when Sticker Type is emoji. Default 💦.
+  imageMode:
+    displayName: Image Mode
+    type: STRING
+    description: random or fixed. Default random.
+  sizePercent:
+    displayName: Size Percent
+    type: STRING
+    description: Sticker size as a percentage of card width. Default 25.
+  opacity:
+    displayName: Opacity
+    type: STRING
+    description: Sticker opacity from 0 to 1. Default 0.3.
+  animation:
+    displayName: Animation
+    type: STRING
+    description: none, float, wiggle, pulse, or rain. Default none.
+  animationSpeedMs:
+    displayName: Animation Speed (ms)
+    type: NUMBER
+    description: Animation duration in milliseconds. Default 5000.
+  allowOverflow:
+    displayName: Allow Overflow
+    type: BOOLEAN
+    description: Allow stickers to overflow beyond card edges. Default true.
+  thresholds:
+    displayName: Thresholds
+    type: STRING
+    description: Comma separated O-count thresholds used by thresholds mode. Default 1,5,10,25,50.
+  contentTypes:
+    displayName: Content Types
+    type: STRING
+    description: Comma separated card types to decorate. Default image,scene,studio,performer.
