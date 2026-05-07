@@ -7,7 +7,7 @@
   const NO_STUDIO_ID = "__stash_dashboard_no_studio__";
   const DASHBOARD_CACHE_DB = "StashDashboardCache";
   const DASHBOARD_CACHE_STORE = "studioScopes";
-  const DASHBOARD_CACHE_VERSION = "v3";
+  const DASHBOARD_CACHE_VERSION = "v4";
   const POWER_USER_CUSTOMIZATION = {
     // Change this if your theme uses non-native performer card proportions.
     performerCardAspectRatio: "2 / 3",
@@ -132,20 +132,20 @@
     { label: "10.0", min: 10, max: 10 },
   ];
   const RESOLUTION_BUCKETS = [
-    { label: "144p", enumValue: "VERY_LOW", max: 144 },
-    { label: "240p", enumValue: "LOW", max: 240 },
-    { label: "360p", enumValue: "R360P", max: 360 },
-    { label: "480p", enumValue: "STANDARD", max: 480 },
-    { label: "540p", enumValue: "WEB_HD", max: 540 },
-    { label: "720p", enumValue: "STANDARD_HD", max: 720 },
-    { label: "1080p", enumValue: "FULL_HD", max: 1080 },
-    { label: "1440p", enumValue: "QUAD_HD", max: 1440 },
-    { label: "4K", enumValue: "FOUR_K", max: 2160 },
-    { label: "5K", enumValue: "FIVE_K", max: 2880 },
-    { label: "6K", enumValue: "SIX_K", max: 3240 },
-    { label: "7K", enumValue: "SEVEN_K", max: 3780 },
-    { label: "8K", enumValue: "EIGHT_K", max: 4320 },
-    { label: "8K+", enumValue: "HUGE", max: null },
+    { label: "144p", enumValue: "VERY_LOW", min: null, max: 239 },
+    { label: "240p", enumValue: "LOW", min: 240, max: 359 },
+    { label: "360p", enumValue: "R360P", min: 360, max: 479 },
+    { label: "480p", enumValue: "STANDARD", min: 480, max: 539 },
+    { label: "540p", enumValue: "WEB_HD", min: 540, max: 719 },
+    { label: "720p", enumValue: "STANDARD_HD", min: 720, max: 1079 },
+    { label: "1080p", enumValue: "FULL_HD", min: 1080, max: 1439 },
+    { label: "1440p", enumValue: "QUAD_HD", min: 1440, max: 2159 },
+    { label: "4K", enumValue: "FOUR_K", min: 2160, max: 2879 },
+    { label: "5K", enumValue: "FIVE_K", min: 2880, max: 3239 },
+    { label: "6K", enumValue: "SIX_K", min: 3240, max: 3779 },
+    { label: "7K", enumValue: "SEVEN_K", min: 3780, max: 4319 },
+    { label: "8K", enumValue: "EIGHT_K", min: 4320, max: 4320 },
+    { label: "8K+", enumValue: "HUGE", min: 4321, max: null },
   ];
   const DURATION_BUCKETS = [
     { label: "<5m", min: null, max: 5 },
@@ -485,6 +485,23 @@
     button.setAttribute("aria-pressed", enabled ? "true" : "false");
     button.textContent = enabled ? "Cached only: On" : "Cached only: Off";
     button.title = enabled ? "Showing cached studios only" : "Showing all studios";
+  }
+
+  function updateDashboardSegmentedControls(host) {
+    const values = {
+      grouping: getDashboardStudioListGrouping(),
+      sort: getDashboardStudioListSort(),
+    };
+    host?.querySelectorAll?.(".stash-dashboard__segmented").forEach((group) => {
+      const key = group.getAttribute("data-dashboard-segment") || "";
+      const value = values[key];
+      group.querySelectorAll("button[data-value]").forEach((button) => {
+        if (!(button instanceof HTMLButtonElement)) return;
+        const isActive = button.getAttribute("data-value") === value;
+        button.classList.toggle("is-active", isActive);
+        button.setAttribute("aria-pressed", isActive ? "true" : "false");
+      });
+    });
   }
 
   function getDashboardPrivacyMode() {
@@ -1869,8 +1886,9 @@
         performerIds: uniqueValues(group.performerIds),
         customTag: group.tag,
       }));
+    const limitedItems = applyCustomTagPieSliceLimit(items, total, "performer");
     if (unknownPerformers.size > 0) {
-      items.push({
+      limitedItems.push({
         key: "Unknown",
         label: "Unknown",
         filterLabel: "Unknown",
@@ -1884,7 +1902,7 @@
     return {
       title: group.title || getCustomPieGroupTitle(allTags, group.value, index),
       total,
-      items,
+      items: limitedItems,
     };
   }
 
@@ -1959,8 +1977,9 @@
         sceneIds: uniqueValues(group.sceneIds),
         customTag: group.tag,
       }));
+    const limitedItems = applyCustomTagPieSliceLimit(items, total, "scene");
     if (unknownSceneCount > 0) {
-      items.push({
+      limitedItems.push({
         key: "Unknown",
         label: "Unknown",
         filterLabel: "Unknown",
@@ -1974,8 +1993,49 @@
     return {
       title: group.title || getCustomPieGroupTitle(allTags, group.value, index),
       total,
-      items,
+      items: limitedItems,
     };
+  }
+
+  function applyCustomTagPieSliceLimit(items, total, kind) {
+    const max = getPieSliceMax();
+    if (!max || !Array.isArray(items) || items.length <= max) return items;
+    const ranked = items
+      .slice()
+      .sort((left, right) => {
+        const countDelta = Number(right.count || 0) - Number(left.count || 0);
+        if (countDelta) return countDelta;
+        return String(left.label || "").localeCompare(String(right.label || ""));
+      });
+    const visibleKeys = new Set(ranked.slice(0, max).map((item) => item.key));
+    const visible = items.filter((item) => visibleKeys.has(item.key));
+    const overflow = items.filter((item) => !visibleKeys.has(item.key));
+    const otherCount = overflow.reduce((sum, item) => sum + Number(item.count || 0), 0);
+    if (!otherCount) return visible;
+    const other = {
+      key: "Other",
+      label: "Other",
+      filterLabel: "Other",
+      count: otherCount,
+      percent: formatPercent(otherCount, total),
+      customTags: uniqueTags(overflow.flatMap((item) => getCustomPieItemTags(item))),
+      customTagOther: true,
+      filterable: true,
+    };
+    if (kind === "performer") {
+      other.performers = overflow.flatMap((item) => item.performers || []);
+      other.performerIds = uniqueValues(overflow.flatMap((item) => item.performerIds || []));
+    } else {
+      other.sceneIds = uniqueValues(overflow.flatMap((item) => item.sceneIds || []));
+    }
+    return [...visible, other].sort((left, right) => String(left.label || "").localeCompare(String(right.label || "")));
+  }
+
+  function getCustomPieItemTags(item) {
+    return uniqueTags([
+      item?.customTag,
+      ...(item?.customTags || []),
+    ]);
   }
 
   function parseCustomPieGroups(value) {
@@ -2234,10 +2294,14 @@
     return numeric;
   }
 
-  function getResolutionEnumForHeight(height) {
-    const value = Number(height);
+  function getResolutionEnumForDimension(dimension) {
+    const value = Number(dimension);
     if (!Number.isFinite(value) || value <= 0) return "";
-    const bucket = RESOLUTION_BUCKETS.find((item) => item.max == null || value <= item.max);
+    const bucket = RESOLUTION_BUCKETS.find((item) => {
+      const min = item.min == null ? 0 : Number(item.min);
+      const max = item.max == null ? Infinity : Number(item.max);
+      return value >= min && value <= max;
+    });
     return bucket?.enumValue || "";
   }
 
@@ -2323,6 +2387,16 @@
     return Array.from(new Set((values || []).filter(Boolean)));
   }
 
+  function uniqueTags(tags) {
+    const seen = new Set();
+    return (tags || []).filter((tag) => {
+      const id = String(tag?.id || "");
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  }
+
   function calculateAgeAtDate(birthdate, date) {
     const birth = parseDateValue(birthdate);
     const sceneDate = parseDateValue(date);
@@ -2333,11 +2407,18 @@
     return age >= 18 && age <= 120 ? age : null;
   }
 
-  function getSceneResolutionHeight(scene) {
-    const heights = (scene?.files || [])
-      .map((file) => Number(file?.height || 0))
-      .filter((height) => Number.isFinite(height) && height > 0);
-    return heights.length ? Math.max(...heights) : 0;
+  function getSceneResolutionDimension(scene) {
+    const dimensions = (scene?.files || [])
+      .map((file) => {
+        const width = Number(file?.width || 0);
+        const height = Number(file?.height || 0);
+        if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+          return Math.min(width, height);
+        }
+        return Number.isFinite(height) && height > 0 ? height : width;
+      })
+      .filter((dimension) => Number.isFinite(dimension) && dimension > 0);
+    return dimensions.length ? Math.max(...dimensions) : 0;
   }
 
   function getSceneDurationMinutes(scene) {
@@ -2385,7 +2466,7 @@
       return buildResolutionEnumDistribution(scenes, buckets);
     }
     return buildMetricDistribution(scenes, buckets, {
-      getMetric: getSceneResolutionHeight,
+      getMetric: getSceneResolutionDimension,
       getEntity: normalizeSceneSummary,
       entityKey: "scenes",
       metricType: "resolution",
@@ -2397,7 +2478,7 @@
     const sceneGroups = new Map(buckets.map((bucket) => [bucket.enumValue, []]));
     const unknownScenes = [];
     (scenes || []).forEach((scene) => {
-      const enumValue = getResolutionEnumForHeight(getSceneResolutionHeight(scene));
+      const enumValue = getResolutionEnumForDimension(getSceneResolutionDimension(scene));
       const summary = normalizeSceneSummary(scene);
       if (!enumValue || !counts.has(enumValue)) {
         unknownScenes.push(summary);
@@ -4416,6 +4497,7 @@
       unit: "performers",
       type: "country",
       studio: stats.studio,
+      stats,
       hideUnknown,
     });
 
@@ -4426,6 +4508,7 @@
       unit: "appearances",
       type: "age",
       studio: stats.studio,
+      stats,
       hideUnknown,
     });
 
@@ -4436,6 +4519,7 @@
       unit: "performers",
       type: "performer-rating",
       studio: stats.studio,
+      stats,
       hideUnknown,
     });
 
@@ -4448,6 +4532,7 @@
         unit: "performers",
         type: "custom-performer",
         studio: stats.studio,
+        stats,
         hideUnknown,
       });
     });
@@ -4486,6 +4571,7 @@
         unit: "scenes",
         type: "scene-rating",
         studio: stats.studio,
+        stats,
         hideUnknown,
       });
     }
@@ -4498,6 +4584,7 @@
         unit: "scenes",
         type: "scene-resolution",
         studio: stats.studio,
+        stats,
         footer: "Stash supports filtering by one resolution at a time.",
         hideUnknown,
       });
@@ -4511,6 +4598,7 @@
         unit: "scenes",
         type: "scene-duration",
         studio: stats.studio,
+        stats,
         hideUnknown,
       });
     }
@@ -4524,12 +4612,13 @@
         unit: "scenes",
         type: "custom-scene",
         studio: stats.studio,
+        stats,
         hideUnknown,
       });
     });
   }
 
-  function renderDemographicChart(container, { title, subtitle, items, subcharts, unit, type, studio, footer, hideUnknown = false }) {
+  function renderDemographicChart(container, { title, subtitle, items, subcharts, unit, type, studio, stats, footer, hideUnknown = false }) {
     const hasSubcharts = Array.isArray(subcharts) && subcharts.length;
     let nextItemIndex = 0;
     const displayItems = hasSubcharts
@@ -4563,68 +4652,68 @@
       body.classList.add("stash-dashboard__demographic-body--multi");
       renderDemographicSubcharts(body, displaySubcharts, unit, type);
     } else {
-    const list = document.createElement("div");
-    list.className = "stash-dashboard__demographic-list";
-    if (type !== "scene-resolution" && type !== "scene-rating" && displayItems.some((item) => item.filterable !== false)) {
-      const toolbar = document.createElement("div");
-      toolbar.className = "stash-dashboard__demographic-select-all";
-      toolbar.innerHTML = `
-        <span class="stash-dashboard__demographic-actions">
-          <button type="button" data-demo-action="include-all" title="Include all">+</button>
-          <button type="button" data-demo-action="clear" title="Deselect all">-</button>
-        </span>
-        <span></span>
-        <span></span>
-      `;
-      toolbar.querySelector("[data-demo-action='include-all']")?.addEventListener("click", () => {
-        list.querySelectorAll(".stash-dashboard__demographic-row[data-filterable='true']").forEach((row) => setDemographicSelection(row, "include"));
+      const list = document.createElement("div");
+      list.className = "stash-dashboard__demographic-list";
+      if (type !== "scene-resolution" && type !== "scene-rating" && displayItems.some((item) => item.filterable !== false)) {
+        const toolbar = document.createElement("div");
+        toolbar.className = "stash-dashboard__demographic-select-all";
+        toolbar.innerHTML = `
+          <span class="stash-dashboard__demographic-actions">
+            <button type="button" data-demo-action="include-all" title="Include all">+</button>
+            <button type="button" data-demo-action="clear" title="Deselect all">-</button>
+          </span>
+          <span></span>
+          <span></span>
+        `;
+        toolbar.querySelector("[data-demo-action='include-all']")?.addEventListener("click", () => {
+          list.querySelectorAll(".stash-dashboard__demographic-row[data-filterable='true']").forEach((row) => setDemographicSelection(row, "include"));
+        });
+        toolbar.querySelector("[data-demo-action='clear']")?.addEventListener("click", () => {
+          list.querySelectorAll(".stash-dashboard__demographic-row").forEach((row) => setDemographicSelection(row, ""));
+        });
+        list.appendChild(toolbar);
+      }
+      displayItems.forEach((item, index) => {
+        const filterable = item.filterable !== false;
+        const row = document.createElement("div");
+        row.className = "stash-dashboard__demographic-row";
+        row.dataset.itemIndex = String(index);
+        row.dataset.filterable = filterable ? "true" : "false";
+        row.style.setProperty("--stash-dashboard-demo-color", DEMOGRAPHIC_COLORS[index % DEMOGRAPHIC_COLORS.length]);
+        row.innerHTML = `
+          <span class="stash-dashboard__demographic-actions">
+            ${filterable ? `
+              <button type="button" data-filter-mode="include" title="Include ${escapeHtml(item.filterLabel || item.label)}">+</button>
+              <button type="button" data-filter-mode="exclude" title="Exclude ${escapeHtml(item.filterLabel || item.label)}">-</button>
+            ` : ""}
+          </span>
+          <span class="stash-dashboard__demographic-label"><span class="stash-dashboard__demographic-swatch"></span>${escapeHtml(item.label)}</span>
+          <span class="stash-dashboard__demographic-value">
+            <strong>${escapeHtml(item.count)}</strong>
+            ${item.percent ? `<small>${escapeHtml(item.percent)}%</small>` : ""}
+          </span>
+        `;
+        row.querySelectorAll("[data-filter-mode]").forEach((button) => {
+          button.addEventListener("click", () => toggleDemographicSelection(row, button.dataset.filterMode));
+        });
+        row.querySelector(".stash-dashboard__demographic-label")?.addEventListener("click", () => {
+          if (row.dataset.filterable === "false") return;
+          toggleDemographicSelection(row, "include");
+        });
+        row.addEventListener("mouseenter", () => setDemographicHoverState(row, true, item, unit, type));
+        row.addEventListener("mouseleave", () => setDemographicHoverState(row, false, item, unit, type));
+        list.appendChild(row);
       });
-      toolbar.querySelector("[data-demo-action='clear']")?.addEventListener("click", () => {
-        list.querySelectorAll(".stash-dashboard__demographic-row").forEach((row) => setDemographicSelection(row, ""));
-      });
-      list.appendChild(toolbar);
-    }
-    displayItems.forEach((item, index) => {
-      const filterable = item.filterable !== false;
-      const row = document.createElement("div");
-      row.className = "stash-dashboard__demographic-row";
-      row.dataset.itemIndex = String(index);
-      row.dataset.filterable = filterable ? "true" : "false";
-      row.style.setProperty("--stash-dashboard-demo-color", DEMOGRAPHIC_COLORS[index % DEMOGRAPHIC_COLORS.length]);
-      row.innerHTML = `
-        <span class="stash-dashboard__demographic-actions">
-          ${filterable ? `
-            <button type="button" data-filter-mode="include" title="Include ${escapeHtml(item.filterLabel || item.label)}">+</button>
-            <button type="button" data-filter-mode="exclude" title="Exclude ${escapeHtml(item.filterLabel || item.label)}">-</button>
-          ` : ""}
-        </span>
-        <span class="stash-dashboard__demographic-label"><span class="stash-dashboard__demographic-swatch"></span>${escapeHtml(item.label)}</span>
-        <span class="stash-dashboard__demographic-value">
-          <strong>${escapeHtml(item.count)}</strong>
-          ${item.percent ? `<small>${escapeHtml(item.percent)}%</small>` : ""}
-        </span>
-      `;
-      row.querySelectorAll("[data-filter-mode]").forEach((button) => {
-        button.addEventListener("click", () => toggleDemographicSelection(row, button.dataset.filterMode));
-      });
-      row.querySelector(".stash-dashboard__demographic-label")?.addEventListener("click", () => {
-        if (row.dataset.filterable === "false") return;
-        toggleDemographicSelection(row, "include");
-      });
-      row.addEventListener("mouseenter", () => setDemographicHoverState(row, true, item, unit, type));
-      row.addEventListener("mouseleave", () => setDemographicHoverState(row, false, item, unit, type));
-      list.appendChild(row);
-    });
-    if (!list.children.length) {
-      const empty = document.createElement("div");
-      empty.className = "stash-dashboard__status";
-      empty.textContent = "No data found.";
-      list.appendChild(empty);
-    }
-    body.appendChild(list);
-    if (items?.length) {
-      renderDemographicPie(body, displayItems, unit, type);
-    }
+      if (!list.children.length) {
+        const empty = document.createElement("div");
+        empty.className = "stash-dashboard__status";
+        empty.textContent = "No data found.";
+        list.appendChild(empty);
+      }
+      body.appendChild(list);
+      if (items?.length) {
+        renderDemographicPie(body, displayItems, unit, type);
+      }
     }
     chart.appendChild(body);
     if (footer) {
@@ -4652,10 +4741,10 @@
         });
       });
       controls.querySelector("[data-demo-action='go']")?.addEventListener("click", () => {
-        openDemographicScenes(studio, type, allDisplayItems, Array.from(chart.querySelectorAll(".stash-dashboard__demographic-row")));
+        openDemographicScenes(stats, studio, type, allDisplayItems, Array.from(chart.querySelectorAll(".stash-dashboard__demographic-row")));
       });
       controls.querySelector("[data-demo-action='performers']")?.addEventListener("click", () => {
-        openDemographicPerformers(type, allDisplayItems, Array.from(chart.querySelectorAll(".stash-dashboard__demographic-row")));
+        openDemographicPerformers(stats, type, allDisplayItems, Array.from(chart.querySelectorAll(".stash-dashboard__demographic-row")));
       });
       controls.querySelector("[data-demo-action='update']")?.addEventListener("click", () => {
         updateDemographicChartView(chart);
@@ -4808,30 +4897,7 @@
         return Number(left.sourceIndex) - Number(right.sourceIndex);
       });
     if (type === "country") return sorted;
-    return applyPieSliceLimit(sorted);
-  }
-
-  function applyPieSliceLimit(items) {
-    const max = getPieSliceMax();
-    if (!max || items.length <= max) return items;
-    const knownItems = items.filter((item) => !isUnknownDemographicItem(item));
-    const unknownItems = items.filter(isUnknownDemographicItem);
-    if (knownItems.length <= max) return items;
-    const visible = knownItems.slice(0, max);
-    const overflow = knownItems.slice(max);
-    const otherCount = overflow.reduce((total, item) => total + Number(item.count || 0), 0);
-    const firstOverflowIndex = Math.min(...overflow.map((item) => Number(item.sourceIndex ?? max)));
-    const other = {
-      key: "Other",
-      label: "Other",
-      filterLabel: "Other",
-      count: otherCount,
-      sourceIndex: Number.isFinite(firstOverflowIndex) ? firstOverflowIndex : max,
-      performers: overflow.flatMap((item) => item.performers || []),
-      performerIds: uniqueValues(overflow.flatMap((item) => item.performerIds || [])),
-      filterable: false,
-    };
-    return [...visible, other, ...unknownItems].filter((item) => Number(item.count || 0) > 0);
+    return sorted;
   }
 
   function isUnknownDemographicItem(item) {
@@ -5214,7 +5280,7 @@
     if (chart.stashDashboardType === "scene-rating") updateSceneRatingRangeControls(chart);
   }
 
-  function openDemographicScenes(studio, type, items, rows) {
+  function openDemographicScenes(stats, studio, type, items, rows) {
     const chart = rows[0]?.closest?.(".stash-dashboard__demographic-chart");
     const tagMatchMode = getTagMatchMode(chart);
     const includeItems = [];
@@ -5240,10 +5306,10 @@
     } else {
       criteria = buildAgeFilterCriteria(includeItems, excludeItems);
     }
-    openDashboardTarget(makeStudioScenesUrl(studio, criteria));
+    openDashboardTarget(stats ? makeDashboardScenesUrl(stats, criteria) : makeStudioScenesUrl(studio, criteria));
   }
 
-  function openDemographicPerformers(type, items, rows) {
+  function openDemographicPerformers(stats, type, items, rows) {
     const chart = rows[0]?.closest?.(".stash-dashboard__demographic-chart");
     const tagMatchMode = getTagMatchMode(chart);
     const includeItems = [];
@@ -5254,7 +5320,7 @@
       if (mode === "exclude") excludeItems.push(items[index]);
     });
     const criteria = buildPerformerBrowserCriteria(type, includeItems, excludeItems, tagMatchMode);
-    openDashboardTarget(makePerformersUrl(criteria));
+    openDashboardTarget(stats ? makeDashboardPerformersUrl(stats, criteria) : makePerformersUrl(criteria));
   }
 
   function isPerformerDemographicType(type) {
@@ -5570,12 +5636,19 @@
   }
 
   function buildPerformerTagFilterCriteria(includeItems, excludeItems, tagMatchMode = "any") {
-    const includeTags = includeItems.map((item) => item?.customTag).filter(Boolean);
+    const includeSingleTags = includeItems
+      .filter((item) => !item?.customTagOther)
+      .flatMap((item) => getCustomPieItemTags(item));
+    const includeGroupedTags = includeItems
+      .filter((item) => item?.customTagOther)
+      .map(getCustomPieItemTags)
+      .filter((tags) => tags.length);
     const includeExclusions = includeItems.flatMap((item) => item?.customExcludeTags || []);
-    const excludeTags = excludeItems.map((item) => item?.customTag).filter(Boolean);
+    const excludeTags = excludeItems.flatMap((item) => getCustomPieItemTags(item));
     const excludeExclusions = excludeItems.flatMap((item) => item?.customExcludeTags || []);
     return [
-      includeTags.length ? buildTagListCriterion(includeTags, tagMatchMode === "all" ? "INCLUDES_ALL" : "INCLUDES") : null,
+      includeSingleTags.length ? buildTagListCriterion(includeSingleTags, tagMatchMode === "all" ? "INCLUDES_ALL" : "INCLUDES") : null,
+      ...includeGroupedTags.map((tags) => buildTagListCriterion(tags, "INCLUDES")),
       includeExclusions.length ? buildTagListCriterion(includeExclusions, "EXCLUDES") : null,
       excludeTags.length ? buildTagListCriterion(excludeTags, "EXCLUDES") : null,
       excludeExclusions.length ? buildTagListCriterion(excludeExclusions, "INCLUDES") : null,
@@ -5583,12 +5656,19 @@
   }
 
   function buildSceneTagFilterCriteria(includeItems, excludeItems, tagMatchMode = "any") {
-    const includeTags = includeItems.map((item) => item?.customTag).filter(Boolean);
+    const includeSingleTags = includeItems
+      .filter((item) => !item?.customTagOther)
+      .flatMap((item) => getCustomPieItemTags(item));
+    const includeGroupedTags = includeItems
+      .filter((item) => item?.customTagOther)
+      .map(getCustomPieItemTags)
+      .filter((tags) => tags.length);
     const includeExclusions = includeItems.flatMap((item) => item?.customExcludeTags || []);
-    const excludeTags = excludeItems.map((item) => item?.customTag).filter(Boolean);
+    const excludeTags = excludeItems.flatMap((item) => getCustomPieItemTags(item));
     const excludeExclusions = excludeItems.flatMap((item) => item?.customExcludeTags || []);
     return [
-      includeTags.length ? buildTagListCriterion(includeTags, tagMatchMode === "all" ? "INCLUDES_ALL" : "INCLUDES") : null,
+      includeSingleTags.length ? buildTagListCriterion(includeSingleTags, tagMatchMode === "all" ? "INCLUDES_ALL" : "INCLUDES") : null,
+      ...includeGroupedTags.map((tags) => buildTagListCriterion(tags, "INCLUDES")),
       includeExclusions.length ? buildTagListCriterion(includeExclusions, "EXCLUDES") : null,
       excludeTags.length ? buildTagListCriterion(excludeTags, "EXCLUDES") : null,
       excludeExclusions.length ? buildTagListCriterion(excludeExclusions, "INCLUDES") : null,
@@ -5761,33 +5841,37 @@
     if (min != null && max != null && (min === max || item.exact)) {
       return {
         type,
-        value: min,
+        value: buildNumericCriterionValue(type, min),
         modifier: exclude ? "NOT_EQUALS" : "EQUALS",
       };
     }
     if (min != null && max != null) {
       return {
         type,
-        value: min,
-        value2: Math.max(min, max - 1),
+        value: buildNumericCriterionValue(type, min, Math.max(min, max - 1)),
         modifier: exclude ? "NOT_BETWEEN" : "BETWEEN",
       };
     }
     if (min != null) {
       return {
         type,
-        value: exclude ? min : Math.max(0, min - 1),
+        value: buildNumericCriterionValue(type, exclude ? min : Math.max(0, min - 1)),
         modifier: exclude ? "LESS_THAN" : "GREATER_THAN",
       };
     }
     if (max != null) {
       return {
         type,
-        value: exclude ? Math.max(0, max - 1) : max,
+        value: buildNumericCriterionValue(type, exclude ? Math.max(0, max - 1) : max),
         modifier: exclude ? "GREATER_THAN" : "LESS_THAN",
       };
     }
     return null;
+  }
+
+  function buildNumericCriterionValue(type, value, value2 = null) {
+    if (type !== "duration") return value2 == null ? value : { value, value2 };
+    return value2 == null ? { value } : { value, value2 };
   }
 
   function buildResolutionCriterion(item, exclude = false) {
@@ -6095,12 +6179,20 @@
     return (state.dashboardStudios || []).filter((studio) => ids.has(studio.id));
   }
 
+  function ensureDashboardStudioSelection(host) {
+    if (!host) return new Set();
+    if (!(host.__stashDashboardSelectedStudioIds instanceof Set)) {
+      host.__stashDashboardSelectedStudioIds = new Set(
+        Array.from(host.querySelectorAll?.(".stash-dashboard__studio-check:checked") || [])
+          .map((input) => String(input.value || ""))
+          .filter(Boolean)
+      );
+    }
+    return host.__stashDashboardSelectedStudioIds;
+  }
+
   function getDirectSelectedDashboardStudioIds(host) {
-    return new Set(
-      Array.from(host.querySelectorAll(".stash-dashboard__studio-check:checked"))
-        .map((input) => String(input.value || ""))
-        .filter(Boolean)
-    );
+    return new Set(ensureDashboardStudioSelection(host));
   }
 
   function getSelectedDashboardStudioIds(host) {
@@ -6152,8 +6244,11 @@
   }
 
   function setDashboardStudioCheckboxes(host, ids) {
+    const selection = ensureDashboardStudioSelection(host);
+    selection.clear();
+    Array.from(ids || []).map(String).filter(Boolean).forEach((id) => selection.add(id));
     host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => {
-      if (input instanceof HTMLInputElement) input.checked = ids.has(String(input.value || ""));
+      if (input instanceof HTMLInputElement) input.checked = selection.has(String(input.value || ""));
     });
   }
 
@@ -6169,6 +6264,11 @@
 
   function setDashboardDescendantCheckboxes(host, studioId, checked) {
     const descendantIds = getDashboardStudioDescendantIds(studioId);
+    const selection = ensureDashboardStudioSelection(host);
+    descendantIds.forEach((id) => {
+      if (checked) selection.add(id);
+      else selection.delete(id);
+    });
     host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => {
       if (input instanceof HTMLInputElement && descendantIds.has(String(input.value || ""))) {
         input.checked = checked;
@@ -6281,12 +6381,11 @@
       }))
       .filter((group) => group.studios.length)
       .sort(sortDashboardStudioGroups);
-    const groups = [];
+    const groups = [...parentGroups];
     if (noParent.length) {
       groups.push({ key: "__no_parent__", title: "No parent studio", studios: sortDashboardStudios(noParent) });
     }
-    groups.push(...parentGroups);
-    return getDashboardStudioListSort() === "scenes" ? groups.sort(sortDashboardStudioGroups) : groups;
+    return groups;
   }
 
   function sortDashboardStudios(studios, parentId = "") {
@@ -6369,7 +6468,7 @@
     }
     if (!groups.length) {
       list.innerHTML = `<div class="stash-dashboard__status">${getDashboardShowCachedStudiosOnly() ? "No cached studios match." : "No studios match the search."}</div>`;
-      if (loadButton instanceof HTMLButtonElement) loadButton.disabled = true;
+      if (loadButton instanceof HTMLButtonElement) loadButton.disabled = !getDirectSelectedDashboardStudioIds(host).size;
       return;
     }
     const { childrenByParent } = getDashboardStudioMaps(studios);
@@ -6394,13 +6493,39 @@
         </div>
       </section>
     `).join("");
-    if (loadButton instanceof HTMLButtonElement) loadButton.disabled = false;
+    if (loadButton instanceof HTMLButtonElement) loadButton.disabled = !getDirectSelectedDashboardStudioIds(host).size;
   }
 
   function refreshDashboardPicker(host) {
     renderDashboardStudioList(host, state.dashboardStudios || []);
+    renderDashboardSelectedStudioList(host);
     renderDashboardPresetList(host);
     updateDashboardCacheSummary(host);
+  }
+
+  function renderDashboardSelectedStudioList(host) {
+    const list = host.querySelector(".stash-dashboard__selected-list");
+    const count = host.querySelector(".stash-dashboard__selected-count");
+    if (!(list instanceof HTMLElement)) return;
+    const selectedIds = getDirectSelectedDashboardStudioIds(host);
+    const studios = (state.dashboardStudios || [])
+      .filter((studio) => selectedIds.has(studio.id))
+      .sort((left, right) => String(left.name || "").localeCompare(String(right.name || "")));
+    if (count instanceof HTMLElement) count.textContent = formatNumber(studios.length);
+    if (!studios.length) {
+      list.innerHTML = `<div class="stash-dashboard__selected-empty">No staged studios yet.</div>`;
+      return;
+    }
+    list.innerHTML = studios.map((studio) => {
+      const sceneCount = getDashboardStudioSceneCount(studio.id, getDashboardIncludeSubStudios());
+      return `
+        <button type="button" class="stash-dashboard__selected-studio" data-studio-id="${escapeHtml(studio.id)}" title="Remove ${escapeHtml(studio.name)} from selection">
+          <span>${escapeHtml(studio.name)}</span>
+          <small>${sceneCount == null ? "" : `(${escapeHtml(formatNumber(sceneCount))})`}</small>
+          <strong aria-hidden="true">x</strong>
+        </button>
+      `;
+    }).join("");
   }
 
   function renderDashboardPresetList(host) {
@@ -6449,6 +6574,7 @@
     }
     setDashboardStudioCheckboxes(host, currentIds);
     if (getDashboardIncludeSubStudios()) syncDashboardSubStudioCheckboxes(host);
+    refreshDashboardPicker(host);
     renderDashboardPresetList(host);
     const skipped = preset.studioIds.length - presetIds.size;
     const prefix = skipped > 0
@@ -6645,20 +6771,20 @@
           </summary>
           <div class="stash-dashboard__controls-body">
             <div class="stash-dashboard__control-actions">
-              <label class="stash-dashboard__inline-control">
+              <div class="stash-dashboard__inline-control">
                 <span>Group Studios:</span>
-                <select class="form-control stash-dashboard__studio-grouping">
-                  <option value="alphabetical">Alphabetical</option>
-                  <option value="parent">Parent studio</option>
-                </select>
-              </label>
-              <label class="stash-dashboard__inline-control">
+                <span class="stash-dashboard__segmented" data-dashboard-segment="grouping">
+                  <button type="button" data-value="alphabetical">Alphabetical</button>
+                  <button type="button" data-value="parent">Parent studio</button>
+                </span>
+              </div>
+              <div class="stash-dashboard__inline-control">
                 <span>Sort:</span>
-                <select class="form-control stash-dashboard__studio-sort">
-                  <option value="name">Name</option>
-                  <option value="scenes">Most scenes</option>
-                </select>
-              </label>
+                <span class="stash-dashboard__segmented" data-dashboard-segment="sort">
+                  <button type="button" data-value="name">Name</button>
+                  <button type="button" data-value="scenes">Most scenes</button>
+                </span>
+              </div>
               <label class="stash-dashboard__inline-control stash-dashboard__inline-control--check">
                 <input class="stash-dashboard__include-sub-studios" type="checkbox">
                 <span>Include sub-studios</span>
@@ -6677,6 +6803,13 @@
               <div class="stash-dashboard__studio-list">
                 <div class="stash-dashboard__status">Refresh the studio list, then cache one or more studios to build the dashboard.</div>
               </div>
+              <aside class="stash-dashboard__selected-panel">
+                <div class="stash-dashboard__selected-header">
+                  <span>Selected Studios</span>
+                  <small class="stash-dashboard__selected-count">0</small>
+                </div>
+                <div class="stash-dashboard__selected-list"></div>
+              </aside>
               <aside class="stash-dashboard__preset-panel">
                 <div class="stash-dashboard__preset-header">
                   <span>Presets</span>
@@ -6705,16 +6838,9 @@
     const studioSearchInput = host.querySelector(".stash-dashboard__studio-search");
     const dashboardSearchInput = host.querySelector(".stash-dashboard__dashboard-search");
     const importSettingsInput = host.querySelector(".stash-dashboard__import-settings-input");
-    const studioGroupingSelect = host.querySelector(".stash-dashboard__studio-grouping");
-    const studioSortSelect = host.querySelector(".stash-dashboard__studio-sort");
     const includeSubStudiosInput = host.querySelector(".stash-dashboard__include-sub-studios");
     const createPresetButton = host.querySelector(".stash-dashboard__create-preset");
-    if (studioGroupingSelect instanceof HTMLSelectElement) {
-      studioGroupingSelect.value = getDashboardStudioListGrouping();
-    }
-    if (studioSortSelect instanceof HTMLSelectElement) {
-      studioSortSelect.value = getDashboardStudioListSort();
-    }
+    updateDashboardSegmentedControls(host);
     if (includeSubStudiosInput instanceof HTMLInputElement) {
       includeSubStudiosInput.checked = getDashboardIncludeSubStudios();
     }
@@ -6805,8 +6931,7 @@
         if (!settings) throw new Error("The selected file does not look like Stash Dashboard settings.");
         await saveConfig(settings);
         importDashboardPreferences(payload);
-        if (studioGroupingSelect instanceof HTMLSelectElement) studioGroupingSelect.value = getDashboardStudioListGrouping();
-        if (studioSortSelect instanceof HTMLSelectElement) studioSortSelect.value = getDashboardStudioListSort();
+        updateDashboardSegmentedControls(host);
         if (includeSubStudiosInput instanceof HTMLInputElement) includeSubStudiosInput.checked = getDashboardIncludeSubStudios();
         updateDashboardCachedOnlyButton(showCachedOnlyButton);
         applyDashboardPrivacyMode(host);
@@ -6851,12 +6976,20 @@
       await loadStudioList();
     });
     selectAllButton?.addEventListener("click", () => {
-      host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => { input.checked = true; });
+      const selection = ensureDashboardStudioSelection(host);
+      host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => {
+        if (!(input instanceof HTMLInputElement)) return;
+        input.checked = true;
+        if (input.value) selection.add(String(input.value));
+      });
+      if (getDashboardIncludeSubStudios()) syncDashboardSubStudioCheckboxes(host);
+      refreshDashboardPicker(host);
       renderDashboardPresetList(host);
       renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Cached all filter failed", err));
     });
     selectNoneButton?.addEventListener("click", () => {
-      host.querySelectorAll(".stash-dashboard__studio-check").forEach((input) => { input.checked = false; });
+      setDashboardStudioCheckboxes(host, new Set());
+      refreshDashboardPicker(host);
       renderDashboardPresetList(host);
       renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Cached clear filter failed", err));
     });
@@ -6871,6 +7004,7 @@
         refreshDashboardPicker(host);
       }
       setDashboardStudioCheckboxes(host, cachedIds);
+      refreshDashboardPicker(host);
       renderDashboardPresetList(host);
       setStashDashboardStatus(content, `Selected ${cachedIds.size} cached studio${cachedIds.size === 1 ? "" : "s"}.`);
       renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Cached studio selection failed", err));
@@ -6882,17 +7016,6 @@
       refreshDashboardPicker(host);
       setStashDashboardStatus(content, nextValue ? "Showing cached studios only." : "Showing all studios.");
     });
-    studioGroupingSelect?.addEventListener("change", () => {
-      if (!(studioGroupingSelect instanceof HTMLSelectElement)) return;
-      setLocalStorageValue(DASHBOARD_STUDIO_GROUPING_KEY, studioGroupingSelect.value === "parent" ? "parent" : "alphabetical");
-      refreshDashboardPicker(host);
-      renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Studio grouping refresh failed", err));
-    });
-    studioSortSelect?.addEventListener("change", () => {
-      if (!(studioSortSelect instanceof HTMLSelectElement)) return;
-      setLocalStorageValue(DASHBOARD_STUDIO_SORT_KEY, studioSortSelect.value === "scenes" ? "scenes" : "name");
-      refreshDashboardPicker(host);
-    });
     includeSubStudiosInput?.addEventListener("change", () => {
       if (!(includeSubStudiosInput instanceof HTMLInputElement)) return;
       setLocalStorageValue(DASHBOARD_INCLUDE_SUB_STUDIOS_KEY, includeSubStudiosInput.checked ? "true" : "false");
@@ -6902,10 +7025,17 @@
     });
     host.addEventListener("change", (event) => {
       if (!(event.target instanceof HTMLInputElement) || !event.target.classList.contains("stash-dashboard__studio-check")) return;
+      const studioId = String(event.target.value || "");
+      const selection = ensureDashboardStudioSelection(host);
+      if (studioId) {
+        if (event.target.checked) selection.add(studioId);
+        else selection.delete(studioId);
+      }
       if (getDashboardIncludeSubStudios()) {
         if (!event.target.checked) setDashboardDescendantCheckboxes(host, event.target.value, false);
         syncDashboardSubStudioCheckboxes(host);
       }
+      refreshDashboardPicker(host);
       renderDashboardPresetList(host);
       renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Cached filter failed", err));
     });
@@ -6929,6 +7059,33 @@
       setStashDashboardStatus(content, `Preset "${preset.name}" saved with ${preset.studioIds.length} studio${preset.studioIds.length === 1 ? "" : "s"}.`);
     });
     host.addEventListener("click", (event) => {
+      const segmentedButton = event.target instanceof Element ? event.target.closest(".stash-dashboard__segmented button[data-value]") : null;
+      if (segmentedButton) {
+        const group = segmentedButton.closest(".stash-dashboard__segmented");
+        const key = group?.getAttribute("data-dashboard-segment") || "";
+        const value = segmentedButton.getAttribute("data-value") || "";
+        if (key === "grouping") {
+          setLocalStorageValue(DASHBOARD_STUDIO_GROUPING_KEY, value === "parent" ? "parent" : "alphabetical");
+          updateDashboardSegmentedControls(host);
+          refreshDashboardPicker(host);
+          renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Studio grouping refresh failed", err));
+        } else if (key === "sort") {
+          setLocalStorageValue(DASHBOARD_STUDIO_SORT_KEY, value === "scenes" ? "scenes" : "name");
+          updateDashboardSegmentedControls(host);
+          refreshDashboardPicker(host);
+        }
+        return;
+      }
+      const selectedStudioButton = event.target instanceof Element ? event.target.closest(".stash-dashboard__selected-studio") : null;
+      if (selectedStudioButton) {
+        const studioId = selectedStudioButton.getAttribute("data-studio-id") || "";
+        const selection = ensureDashboardStudioSelection(host);
+        if (studioId) selection.delete(studioId);
+        if (getDashboardIncludeSubStudios()) setDashboardDescendantCheckboxes(host, studioId, false);
+        refreshDashboardPicker(host);
+        renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Selected studio remove failed", err));
+        return;
+      }
       const deleteButton = event.target instanceof Element ? event.target.closest(".stash-dashboard__preset-delete") : null;
       if (deleteButton) {
         const row = deleteButton.closest(".stash-dashboard__preset-row");
