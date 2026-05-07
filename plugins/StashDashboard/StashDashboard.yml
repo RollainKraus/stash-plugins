@@ -1,5 +1,5 @@
 name: Stash Dashboard
-description: Adds a dedicated dashboard page for stash-wide performer highlights, top tags, scene release timelines, highlighted scenes, and configurable pie charts
+description: Adds a dedicated dashboard page for Stash-wide performer highlights, top tags, scene release timelines, highlighted scenes, and configurable pie charts
 version: 0.1.0
 ui:
   css:
@@ -11,7 +11,11 @@ settings:
     displayName: Dashboard Section Order
     type: STRING
     description: "Comma-separated dashboard sections in display order. Omit a section to hide it. Valid sections: performerHighlights, performersMostScenes, performersMostOs, performersHighestRating, performersHighestRatedScenes, topTags, releaseTimeline, sceneHighlights, topRatedScenes, recentReleases, scenesMostOs, performerDemographics, sceneCharts. Empty uses the default order."
-  a04ExcludePaths:
+  a02DashboardSectionDefaultState:
+    displayName: Dashboard Section Default State
+    type: STRING
+    description: "Default dashboard section state: expanded, collapsed, or remember. Remember stores collapsed sections in the current browser. Default expanded."
+  a05ExcludePaths:
     displayName: Exclude Paths
     type: STRING
     description: Comma-separated path fragments to exclude from dashboard scene stats. Default empty.
@@ -54,7 +58,7 @@ settings:
   d04RatingGroups:
     displayName: Rating Groups
     type: STRING
-    description: "Comma-separated rating buckets for performer rating pie charts, such as 0-0.9, 1-1.9, 8-10, 7+, <=3.9, or =10. Unrated performers appear as Unknown; rated values outside the buckets appear as Other. Default 0-0.9,1-1.9,2-2.9,3-3.9,4-4.9,5-5.9,6-6.9,7-7.9,8-8.9,9-9.9,10."
+    description: "Comma-separated rating buckets for performer rating pie charts, such as 0.0-0.9, 1.0-1.9, 8.0-10.0, 7.0+, <=3.9, or =10.0. Unrated performers appear as Unknown; rated values outside the buckets appear as Other. Default 0.0-0.9,1.0-1.9,2.0-2.9,3.0-3.9,4.0-4.9,5.0-5.9,6.0-6.9,7.0-7.9,8.0-8.9,9.0-9.9,10.0."
   d05PerformerPieChart1Tag:
     displayName: Performer Pie Chart 1 Tag
     type: STRING
@@ -82,7 +86,7 @@ settings:
   e01SceneRatingGroups:
     displayName: Scene Rating Groups
     type: STRING
-    description: "Comma-separated rating buckets for the scene rating pie chart, such as 0-0.9, 1-1.9, 8-10, 7+, <=3.9, or =10. Unrated scenes appear as Unknown; rated values outside the buckets appear as Other. Default 0-0.9,1-1.9,2-2.9,3-3.9,4-4.9,5-5.9,6-6.9,7-7.9,8-8.9,9-9.9,10."
+    description: "Comma-separated rating buckets for the scene rating pie chart, using your Stash display scale such as 0.0-5.0 or 0.0-10.0. Examples: 0.0-0.9, 1.0-1.9, 8.0-10.0, 7.0+, <=3.9, or =10.0. Unrated scenes appear as Unknown; rated values outside the buckets appear as Other. Default 0.0-0.9,1.0-1.9,2.0-2.9,3.0-3.9,4.0-4.9,5.0-5.9,6.0-6.9,7.0-7.9,8.0-8.9,9.0-9.9,10.0."
   e02SceneDurationGroups:
     displayName: Scene Duration Groups
     type: STRING
@@ -130,7 +134,7 @@ settings:
   z05DashboardSurfaceBackgroundColor:
     displayName: Dashboard Surface Background Color
     type: STRING
-    description: Dashboard-only section/card background color. Default 000000.
+    description: Dashboard-only section/card background color. Default #000000.
   z06DashboardSurfaceOpacity:
     displayName: Dashboard Surface Background Opacity
     type: STRING
