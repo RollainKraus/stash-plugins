@@ -7,9 +7,21 @@
   const NO_STUDIO_ID = "__stash_dashboard_no_studio__";
   const DASHBOARD_CACHE_DB = "StashDashboardCache";
   const DASHBOARD_CACHE_STORE = "studioScopes";
+  const DASHBOARD_CACHE_VERSION = "v3";
   const DASHBOARD_COLLAPSED_SECTIONS_KEY = "StashDashboard.collapsedSections";
   const DASHBOARD_STUDIO_GROUPING_KEY = "StashDashboard.studioListGrouping";
   const DASHBOARD_INCLUDE_SUB_STUDIOS_KEY = "StashDashboard.includeSubStudios";
+  const DASHBOARD_FIND_SELECTOR = [
+    ".studio-dashboard__page-section-header",
+    ".studio-dashboard__card",
+    ".studio-dashboard__tag-card",
+    ".studio-dashboard__scene",
+    ".studio-dashboard__demographic-chart",
+    ".studio-dashboard__timeline-bar",
+    ".studio-dashboard__tag-group",
+    ".studio-dashboard__attention-card",
+    ".studio-dashboard__attention-item",
+  ].join(",");
   const TOP_PERFORMER_MAX = 6;
   const TOP_TAG_MAX = 10;
   const TOP_TAG_CATEGORY_MAX = 12;
@@ -17,17 +29,25 @@
   const DEMOGRAPHIC_AGE_GROUP_MAX = 10;
   const DASHBOARD_ROW_CARD_LIMIT = 8;
   const DASHBOARD_SCENE_ROW_LIMIT = 5;
+  const NEEDS_ATTENTION_ITEM_LIMIT = 8;
   const DEFAULT_STATS_PAGE_SIZE = 150;
+  const DEFAULT_IMAGE_STATS_PAGE_SIZE = 250;
   const GRAPHQL_TIMEOUT_MS = 60000;
   const DEFAULT_DASHBOARD_SECTION_ORDER = [
+    "insights",
     "performerHighlights",
     "topTags",
     "releaseTimeline",
     "sceneHighlights",
     "performerDemographics",
     "sceneCharts",
+    "needsAttention",
   ];
   const DASHBOARD_SECTION_ALIASES = {
+    insight: "insights",
+    insights: "insights",
+    overview: "insights",
+    summary: "insights",
     performers: "performerHighlights",
     performer: "performerHighlights",
     performerhighlights: "performerHighlights",
@@ -54,6 +74,10 @@
     performerdemographics: "performerDemographics",
     scenecharts: "sceneCharts",
     charts: "sceneCharts",
+    needsattention: "needsAttention",
+    needattention: "needsAttention",
+    attention: "needsAttention",
+    cleanup: "needsAttention",
   };
   const DISPLAY_PROFILES = new Set(["compact", "standard", "rich"]);
   const TOP_TAG_LAYOUTS = new Set(["rows", "columns", "flow"]);
@@ -166,6 +190,8 @@
     dashboardStudioUpdatedAt: new Map(),
     dashboardStudioPerformerUpdatedAt: new Map(),
     dashboardTagUpdatedAt: "",
+    imageSizeUnavailable: false,
+    sceneFileSizeUnavailable: false,
     routeToken: 0,
   };
 
@@ -1865,6 +1891,60 @@
     return String(Math.round(value));
   }
 
+  function formatInsightPercent(count, total) {
+    const value = formatPercent(count, total);
+    return value ? `${value}%` : "0%";
+  }
+
+  function formatNumber(value) {
+    const numeric = Number(value || 0);
+    return Number.isFinite(numeric) ? numeric.toLocaleString() : "0";
+  }
+
+  function formatDurationMinutes(minutes) {
+    const totalMinutes = Math.max(0, Math.round(Number(minutes || 0)));
+    if (!totalMinutes) return "0m";
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const mins = totalMinutes % 60;
+    if (days) return `${days}d ${hours}h`;
+    if (hours) return `${hours}h ${mins}m`;
+    return `${mins}m`;
+  }
+
+  function formatDurationLong(minutes) {
+    const totalMinutes = Math.max(0, Math.round(Number(minutes || 0)));
+    if (!totalMinutes) return "0 minutes";
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const mins = totalMinutes % 60;
+    const parts = [];
+    if (days) parts.push(`${days} day${days === 1 ? "" : "s"}`);
+    if (hours) parts.push(`${hours} hour${hours === 1 ? "" : "s"}`);
+    if (mins || !parts.length) parts.push(`${mins} minute${mins === 1 ? "" : "s"}`);
+    return parts.join(" ");
+  }
+
+  function formatBytes(bytes) {
+    const numeric = Math.max(0, Number(bytes || 0));
+    if (!Number.isFinite(numeric) || !numeric) return "0 MiB";
+    const units = ["MiB", "GiB", "TiB"];
+    let value = numeric / 1024 / 1024;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex += 1;
+    }
+    const decimals = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+    return `${value.toFixed(decimals).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1")} ${units[unitIndex]}`;
+  }
+
+  function formatInsightDateRange(timeline) {
+    if (!timeline?.startMonth || !timeline?.endMonth) return "";
+    if (timeline.startMonth === timeline.endMonth) return timeline.startMonth;
+    return `${timeline.startMonth} - ${timeline.endMonth}`;
+  }
+
   function normalizeCountryKey(country) {
     const value = String(country || "").trim();
     if (!value) return "Unknown";
@@ -2084,6 +2164,33 @@
     return Number.isFinite(duration) && duration > 0 ? duration / 60 : 0;
   }
 
+  function getFileSizeBytes(files) {
+    return (files || [])
+      .map((file) => parseFileSizeBytes(file?.size ?? file?.sizeBytes ?? file?.size_bytes ?? file?.fileSize ?? file?.file_size ?? file?.bytes))
+      .filter((size) => Number.isFinite(size) && size > 0)
+      .reduce((total, size) => total + size, 0);
+  }
+
+  function parseFileSizeBytes(value) {
+    if (typeof value === "number") return value;
+    const normalized = String(value ?? "").replace(/,/g, "").trim();
+    if (!normalized) return 0;
+    const match = normalized.match(/^(\d+(?:\.\d+)?)\s*([kmgt]?i?b?)?$/i);
+    if (!match) return Number(normalized) || 0;
+    const numeric = Number(match[1]);
+    if (!Number.isFinite(numeric)) return 0;
+    const unit = String(match[2] || "b").toLowerCase();
+    if (unit.startsWith("t")) return numeric * 1024 * 1024 * 1024 * 1024;
+    if (unit.startsWith("g")) return numeric * 1024 * 1024 * 1024;
+    if (unit.startsWith("m")) return numeric * 1024 * 1024;
+    if (unit.startsWith("k")) return numeric * 1024;
+    return numeric;
+  }
+
+  function getSceneSizeBytes(scene) {
+    return getFileSizeBytes(scene?.files || []);
+  }
+
   function buildResolutionDistribution(scenes) {
     const buckets = getResolutionBuckets();
     const usesNativeBuckets = buckets.every((bucket) => bucket.enumValue);
@@ -2183,7 +2290,7 @@
   }
 
   async function fetchStashStats(options = {}) {
-    const cacheKey = `global:${state.configKey || "default"}`;
+    const cacheKey = `global:${DASHBOARD_CACHE_VERSION}:${state.configKey || "default"}`;
     if (state.statsCache.has(cacheKey)) return state.statsCache.get(cacheKey);
     const statsPromise = fetchStashStatsByStudio(options.onProgress)
       .then((stats) => {
@@ -2249,13 +2356,15 @@
       title
       studio { id name }
       date
+      organized
       updated_at
       rating100
       o_counter
+      stash_ids { endpoint stash_id }
       performers { id name image_path rating100 country birthdate updated_at tags { id name image_path updated_at } }
       tags { id name image_path updated_at }
       paths { screenshot preview }
-      ${includeFiles ? "files { path width height duration }" : ""}
+      ${includeFiles ? `files { path width height duration ${state.sceneFileSizeUnavailable ? "" : "size"} }` : ""}
     `;
   }
 
@@ -2279,11 +2388,48 @@
         galleryFilter: studioFilter(scopedStudioId),
       }
     );
+    const imageCount = Number(data?.findImages?.count || 0);
+    const imageSizeBytes = await fetchImageSizeBytes(scopedStudioId, imageCount);
     return {
       scenes: Number(data?.findScenes?.count || 0),
-      images: Number(data?.findImages?.count || 0),
+      images: imageCount,
       galleries: Number(data?.findGalleries?.count || 0),
+      imageSizeBytes,
     };
+  }
+
+  async function fetchImageSizeBytes(studioId, imageCount) {
+    if (!imageCount || state.imageSizeUnavailable) return 0;
+    let total = 0;
+    for (let offset = 0; offset < imageCount; offset += DEFAULT_IMAGE_STATS_PAGE_SIZE) {
+      const page = Math.floor(offset / DEFAULT_IMAGE_STATS_PAGE_SIZE) + 1;
+      try {
+        const data = await gql(
+          `
+            query StashDashboardImageSizes($imageFilter: ImageFilterType, $page: Int!, $perPage: Int!) {
+              findImages(image_filter: $imageFilter, filter: { page: $page, per_page: $perPage }) {
+                images {
+                  files { size }
+                }
+              }
+            }
+          `,
+          {
+            imageFilter: studioFilter(studioId),
+            page,
+            perPage: DEFAULT_IMAGE_STATS_PAGE_SIZE,
+          }
+        );
+        const images = data?.findImages?.images || [];
+        total += images.reduce((sum, image) => sum + getFileSizeBytes(image?.files || []), 0);
+        if (!images.length) break;
+      } catch (err) {
+        state.imageSizeUnavailable = true;
+        console.warn("[StashDashboard] Image size stats unavailable", err);
+        return 0;
+      }
+    }
+    return total;
   }
 
   async function fetchSceneStatsPage(studioId, page, perPage, includeFiles = true) {
@@ -2315,6 +2461,12 @@
       const scenes = await fetchSceneStatsPage(studioId, page, perPage, true);
       return { scenes: scenes.slice(0, maxItems), skipped: 0 };
     } catch (err) {
+      if (!state.sceneFileSizeUnavailable && /\bsize\b/i.test(String(err?.message || err))) {
+        state.sceneFileSizeUnavailable = true;
+        console.warn("[StashDashboard] Scene file size stats unavailable; retrying scene files without size", err);
+        const scenes = await fetchSceneStatsPage(studioId, page, perPage, true);
+        return { scenes: scenes.slice(0, maxItems), skipped: 0 };
+      }
       console.warn("[StashDashboard] Scene page failed, trying single-scene fallback", { page, perPage, err });
       if (onProgress) onProgress(`A scene page failed; isolating problem scenes on page ${page}...`);
     }
@@ -2511,6 +2663,30 @@
         return String(left?.title || "").localeCompare(String(right?.title || ""));
       })[0];
     const sceneRatingBuckets = getSceneRatingBuckets();
+    const totalDurationMinutes = scenes.reduce((total, scene) => total + getSceneDurationMinutes(scene), 0);
+    const totalSceneSizeBytes = scenes.reduce((total, scene) => total + getSceneSizeBytes(scene), 0);
+    const durationEntries = scenes
+      .map((scene) => ({ scene, value: getSceneDurationMinutes(scene) }))
+      .filter((entry) => Number.isFinite(entry.value) && entry.value > 0);
+    const sceneSizeEntries = scenes
+      .map((scene) => ({ scene, value: getSceneSizeBytes(scene) }))
+      .filter((entry) => Number.isFinite(entry.value) && entry.value > 0);
+    const longestDurationScene = durationEntries
+      .slice()
+      .sort((left, right) => right.value - left.value || String(left.scene?.title || "").localeCompare(String(right.scene?.title || "")))[0];
+    const shortestDurationScene = durationEntries
+      .slice()
+      .sort((left, right) => left.value - right.value || String(left.scene?.title || "").localeCompare(String(right.scene?.title || "")))[0];
+    const largestSceneSize = sceneSizeEntries
+      .slice()
+      .sort((left, right) => right.value - left.value || String(left.scene?.title || "").localeCompare(String(right.scene?.title || "")))[0];
+    const smallestSceneSize = sceneSizeEntries
+      .slice()
+      .sort((left, right) => left.value - right.value || String(left.scene?.title || "").localeCompare(String(right.scene?.title || "")))[0];
+    const ratedScenes = scenes.filter((scene) => Number(scene?.rating100 || 0) > 0);
+    const averageRating100 = ratedScenes.length
+      ? ratedScenes.reduce((total, scene) => total + Number(scene?.rating100 || 0), 0) / ratedScenes.length
+      : 0;
     const sceneRatingDistribution = buildRatingDistribution(scenes, {
       getRating: (scene) => Number(scene?.rating100 || 0),
       getEntity: normalizeSceneSummary,
@@ -2520,6 +2696,7 @@
     });
     const sceneResolutionDistribution = buildResolutionDistribution(scenes);
     const sceneDurationDistribution = buildDurationDistribution(scenes);
+    const needsAttention = buildNeedsAttention(scenes, performers);
 
     const stats = {
       studio,
@@ -2529,6 +2706,13 @@
         galleries: Number(counts?.galleries || 0),
         performers: performerCounts.size,
         oCount,
+        oSceneCount: scenes.filter((scene) => Number(scene?.o_counter || 0) > 0).length,
+        totalDurationMinutes,
+        totalSceneSizeBytes,
+        imageSizeBytes: Number(counts?.imageSizeBytes || 0),
+        averageRating100,
+        ratedScenes: ratedScenes.length,
+        unratedScenes: Math.max(0, scenes.length - ratedScenes.length),
       },
       loadSummary,
       topPerformers,
@@ -2541,8 +2725,17 @@
       sceneResolutions: sceneResolutionDistribution,
       sceneDurations: sceneDurationDistribution,
       sceneCharts: await buildCustomScenePieDistributions(scenes),
+      needsAttention,
       timeline: buildReleaseTimeline(scenes),
       topScene: normalizeSceneSummary(topScene),
+      longestDurationScene: normalizeSceneSummary(longestDurationScene?.scene),
+      longestDurationMinutes: Number(longestDurationScene?.value || 0),
+      shortestDurationScene: normalizeSceneSummary(shortestDurationScene?.scene),
+      shortestDurationMinutes: Number(shortestDurationScene?.value || 0),
+      largestSceneSize: normalizeSceneSummary(largestSceneSize?.scene),
+      largestSceneSizeBytes: Number(largestSceneSize?.value || 0),
+      smallestSceneSize: normalizeSceneSummary(smallestSceneSize?.scene),
+      smallestSceneSizeBytes: Number(smallestSceneSize?.value || 0),
       topRatedScenes: normalizeSceneSummaries(
         scenes
           .filter((scene) => Number(scene?.rating100 || 0) > 0)
@@ -2574,6 +2767,84 @@
     return stats;
   }
 
+  function buildNeedsAttention(scenes, performers) {
+    const sceneList = Array.isArray(scenes) ? scenes : [];
+    const performerList = Array.isArray(performers) ? performers : [];
+    const sceneBuckets = [
+      {
+        key: "notOrganized",
+        label: "Not organized",
+        items: sceneList.filter((scene) => scene?.organized !== true).map(normalizeSceneSummary).filter(Boolean),
+      },
+      {
+        key: "missingStashIds",
+        label: "Missing Stash IDs",
+        items: sceneList.filter((scene) => !hasSceneStashIds(scene)).map(normalizeSceneSummary).filter(Boolean),
+      },
+      {
+        key: "missingDates",
+        label: "Missing dates",
+        items: sceneList.filter((scene) => !String(scene?.date || "").trim()).map(normalizeSceneSummary).filter(Boolean),
+      },
+      {
+        key: "unrated",
+        label: "Unrated",
+        items: sceneList.filter((scene) => Number(scene?.rating100 || 0) <= 0).map(normalizeSceneSummary).filter(Boolean),
+      },
+      {
+        key: "noPerformers",
+        label: "No performers",
+        items: sceneList.filter((scene) => !(scene?.performers || []).length).map(normalizeSceneSummary).filter(Boolean),
+      },
+    ];
+    const performerBuckets = [
+      {
+        key: "missingCountry",
+        label: "Missing nationality",
+        items: performerList.filter((performer) => !String(performer?.country || "").trim()).map(normalizeAttentionPerformer).filter(Boolean),
+      },
+      {
+        key: "missingBirthdate",
+        label: "Missing birthdate",
+        items: performerList.filter((performer) => !String(performer?.birthdate || "").trim()).map(normalizeAttentionPerformer).filter(Boolean),
+      },
+      {
+        key: "unrated",
+        label: "Unrated",
+        items: performerList.filter((performer) => Number(performer?.performerRating || 0) <= 0).map(normalizeAttentionPerformer).filter(Boolean),
+      },
+      {
+        key: "missingImage",
+        label: "Missing image",
+        items: performerList.filter((performer) => !String(performer?.imagePath || "").trim()).map(normalizeAttentionPerformer).filter(Boolean),
+      },
+      {
+        key: "noTags",
+        label: "No tags",
+        items: performerList.filter((performer) => !(performer?.tags || []).length).map(normalizeAttentionPerformer).filter(Boolean),
+      },
+    ];
+    return {
+      scenes: sceneBuckets.filter((bucket) => bucket.items.length),
+      performers: performerBuckets.filter((bucket) => bucket.items.length),
+    };
+  }
+
+  function hasSceneStashIds(scene) {
+    const stashIds = scene?.stash_ids || scene?.stashIds || [];
+    return Array.isArray(stashIds) && stashIds.some((item) => String(item?.stash_id || item?.stashId || "").trim());
+  }
+
+  function normalizeAttentionPerformer(performer) {
+    if (!performer?.id) return null;
+    return {
+      id: String(performer.id || ""),
+      name: String(performer.name || "Unknown performer"),
+      count: Number(performer.count || 0),
+      performerRating: Number(performer.performerRating || 0),
+    };
+  }
+
   async function fetchStudioStatsUncached(studio, onProgress) {
     const scope = await fetchDashboardSceneScope(studio, onProgress);
     return buildStatsFromScenes(studio, scope.scenes, scope.counts, {
@@ -2601,7 +2872,7 @@
     const studios = allStudios.filter(studioMatchesDashboardFilters);
     const globalSceneLoadLimit = getDashboardSceneLoadLimit();
     const scenes = [];
-    const counts = { scenes: 0, images: 0, galleries: 0 };
+    const counts = { scenes: 0, images: 0, galleries: 0, imageSizeBytes: 0 };
     const failedStudios = [];
     let skippedScenes = 0;
     let targetScenes = 0;
@@ -2630,6 +2901,7 @@
         counts.scenes += scope.scenes.length;
         counts.images += Number(scope.counts?.images || 0);
         counts.galleries += Number(scope.counts?.galleries || 0);
+        counts.imageSizeBytes += Number(scope.counts?.imageSizeBytes || 0);
         targetScenes += scope.targetSceneCount;
         skippedScenes += scope.skippedScenes;
         limited = limited || scope.limited;
@@ -2650,11 +2922,16 @@
       skippedScenes,
       failedStudios,
       limited,
+      selectedStudios: studios.map((studio) => ({
+        id: studio.id,
+        name: studio.name,
+        synthetic: Boolean(studio.synthetic),
+      })),
     });
   }
 
   function getDashboardStudioScopeCacheKey(studio) {
-    return `scope:${studio.id}:${state.configKey || "default"}`;
+    return `scope:${DASHBOARD_CACHE_VERSION}:${studio.id}:${state.configKey || "default"}`;
   }
 
   function rememberDashboardScope(studio, scope) {
@@ -2702,7 +2979,7 @@
   async function fetchStashStatsForStudios(studios, onProgress) {
     const dashboard = { id: "", name: "All Stash", imagePath: "" };
     const scenes = [];
-    const counts = { scenes: 0, images: 0, galleries: 0 };
+    const counts = { scenes: 0, images: 0, galleries: 0, imageSizeBytes: 0 };
     const failedStudios = [];
     let skippedScenes = 0;
     let targetScenes = 0;
@@ -2721,6 +2998,7 @@
         counts.scenes += scope.scenes.length;
         counts.images += Number(scope.counts?.images || 0);
         counts.galleries += Number(scope.counts?.galleries || 0);
+        counts.imageSizeBytes += Number(scope.counts?.imageSizeBytes || 0);
         targetScenes += scope.targetSceneCount;
         skippedScenes += scope.skippedScenes;
         limited = limited || scope.limited;
@@ -2738,13 +3016,18 @@
       skippedScenes,
       failedStudios,
       limited,
+      selectedStudios: studios.map((studio) => ({
+        id: studio.id,
+        name: studio.name,
+        synthetic: Boolean(studio.synthetic),
+      })),
     });
   }
 
   async function buildStashStatsFromCachedStudios(studios) {
     const dashboard = { id: "", name: "All Stash", imagePath: "" };
     const scenes = [];
-    const counts = { scenes: 0, images: 0, galleries: 0 };
+    const counts = { scenes: 0, images: 0, galleries: 0, imageSizeBytes: 0 };
     let skippedScenes = 0;
     let targetScenes = 0;
     let limited = false;
@@ -2760,6 +3043,7 @@
       counts.scenes += Number(scope.scenes?.length || 0);
       counts.images += Number(scope.counts?.images || 0);
       counts.galleries += Number(scope.counts?.galleries || 0);
+      counts.imageSizeBytes += Number(scope.counts?.imageSizeBytes || 0);
       targetScenes += Number(scope.targetSceneCount || 0);
       skippedScenes += Number(scope.skippedScenes || 0);
       limited = limited || Boolean(scope.limited);
@@ -2770,6 +3054,11 @@
       targetScenes,
       loadedScenes: scenes.length,
       loadedStudios: loadedStudios.length,
+      selectedStudios: loadedStudios.map((studio) => ({
+        id: studio.id,
+        name: studio.name,
+        synthetic: Boolean(studio.synthetic),
+      })),
       skippedScenes,
       failedStudios: state.dashboardFailedStudioNames || [],
       limited,
@@ -3016,8 +3305,9 @@
 
   function renderStudioPageDashboard(container, stats) {
     if (!(container instanceof HTMLElement) || !stats) return;
+    const isStashDashboardPage = Boolean(container.closest(".stash-dashboard__shell"));
     container.innerHTML = "";
-    container.className = "tab-pane fade studio-dashboard__page-dashboard active show";
+    container.className = `${isStashDashboardPage ? "stash-dashboard__content " : ""}tab-pane fade studio-dashboard__page-dashboard active show`;
     container.dataset.studioDashboardStudioId = stats.studio.id;
     container.style.setProperty("--studio-dashboard-header-font-size", `${getDashboardHeaderFontSize()}px`);
     container.style.setProperty("--studio-dashboard-subheader-font-size", `${getDashboardSubheaderFontSize()}px`);
@@ -3031,6 +3321,9 @@
     container.appendChild(body);
 
     const renderers = {
+      insights: () => {
+        renderDashboardInsights(body, stats);
+      },
       performerHighlights: () => {
         const performerHighlights = Array.isArray(stats.performerHighlights) ? stats.performerHighlights : [];
         if (!performerHighlights.length) return;
@@ -3061,8 +3354,137 @@
       sceneCharts: () => {
         renderSceneCharts(body, stats);
       },
+      needsAttention: () => {
+        renderNeedsAttention(body, stats);
+      },
     };
     getDashboardSectionOrder().forEach((key) => renderers[key]?.());
+  }
+
+  function renderDashboardInsights(container, stats) {
+    const items = buildDashboardInsights(stats);
+    if (!items.length) return;
+    const section = createPageSection(container, "INSIGHTS");
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__insights";
+    items.forEach((item) => {
+      const tile = document.createElement("div");
+      tile.className = "studio-dashboard__insight";
+      tile.innerHTML = `
+        <div class="studio-dashboard__insight-label">${escapeHtml(item.label)}</div>
+        <div class="studio-dashboard__insight-value">${item.valueHtml || escapeHtml(item.value)}</div>
+        ${item.detailHtml || item.detail ? `<div class="studio-dashboard__insight-detail">${item.detailHtml || escapeHtml(item.detail)}</div>` : ""}
+      `;
+      grid.appendChild(tile);
+    });
+    section.appendChild(grid);
+  }
+
+  function buildDashboardInsights(stats) {
+    const counts = stats?.counts || {};
+    const topResolution = stats?.sceneResolutions?.items?.[0];
+    const topPerformer = stats?.topPerformers?.[0];
+    const topPerformerDetail = topPerformer
+      ? `${topPerformer.name}: ${formatNumber(topPerformer.count)}, ${formatInsightPercent(topPerformer.count, counts.scenes)}`
+      : "";
+    const topOCount = Number(stats?.topOCountScene?.oCounter || 0);
+    const oCountDetailHtml = [
+      formatInsightLink(
+        makeDashboardScenesUrl(stats, [buildOCountCriterion()]),
+        `${formatNumber(counts.oSceneCount)} scenes, ${formatInsightPercent(counts.oSceneCount, counts.scenes)}`
+      ),
+      topOCount ? `top scene: ${formatInsightLink(makeSceneUrl(stats.topOCountScene), formatNumber(topOCount))}` : "",
+    ].filter(Boolean).join("; ");
+    const averageRating = Number(counts.averageRating100 || 0);
+    const ratedDetailHtml = [
+      formatInsightLink(makeDashboardScenesUrl(stats, [buildRatingNotNullCriterion()]), `${formatNumber(counts.ratedScenes)} rated`),
+      formatInsightLink(makeDashboardScenesUrl(stats, [buildRatingNullCriterion()]), `${formatNumber(counts.unratedScenes)} unrated`),
+    ].join(", ");
+    const items = [
+      { label: "Scenes", value: formatNumber(counts.scenes), detail: `${formatDurationMinutes(counts.totalDurationMinutes)}; ${formatBytes(counts.totalSceneSizeBytes)}` },
+      { label: "Images", value: formatNumber(counts.images), detail: `${formatNumber(counts.galleries)} galleries; ${formatBytes(counts.imageSizeBytes)}` },
+      { label: "Performers", value: formatNumber(counts.performers), detail: topPerformerDetail },
+      { label: "O Count", value: formatNumber(counts.oCount), detailHtml: oCountDetailHtml },
+      { label: "Average scene rating", value: averageRating ? formatRating(averageRating) : "N/A", detailHtml: ratedDetailHtml },
+      stats?.largestSceneSize ? {
+        label: "Largest scene size",
+        valueHtml: formatInsightLink(makeSceneUrl(stats.largestSceneSize), formatBytes(stats.largestSceneSizeBytes)),
+        detailHtml: `Smallest: ${formatInsightLink(makeSceneUrl(stats.smallestSceneSize), formatBytes(stats.smallestSceneSizeBytes))}`,
+      } : null,
+      stats?.longestDurationScene ? {
+        label: "Longest Scene",
+        valueHtml: formatInsightLink(makeSceneUrl(stats.longestDurationScene), formatDurationLong(stats.longestDurationMinutes)),
+        detailHtml: `Shortest: ${formatInsightLink(makeSceneUrl(stats.shortestDurationScene), formatDurationLong(stats.shortestDurationMinutes))}`,
+      } : null,
+      topResolution ? { label: "Top resolution", value: topResolution.label, detail: `${formatNumber(topResolution.count)} scene${Number(topResolution.count) === 1 ? "" : "s"}${topResolution.percent ? `, ${topResolution.percent}%` : ""}` } : null,
+      stats?.timeline?.startMonth ? { label: "Release span", value: formatInsightDateRange(stats.timeline), detail: `${formatNumber(stats.timeline.months?.length || 0)} covered month${Number(stats.timeline.months?.length || 0) === 1 ? "" : "s"}` } : null,
+    ];
+    return items.filter(Boolean);
+  }
+
+  function renderNeedsAttention(container, stats) {
+    const sceneBuckets = Array.isArray(stats?.needsAttention?.scenes) ? stats.needsAttention.scenes : [];
+    const performerBuckets = Array.isArray(stats?.needsAttention?.performers) ? stats.needsAttention.performers : [];
+    if (!sceneBuckets.length && !performerBuckets.length) return;
+
+    const section = createPageSection(container, "NEEDS ATTENTION");
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__attention-grid";
+    sceneBuckets.forEach((bucket) => renderAttentionBucket(grid, "Scenes", bucket, makeSceneUrl));
+    performerBuckets.forEach((bucket) => renderAttentionBucket(grid, "Performers", bucket, makePerformerUrl));
+    section.appendChild(grid);
+  }
+
+  function renderAttentionBucket(container, entityLabel, bucket, hrefBuilder) {
+    const items = Array.isArray(bucket?.items) ? bucket.items.filter(Boolean) : [];
+    if (!items.length) return;
+    const card = document.createElement("div");
+    card.className = "studio-dashboard__attention-card";
+    const visible = items.slice(0, NEEDS_ATTENTION_ITEM_LIMIT);
+    const hiddenCount = Math.max(0, items.length - visible.length);
+    card.innerHTML = `
+      <div class="studio-dashboard__attention-heading">
+        <span>${escapeHtml(bucket.label)}</span>
+        <strong>${escapeHtml(formatNumber(items.length))}</strong>
+      </div>
+      <div class="studio-dashboard__attention-type">${escapeHtml(entityLabel)}</div>
+      <div class="studio-dashboard__attention-list">
+        ${visible.map((item) => {
+          const href = typeof hrefBuilder === "function" ? hrefBuilder(item) : "";
+          const meta = getAttentionItemMeta(item);
+          return `
+            <a class="studio-dashboard__attention-item" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">
+              <span>${escapeHtml(item.title || item.name || "Untitled")}</span>
+              ${meta ? `<small>${escapeHtml(meta)}</small>` : ""}
+            </a>
+          `;
+        }).join("")}
+        ${hiddenCount ? `<div class="studio-dashboard__attention-more">+${escapeHtml(formatNumber(hiddenCount))} more</div>` : ""}
+      </div>
+    `;
+    container.appendChild(card);
+  }
+
+  function getAttentionItemMeta(item) {
+    if (item?.date) return formatDate(item.date);
+    if (Number(item?.count || 0) > 0) return `${formatNumber(item.count)} scene${Number(item.count) === 1 ? "" : "s"}`;
+    if (Number(item?.rating100 || 0) > 0) return formatRating(item.rating100);
+    if (Number(item?.performerRating || 0) > 0) return formatRating(item.performerRating);
+    return "";
+  }
+
+  function formatInsightLink(href, label) {
+    const text = String(label ?? "").trim();
+    if (!href || !text) return escapeHtml(text);
+    return `<a class="studio-dashboard__meta-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`;
+  }
+
+  function makeSceneUrl(scene) {
+    return scene?.id ? `/scenes/${encodeURIComponent(scene.id)}` : "";
+  }
+
+  function makePerformerUrl(performer) {
+    return performer?.id ? `/performers/${encodeURIComponent(performer.id)}` : "";
   }
 
   function createPageSection(container, titleText) {
@@ -4577,6 +4999,56 @@
     };
   }
 
+  function buildOCountCriterion() {
+    return {
+      type: "o_counter",
+      value: 0,
+      modifier: "GREATER_THAN",
+    };
+  }
+
+  function buildRatingNullCriterion() {
+    return {
+      type: "rating100",
+      modifier: "IS_NULL",
+    };
+  }
+
+  function buildRatingNotNullCriterion() {
+    return {
+      type: "rating100",
+      modifier: "NOT_NULL",
+    };
+  }
+
+  function buildStudioSelectionCriterion(studios) {
+    const items = (studios || [])
+      .filter((studio) => studio?.id && studio.id !== NO_STUDIO_ID)
+      .map((studio) => ({ id: String(studio.id), label: String(studio.name || "Studio") }));
+    if (!items.length) return null;
+    return {
+      type: "studios",
+      value: {
+        items,
+        excluded: [],
+        depth: -1,
+      },
+      modifier: "INCLUDES",
+    };
+  }
+
+  function makeDashboardScenesUrl(stats, criteria = []) {
+    const studio = stats?.studio || {};
+    if (studio.id) return makeStudioScenesUrl(studio, criteria);
+    const selectedStudios = stats?.loadSummary?.selectedStudios || [];
+    const allStudios = state.dashboardStudios || [];
+    const shouldScopeToSelection = selectedStudios.length > 0 && selectedStudios.length < allStudios.length;
+    return makeStudioScenesUrl(null, [
+      ...(shouldScopeToSelection ? [buildStudioSelectionCriterion(selectedStudios)] : []),
+      ...criteria,
+    ]);
+  }
+
   function makeStudioScenesUrl(studio, criteria = []) {
     const params = new URLSearchParams();
     criteria.filter(Boolean).forEach((criterion) => params.append("c", JSON.stringify(criterion)));
@@ -5229,6 +5701,71 @@
     return selected.length ? selected : getCachedDashboardStudios();
   }
 
+  function getDashboardSearchQuery(host) {
+    const input = host?.querySelector?.(".stash-dashboard__dashboard-search");
+    return input instanceof HTMLInputElement ? input.value.trim().toLowerCase() : "";
+  }
+
+  function applyDashboardSearch(host) {
+    const content = host?.querySelector?.(".stash-dashboard__content, .studio-dashboard__page-dashboard");
+    if (!(content instanceof HTMLElement)) return;
+    const query = getDashboardSearchQuery(host);
+    const dashboard = content.matches(".studio-dashboard__page-dashboard")
+      ? content
+      : content.querySelector(".studio-dashboard__page-dashboard");
+    if (!(dashboard instanceof HTMLElement)) return;
+    const matches = query
+      ? Array.from(dashboard.querySelectorAll(DASHBOARD_FIND_SELECTOR))
+        .filter((item) => item instanceof HTMLElement && item.textContent.toLowerCase().includes(query))
+      : [];
+    host.stashDashboardFindMatches = matches;
+    const activeIndex = matches.length ? Math.min(Math.max(Number(host.stashDashboardFindIndex || 0), 0), matches.length - 1) : -1;
+    host.stashDashboardFindIndex = activeIndex;
+    updateDashboardFindUi(host);
+    setDashboardFindActive(host, activeIndex, { scroll: Boolean(query && matches.length) });
+  }
+
+  function updateDashboardFindUi(host) {
+    const matches = Array.isArray(host?.stashDashboardFindMatches) ? host.stashDashboardFindMatches : [];
+    const index = Number(host?.stashDashboardFindIndex ?? -1);
+    const count = host?.querySelector?.(".stash-dashboard__dashboard-search-count");
+    if (count instanceof HTMLElement) {
+      count.textContent = matches.length ? `${index + 1} / ${matches.length}` : "0 results";
+    }
+    host?.querySelector?.(".stash-dashboard__header")?.classList.toggle("is-searching", Boolean(getDashboardSearchQuery(host)));
+    host?.querySelectorAll?.(".stash-dashboard__dashboard-search-nav").forEach((button) => {
+      if (button instanceof HTMLButtonElement) button.disabled = !matches.length;
+    });
+  }
+
+  function setDashboardFindActive(host, index, options = {}) {
+    host?.querySelectorAll?.(".stash-dashboard__find-active").forEach((item) => item.classList.remove("stash-dashboard__find-active"));
+    const matches = Array.isArray(host?.stashDashboardFindMatches) ? host.stashDashboardFindMatches : [];
+    const active = matches[index];
+    if (!(active instanceof HTMLElement)) return;
+    active.classList.add("stash-dashboard__find-active");
+    const section = active.closest(".studio-dashboard__page-section.is-collapsed");
+    if (section instanceof HTMLElement) {
+      section.classList.remove("is-collapsed");
+      section.querySelector(".studio-dashboard__page-section-header")?.setAttribute("aria-expanded", "true");
+      const toggle = section.querySelector(".studio-dashboard__page-section-toggle");
+      if (toggle instanceof HTMLElement) toggle.textContent = "Collapse";
+    }
+    if (options.scroll) {
+      active.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    }
+  }
+
+  function stepDashboardFind(host, direction) {
+    const matches = Array.isArray(host?.stashDashboardFindMatches) ? host.stashDashboardFindMatches : [];
+    if (!matches.length) return;
+    const current = Number(host.stashDashboardFindIndex ?? 0);
+    const next = (current + direction + matches.length) % matches.length;
+    host.stashDashboardFindIndex = next;
+    updateDashboardFindUi(host);
+    setDashboardFindActive(host, next, { scroll: true });
+  }
+
   async function renderCachedDashboardView(host, content, messagePrefix = "") {
     const studios = getDashboardFilterStudios(host);
     if (!studios.length) {
@@ -5244,6 +5781,7 @@
     const selectedCount = getSelectedDashboardStudios(host).filter((studio) => state.dashboardLoadedStudioIds.has(studio.id)).length;
     summary.textContent = `${messagePrefix}${selectedCount ? `Filtered to ${selectedCount}` : "Showing all"} cached studio${studios.length === 1 ? "" : "s"} (${studios.length} loaded).`;
     content.prepend(summary);
+    applyDashboardSearch(host);
   }
 
   function loadStashDashboardRoute(forceRefresh = false) {
@@ -5259,8 +5797,14 @@
     host.innerHTML = `
       <section class="stash-dashboard__shell">
         <header class="stash-dashboard__header">
-          <div>
+          <div class="stash-dashboard__header-main">
             <h2>Stash Dashboard</h2>
+            <div class="stash-dashboard__dashboard-search-wrap">
+              <input class="form-control stash-dashboard__dashboard-search" type="search" placeholder="Find in dashboard..." aria-label="Find in dashboard">
+              <span class="stash-dashboard__dashboard-search-count">0 results</span>
+              <button type="button" class="btn btn-secondary stash-dashboard__dashboard-search-nav" data-dashboard-find-step="-1" disabled aria-label="Previous result">‹</button>
+              <button type="button" class="btn btn-secondary stash-dashboard__dashboard-search-nav" data-dashboard-find-step="1" disabled aria-label="Next result">›</button>
+            </div>
           </div>
           <div class="stash-dashboard__header-actions">
             <button type="button" class="btn btn-primary stash-dashboard__check-changes">Check changes</button>
@@ -5314,6 +5858,7 @@
     const loadSelectedButton = host.querySelector(".stash-dashboard__load-selected");
     const checkChangesButton = host.querySelector(".stash-dashboard__check-changes");
     const studioSearchInput = host.querySelector(".stash-dashboard__studio-search");
+    const dashboardSearchInput = host.querySelector(".stash-dashboard__dashboard-search");
     const importSettingsInput = host.querySelector(".stash-dashboard__import-settings-input");
     const studioGroupingSelect = host.querySelector(".stash-dashboard__studio-grouping");
     const includeSubStudiosInput = host.querySelector(".stash-dashboard__include-sub-studios");
@@ -5471,6 +6016,19 @@
     });
     studioSearchInput?.addEventListener("input", () => {
       renderDashboardStudioList(host, state.dashboardStudios || []);
+    });
+    dashboardSearchInput?.addEventListener("input", () => {
+      applyDashboardSearch(host);
+    });
+    dashboardSearchInput?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      stepDashboardFind(host, event.shiftKey ? -1 : 1);
+    });
+    host.querySelectorAll("[data-dashboard-find-step]").forEach((button) => {
+      button.addEventListener("click", () => {
+        stepDashboardFind(host, Number(button.dataset.dashboardFindStep || 1));
+      });
     });
     loadSelectedButton?.addEventListener("click", async () => {
       await loadStudiosToCache(getSelectedDashboardStudios(host));
