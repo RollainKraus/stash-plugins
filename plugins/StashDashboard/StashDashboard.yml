@@ -10,11 +10,11 @@ settings:
   a01DashboardSectionOrder:
     displayName: Dashboard Section Order
     type: STRING
-    description: "Comma-separated dashboard sections in display order. Omit a section to hide it. Valid sections: insights, studioComparison, performerHighlights, performersMostScenes, performersMostOs, performersHighestRating, performersHighestRatedScenes, topTags, releaseTimeline, sceneHighlights, topRatedScenes, recentReleases, scenesMostOs, performerDemographics, sceneCharts, needsAttention. Empty uses the default order."
+    description: "Comma-separated dashboard sections in display order. Omit a section to hide it. Valid sections and default order: insights, studioComparison, performerHighlights, performersMostScenes, performersMostOs, performersHighestRating, performersHighestRatedScenes, topTags, releaseTimeline, sceneHighlights, topRatedScenes, recentReleases, scenesMostOs, performerDemographics, sceneCharts, needsAttention."
   a02DashboardSectionDefaultState:
     displayName: Dashboard Section Default State
     type: STRING
-    description: "Default dashboard section state: expanded, collapsed, or remember. Remember stores collapsed sections in the current browser. Default expanded."
+    description: "Default dashboard section state: expanded, collapsed, or remember. Remember stores collapsed sections in the current browser. Default remember."
   a05ExcludePaths:
     displayName: Exclude Paths
     type: STRING
@@ -50,7 +50,7 @@ settings:
   c07IncludeSubtagsInPieCharts:
     displayName: Include Subtags In Pie Charts
     type: BOOLEAN
-    description: Include descendant tags when counting custom performer and scene pie chart slices. Default false.
+    description: Include descendant tags when counting custom performer and scene pie chart slices. Default true.
   d02DemographicTooltipImageHeight:
     displayName: Demographic Tooltip Image Height
     type: STRING
@@ -131,15 +131,19 @@ settings:
     displayName: Dashboard Content Font Size
     type: STRING
     description: Dashboard-only counts, metadata, secondary text, and timeline count font size in pixels. Default 15.
-  z04DashboardTagWidth:
-    displayName: Dashboard Tag Width
+  z04DashboardMaxTagCardWidth:
+    displayName: Dashboard Max Tag Card Width
     type: STRING
-    description: Dashboard-only fixed tag card width in pixels. Values below 100 are treated as 100. Default 200.
+    description: Dashboard-only maximum top tag card width in pixels. Cards still auto-fit below this cap. Values below 120 are treated as 120. Default 250.
   z05DashboardSurfaceBackgroundColor:
     displayName: Dashboard Surface Background Color
     type: STRING
-    description: Dashboard-only section/card background color. Default #000000.
+    description: "Dashboard-only section/card background color. Default '#000000'."
   z06DashboardSurfaceOpacity:
     displayName: Dashboard Surface Background Opacity
     type: STRING
     description: Dashboard-only section/card background opacity, from 0 to 1. Default 0.15.
+  z07DashboardFontColors:
+    displayName: Dashboard Font Colors
+    type: STRING
+    description: "Comma-separated primary and secondary dashboard font colors. First controls main values, second controls labels/helper text. Default '#ffffff,#d8d8d8'."
