@@ -8,9 +8,10 @@
   const DASHBOARD_CACHE_DB = "StashDashboardCache";
   const DASHBOARD_CACHE_STORE = "studioScopes";
   const DASHBOARD_CACHE_VERSION = "v4";
+  const DEFAULT_PERFORMER_CARD_ASPECT_RATIO = "2 / 3";
   const POWER_USER_CUSTOMIZATION = {
     // Change this if your theme uses non-native performer card proportions.
-    performerCardAspectRatio: "2 / 3",
+    // performerCardAspectRatio: "1 / 2",
   };
   const DASHBOARD_COLLAPSED_SECTIONS_KEY = "StashDashboard.collapsedSections";
   const DASHBOARD_STUDIO_GROUPING_KEY = "StashDashboard.studioListGrouping";
@@ -400,7 +401,13 @@
     element.style.setProperty("--stash-dashboard-header-font-size", `${getDashboardHeaderFontSize()}px`);
     element.style.setProperty("--stash-dashboard-subheader-font-size", `${getDashboardSubheaderFontSize()}px`);
     element.style.setProperty("--stash-dashboard-content-font-size", `${getDashboardContentFontSize()}px`);
-    element.style.setProperty("--stash-dashboard-performer-card-aspect-ratio", sanitizeDashboardCssValue(POWER_USER_CUSTOMIZATION.performerCardAspectRatio, "2 / 3"));
+    element.style.setProperty(
+      "--stash-dashboard-performer-card-aspect-ratio",
+      sanitizeDashboardCssValue(
+        POWER_USER_CUSTOMIZATION.performerCardAspectRatio,
+        DEFAULT_PERFORMER_CARD_ASPECT_RATIO
+      )
+    );
     element.style.setProperty("--stash-dashboard-tag-max-width", `${getDashboardMaxTagCardWidth()}px`);
     element.style.setProperty("--stash-dashboard-surface-color", getDashboardSurfaceColor());
     element.style.setProperty("--stash-dashboard-surface-opacity", String(getDashboardSurfaceOpacity()));
@@ -5451,7 +5458,11 @@
       card.innerHTML = `
         ${performer.metricTitle ? `<div class="stash-dashboard__card-kicker${metricUrl ? " stash-dashboard__card-kicker-link" : ""}"${metricUrl ? ` role="link" tabindex="0" data-dashboard-link="${escapeHtml(metricUrl)}"` : ""}>${escapeHtml(performer.metricTitle)}</div>` : ""}
         <div class="stash-dashboard__card-name stash-dashboard__performer-title">${formatPerformerName(performer)}</div>
-        ${performer.imagePath ? `<img src="${escapeHtml(performer.imagePath)}" alt="${escapeHtml(performer.name)}">` : ""}
+        ${performer.imagePath ? `
+          <span class="stash-dashboard__performer-image">
+            <img src="${escapeHtml(performer.imagePath)}" alt="${escapeHtml(performer.name)}">
+          </span>
+        ` : ""}
         ${showMeta ? `<div class="stash-dashboard__muted stash-dashboard__performer-meta">${formatPerformerMeta(performer)}</div>` : ""}
       `;
       const metricLink = card.querySelector(".stash-dashboard__card-kicker-link");
