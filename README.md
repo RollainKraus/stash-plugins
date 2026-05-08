@@ -386,8 +386,6 @@ Fork of the original background images plugin. all credit goes to original uploa
 
 # Studio Dashboard
 
-*ALPHA ALPHA ALPHA - use at own risk - only up for testing
-
 Adds a dashboard tab to studio pages to view top performers, top tags, scene release timelines and highlighted scenes
 
 - Hovering over studio badges from other pages optionally shows a popout panel of a condensed dashboard or the full dashboard
@@ -395,10 +393,9 @@ Adds a dashboard tab to studio pages to view top performers, top tags, scene rel
 - Up to 12 pie charts, 6 performer charts, 6 scene charts. 3 hardcoded charts each and 3 customizable charts each based on your tags
 - Customize which tags to show by group (works best with tag hierarchies) with black/whitelist and exclusion rules
 - Compares performer stats from studio content to all content
+- Optional 'Needs Attention' section to highlight content from studio missing notable metadata
 
 # Stash Dashboard
-
-*ALPHA ALPHA ALPHA - use at own risk - only up for testing
 
 Adds a dedicated dashboard page for stash-wide performer highlights, top tags, scene release timelines, highlighted scenes, and configurable pie charts
 
@@ -407,6 +404,7 @@ Adds a dedicated dashboard page for stash-wide performer highlights, top tags, s
 - Choose which studios to show on the dashboard, useful for summarizing content from specific studio selections
 - Up to 12 pie charts, 6 performer charts, 6 scene charts. 3 hardcoded charts each and 3 customizable charts each based on your tags
 - Customize which tags to show by group (works best with tag hierarchies) with black/whitelist and exclusion rules
+- Optional 'Needs Attention' section to highlight content from studio missing notable metadata
 
 How To:
 - Open the dashboard page
@@ -414,6 +412,7 @@ How To:
 - Select all studios or only the studios you want in the dashboard
 - Load selected studios (this takes a VERY long time depending on stash size)
 
+Recomendation: for the initial set up, only cache a handful of studios to tweak the settings and build out pie charts/tags/dashboard elements. changes to the plugin settings clears the cache so its better to set up the plugin with a small manageable cache first, and then cache your entire stash or a larger selection of studios
 
 # O Stickers
 
