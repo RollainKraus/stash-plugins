@@ -2,6 +2,12 @@
   "use strict";
 
   const PLUGIN_ID = "StudioDashboard";
+  const DASHBOARD_COLLAPSED_SECTIONS_KEY = "StudioDashboard.collapsedSections";
+  const DEFAULT_PERFORMER_CARD_ASPECT_RATIO = "2 / 3";
+  const POWER_USER_OPTIONS = {
+    // Power-user theme hook: change this value if your performer card art uses a custom ratio.
+    // performerCardAspectRatio: "1 / 2",
+  };
   const ROUTE_EVENT = "studio-dashboard:navigation";
   const TOP_PERFORMER_MAX = 6;
   const TOP_TAG_MAX = 10;
@@ -10,18 +16,32 @@
   const DEMOGRAPHIC_AGE_GROUP_MAX = 10;
   const DASHBOARD_ROW_CARD_LIMIT = 8;
   const DASHBOARD_SCENE_ROW_LIMIT = 5;
+  const NEEDS_ATTENTION_ITEM_LIMIT = 8;
   const STATS_PAGE_SIZE = 250;
   const GRAPHQL_TIMEOUT_MS = 60000;
   const STUDIO_DASHBOARD_TAB_KEY = "studio-dashboard-tab";
   const DEFAULT_DASHBOARD_SECTION_ORDER = [
+    "insights",
     "performerHighlights",
+    "performersMostScenes",
+    "performersMostOs",
+    "performersHighestRating",
+    "performersHighestRatedScenes",
     "topTags",
     "releaseTimeline",
     "sceneHighlights",
+    "topRatedScenes",
+    "recentReleases",
+    "scenesMostOs",
     "performerDemographics",
     "sceneCharts",
+    "needsAttention",
   ];
   const DASHBOARD_SECTION_ALIASES = {
+    insight: "insights",
+    insights: "insights",
+    overview: "insights",
+    summary: "insights",
     performers: "performerHighlights",
     performer: "performerHighlights",
     performerhighlights: "performerHighlights",
@@ -48,6 +68,10 @@
     performerdemographics: "performerDemographics",
     scenecharts: "sceneCharts",
     charts: "sceneCharts",
+    needsattention: "needsAttention",
+    needattention: "needsAttention",
+    attention: "needsAttention",
+    cleanup: "needsAttention",
   };
   const DISPLAY_PROFILES = new Set(["compact", "standard", "rich"]);
   const TOP_TAG_LAYOUTS = new Set(["rows", "columns", "flow"]);
@@ -146,6 +170,7 @@
     tooltipCloseTimer: 0,
     statsCache: new Map(),
     allTags: null,
+    sceneFileSizeUnavailable: false,
     studioPageNav: null,
     studioPageHost: null,
     studioPageId: "",
@@ -221,19 +246,38 @@
     );
   }
 
-  function getDashboardTagWidth() {
-    return Math.max(
-      100,
-      Math.round(Number(getSetting("z04DashboardTagWidth", "dashboardTagWidth", "dashboardTagMinWidth") ?? 200) || 200)
-    );
-  }
-
   function getDashboardSurfaceColor() {
     return getConfigString(getSetting("z05DashboardSurfaceBackgroundColor", "dashboardSurfaceBackgroundColor"), "#000000");
   }
 
   function getDashboardSurfaceOpacity() {
     return getConfigNumber(getSetting("z06DashboardSurfaceOpacity", "dashboardSurfaceOpacity"), 0.15, 0, 1);
+  }
+
+  function getDashboardSectionDefaultState() {
+    const value = String(getSetting("a04DashboardSectionDefaultState") ?? "remember").trim().toLowerCase();
+    if (["collapsed", "collapse", "closed"].includes(value)) return "collapsed";
+    if (["expanded", "expand", "open"].includes(value)) return "expanded";
+    return "remember";
+  }
+
+  function sanitizeDashboardCssValue(value, fallback) {
+    const normalized = String(value || "").trim();
+    if (!normalized || /[;{}]/.test(normalized)) return fallback;
+    return normalized;
+  }
+
+  function getDashboardPerformerCardAspectRatio() {
+    return sanitizeDashboardCssValue(
+      POWER_USER_OPTIONS.performerCardAspectRatio,
+      DEFAULT_PERFORMER_CARD_ASPECT_RATIO
+    );
+  }
+
+  function getDashboardMaxTagCardWidth() {
+    const value = Number(getSetting("z04DashboardMaxTagCardWidth", "z04DashboardTagWidth", "dashboardTagWidth") ?? 250);
+    if (!Number.isFinite(value)) return 250;
+    return Math.max(120, Math.round(value));
   }
 
   function normalizeDashboardSectionKey(value) {
@@ -577,9 +621,26 @@
     return !keys.some((key) => filters.blacklist.has(key));
   }
 
-  function buildTopTags(scenes, filters) {
+  function buildTagSceneCounts(scenes, filters) {
     const counts = new Map();
-    scenes.forEach((scene) => {
+    (scenes || []).forEach((scene) => {
+      const seen = new Set();
+      (scene?.tags || []).forEach((tag) => {
+        const id = String(tag?.id || "");
+        const name = String(tag?.name || "").trim();
+        if (!id || !name || seen.has(id) || !isTagAllowed(tag, filters)) return;
+        seen.add(id);
+        const existing = counts.get(id) || 0;
+        counts.set(id, existing + 1);
+      });
+    });
+    return counts;
+  }
+
+  function buildTopTags(scenes, filters, allScenes = []) {
+    const counts = new Map();
+    const allCounts = buildTagSceneCounts(allScenes, filters);
+    (scenes || []).forEach((scene) => {
       const seen = new Set();
       (scene?.tags || []).forEach((tag) => {
         const id = String(tag?.id || "");
@@ -591,8 +652,10 @@
           name,
           imagePath: String(tag?.image_path || ""),
           count: 0,
+          allCount: 0,
         };
         existing.count += 1;
+        existing.allCount = allCounts.get(id) || existing.count;
         counts.set(id, existing);
       });
     });
@@ -604,7 +667,7 @@
       .slice(0, TOP_TAG_MAX);
   }
 
-  function buildTopTagGroups(scenes, filters, categories) {
+  function buildTopTagGroups(scenes, filters, categories, allScenes = []) {
     if (!categories?.length) return [];
     return categories
       .map((category) => ({
@@ -615,10 +678,41 @@
             ...scene,
             tags: (scene?.tags || []).filter((tag) => category.tagIds.has(String(tag?.id || ""))),
           })),
-          filters
+          filters,
+          allScenes
         ),
       }))
       .filter((group) => group.tags.length);
+  }
+
+  async function hydrateTopTagAllCounts(tags) {
+    const tagList = (tags || []).filter((tag) => tag?.id);
+    const uniqueTags = Array.from(new Map(tagList.map((tag) => [String(tag.id), tag])).values());
+    if (!uniqueTags.length) return;
+    const counts = new Map();
+    const chunkSize = 20;
+    for (let index = 0; index < uniqueTags.length; index += chunkSize) {
+      const chunk = uniqueTags.slice(index, index + chunkSize);
+      const fields = chunk.map((tag, chunkIndex) => {
+        const id = JSON.stringify(String(tag.id));
+        return `tag${chunkIndex}: findScenes(scene_filter: { tags: { value: [${id}], modifier: INCLUDES_ALL } }, filter: { per_page: 1 }) { count }`;
+      }).join("\n");
+      try {
+        const data = await gql(`query StudioDashboardTopTagAllCounts { ${fields} }`);
+        chunk.forEach((tag, chunkIndex) => {
+          const count = Number(data?.[`tag${chunkIndex}`]?.count || 0);
+          counts.set(String(tag.id), count || Number(tag.count || 0));
+        });
+      } catch (err) {
+        console.warn("[StudioDashboard] Could not load all-scene tag counts", err);
+        chunk.forEach((tag) => {
+          counts.set(String(tag.id), Number(tag.count || 0));
+        });
+      }
+    }
+    tagList.forEach((tag) => {
+      tag.allCount = counts.get(String(tag.id)) || Number(tag.count || 0);
+    });
   }
 
   function pickPerformer(performers, sorter, filter = () => true) {
@@ -1538,6 +1632,103 @@
     return String(Math.round(value));
   }
 
+  function formatInsightPercent(count, total) {
+    const value = formatPercent(count, total);
+    return value ? `${value}%` : "0%";
+  }
+
+  function formatNumber(value) {
+    const numeric = Number(value || 0);
+    return Number.isFinite(numeric) ? numeric.toLocaleString() : "0";
+  }
+
+  function formatDurationMinutes(minutes) {
+    const totalMinutes = Math.max(0, Math.round(Number(minutes || 0)));
+    if (!totalMinutes) return "0m";
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const mins = totalMinutes % 60;
+    if (days) return `${days}d ${hours}h`;
+    if (hours) return `${hours}h ${mins}m`;
+    return `${mins}m`;
+  }
+
+  function formatDurationLong(minutes) {
+    const totalMinutes = Math.max(0, Math.round(Number(minutes || 0)));
+    if (!totalMinutes) return "0 minutes";
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const mins = totalMinutes % 60;
+    const parts = [];
+    if (days) parts.push(`${days} day${days === 1 ? "" : "s"}`);
+    if (hours) parts.push(`${hours} hour${hours === 1 ? "" : "s"}`);
+    if (mins || !parts.length) parts.push(`${mins} minute${mins === 1 ? "" : "s"}`);
+    return parts.join(" ");
+  }
+
+  function formatBytes(bytes) {
+    const numeric = Math.max(0, Number(bytes || 0));
+    if (!Number.isFinite(numeric) || !numeric) return "0 MiB";
+    const units = ["MiB", "GiB", "TiB"];
+    let value = numeric / 1024 / 1024;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex += 1;
+    }
+    const decimals = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+    return `${value.toFixed(decimals).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1")} ${units[unitIndex]}`;
+  }
+
+  function formatInsightDateRange(timeline) {
+    if (!timeline?.startMonth || !timeline?.endMonth) return "";
+    return timeline.startMonth === timeline.endMonth
+      ? timeline.startMonth
+      : `${timeline.startMonth} - ${timeline.endMonth}`;
+  }
+
+  function updateTagGridLayout(grid) {
+    if (!(grid instanceof HTMLElement)) return;
+    const cardCount = grid.querySelectorAll(".studio-dashboard__tag-card").length;
+    if (!cardCount) return;
+    const width = grid.getBoundingClientRect().width || grid.clientWidth || 0;
+    if (width <= 0) {
+      window.requestAnimationFrame(() => updateTagGridLayout(grid));
+      return;
+    }
+    const gap = 12;
+    const configuredMaxWidth = Number.parseFloat(getComputedStyle(grid).getPropertyValue("--studio-dashboard-tag-max-width")) || 250;
+    const maxWidth = Math.max(120, configuredMaxWidth);
+    const targetWidth = Math.min(220, maxWidth);
+    const minWidth = 140;
+    const maxColumns = Math.max(1, Math.min(cardCount, TOP_TAG_MAX));
+    let columns = Math.max(1, Math.min(maxColumns, Math.round((width + gap) / (targetWidth + gap))));
+    while (columns > 1 && (width - gap * (columns - 1)) / columns < minWidth) columns -= 1;
+    grid.style.setProperty("--studio-dashboard-tag-columns", String(columns));
+  }
+
+  function observeTagGridLayout(grid) {
+    if (!(grid instanceof HTMLElement)) return;
+    updateTagGridLayout(grid);
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(() => updateTagGridLayout(grid));
+      observer.observe(grid);
+      grid.studioDashboardResizeObserver = observer;
+    } else {
+      window.addEventListener("resize", () => updateTagGridLayout(grid));
+    }
+  }
+
+  function syncTagGridAspectRatio(grid, img) {
+    if (!(grid instanceof HTMLElement) || !(img instanceof HTMLImageElement)) return;
+    if (grid.dataset.tagAspectRatioLocked === "true") return;
+    const width = Number(img.naturalWidth || 0);
+    const height = Number(img.naturalHeight || 0);
+    if (!width || !height) return;
+    grid.dataset.tagAspectRatioLocked = "true";
+    grid.style.setProperty("--studio-dashboard-tag-aspect-ratio", `${width} / ${height}`);
+  }
+
   function normalizeCountryKey(country) {
     const value = String(country || "").trim();
     if (!value) return "Unknown";
@@ -1751,6 +1942,33 @@
     return Number.isFinite(duration) && duration > 0 ? duration / 60 : 0;
   }
 
+  function getFileSizeBytes(files) {
+    return (files || [])
+      .map((file) => parseFileSizeBytes(file?.size ?? file?.sizeBytes ?? file?.size_bytes ?? file?.fileSize ?? file?.file_size ?? file?.bytes))
+      .filter((size) => Number.isFinite(size) && size > 0)
+      .reduce((total, size) => total + size, 0);
+  }
+
+  function parseFileSizeBytes(value) {
+    if (typeof value === "number") return value;
+    const normalized = String(value ?? "").replace(/,/g, "").trim();
+    if (!normalized) return 0;
+    const match = normalized.match(/^(\d+(?:\.\d+)?)\s*([kmgt]?i?b?)?$/i);
+    if (!match) return Number(normalized) || 0;
+    const numeric = Number(match[1]);
+    if (!Number.isFinite(numeric)) return 0;
+    const unit = String(match[2] || "b").toLowerCase();
+    if (unit.startsWith("t")) return numeric * 1024 * 1024 * 1024 * 1024;
+    if (unit.startsWith("g")) return numeric * 1024 * 1024 * 1024;
+    if (unit.startsWith("m")) return numeric * 1024 * 1024;
+    if (unit.startsWith("k")) return numeric * 1024;
+    return numeric;
+  }
+
+  function getSceneSizeBytes(scene) {
+    return getFileSizeBytes(scene?.files || []);
+  }
+
   function buildResolutionDistribution(scenes) {
     const buckets = getResolutionBuckets();
     const usesNativeBuckets = buckets.every((bucket) => bucket.enumValue);
@@ -1851,7 +2069,8 @@
 
   async function fetchStudioStatsUncached(studio, onProgress) {
     const studioId = String(studio?.id || "");
-    const data = await gql(
+    const getSceneFilesFields = () => `width height duration ${state.sceneFileSizeUnavailable ? "" : "size"}`;
+    const fetchInitialPage = () => gql(
       `
         query StudioDashboardStats(
           $sceneFilter: SceneFilterType
@@ -1868,10 +2087,12 @@
               date
               rating100
               o_counter
+              organized
+              stash_ids { endpoint stash_id }
               performers { id name image_path rating100 country birthdate tags { id name image_path } }
               tags { id name image_path }
               paths { screenshot preview }
-              files { width height duration }
+              files { ${getSceneFilesFields()} }
             }
           }
           findImages(image_filter: $imageFilter, filter: { per_page: 1 }) {
@@ -1890,6 +2111,18 @@
         perPage: STATS_PAGE_SIZE,
       }
     );
+    let data;
+    try {
+      data = await fetchInitialPage();
+    } catch (err) {
+      if (!state.sceneFileSizeUnavailable && /\bsize\b/i.test(String(err?.message || err))) {
+        state.sceneFileSizeUnavailable = true;
+        console.warn("[StudioDashboard] Scene file size stats unavailable; retrying without file size.", err);
+        data = await fetchInitialPage();
+      } else {
+        throw err;
+      }
+    }
 
     const scenes = data?.findScenes?.scenes || [];
     const sceneCount = Number(data?.findScenes?.count || 0);
@@ -1897,7 +2130,7 @@
       onProgress(`Loading studio scenes ${scenes.length} / ${sceneCount}...`);
     }
     for (let page = 2; scenes.length < sceneCount; page += 1) {
-      const pageData = await gql(
+      const fetchScenePage = () => gql(
         `
           query StudioDashboardSceneStatsPage(
             $sceneFilter: SceneFilterType
@@ -1911,10 +2144,12 @@
                 date
                 rating100
                 o_counter
+                organized
+                stash_ids { endpoint stash_id }
                 performers { id name image_path rating100 country birthdate tags { id name image_path } }
                 tags { id name image_path }
                 paths { screenshot preview }
-                files { width height duration }
+                files { ${getSceneFilesFields()} }
               }
             }
           }
@@ -1925,6 +2160,18 @@
           perPage: STATS_PAGE_SIZE,
         }
       );
+      let pageData;
+      try {
+        pageData = await fetchScenePage();
+      } catch (err) {
+        if (!state.sceneFileSizeUnavailable && /\bsize\b/i.test(String(err?.message || err))) {
+          state.sceneFileSizeUnavailable = true;
+          console.warn("[StudioDashboard] Scene file size stats unavailable; retrying without file size.", err);
+          pageData = await fetchScenePage();
+        } else {
+          throw err;
+        }
+      }
       const pageScenes = pageData?.findScenes?.scenes || [];
       if (!pageScenes.length) break;
       scenes.push(...pageScenes);
@@ -2029,6 +2276,35 @@
     });
     const sceneResolutionDistribution = buildResolutionDistribution(scenes);
     const sceneDurationDistribution = buildDurationDistribution(scenes);
+    const totalDurationMinutes = scenes.reduce((total, scene) => total + getSceneDurationMinutes(scene), 0);
+    const totalSceneSizeBytes = scenes.reduce((total, scene) => total + getSceneSizeBytes(scene), 0);
+    const durationEntries = scenes
+      .map((scene) => ({ scene, value: getSceneDurationMinutes(scene) }))
+      .filter((entry) => Number.isFinite(entry.value) && entry.value > 0);
+    const sceneSizeEntries = scenes
+      .map((scene) => ({ scene, value: getSceneSizeBytes(scene) }))
+      .filter((entry) => Number.isFinite(entry.value) && entry.value > 0);
+    const longestDurationScene = durationEntries
+      .slice()
+      .sort((left, right) => right.value - left.value || String(left.scene?.title || "").localeCompare(String(right.scene?.title || "")))[0];
+    const shortestDurationScene = durationEntries
+      .slice()
+      .sort((left, right) => left.value - right.value || String(left.scene?.title || "").localeCompare(String(right.scene?.title || "")))[0];
+    const largestSceneSize = sceneSizeEntries
+      .slice()
+      .sort((left, right) => right.value - left.value || String(left.scene?.title || "").localeCompare(String(right.scene?.title || "")))[0];
+    const smallestSceneSize = sceneSizeEntries
+      .slice()
+      .sort((left, right) => left.value - right.value || String(left.scene?.title || "").localeCompare(String(right.scene?.title || "")))[0];
+    const ratedScenes = scenes.filter((scene) => Number(scene?.rating100 || 0) > 0);
+    const averageRating100 = ratedScenes.length
+      ? ratedScenes.reduce((total, scene) => total + Number(scene?.rating100 || 0), 0) / ratedScenes.length
+      : 0;
+    const needsAttention = buildNeedsAttention(scenes, performers);
+
+    const topTags = buildTopTags(scenes, tagFilters);
+    const topTagGroups = buildTopTagGroups(scenes, tagFilters, topTagCategories);
+    await hydrateTopTagAllCounts([...topTags, ...topTagGroups.flatMap((group) => group.tags || [])]);
 
     const stats = {
       studio,
@@ -2038,19 +2314,34 @@
         galleries: Number(data?.findGalleries?.count || 0),
         performers: performerCounts.size,
         oCount,
+        oSceneCount: scenes.filter((scene) => Number(scene?.o_counter || 0) > 0).length,
+        totalDurationMinutes,
+        totalSceneSizeBytes,
+        averageRating100,
+        ratedScenes: ratedScenes.length,
+        unratedScenes: Math.max(0, scenes.length - ratedScenes.length),
       },
       topPerformers,
       performerHighlights,
       performerHighlightRows,
-      topTags: buildTopTags(scenes, tagFilters),
-      topTagGroups: buildTopTagGroups(scenes, tagFilters, topTagCategories),
+      topTags,
+      topTagGroups,
       performerDemographics: await buildPerformerDemographics(performers, scenes),
       sceneRatings: sceneRatingDistribution,
       sceneResolutions: sceneResolutionDistribution,
       sceneDurations: sceneDurationDistribution,
       sceneCharts: await buildCustomScenePieDistributions(scenes),
+      needsAttention,
       timeline: buildReleaseTimeline(scenes),
       topScene: normalizeSceneSummary(topScene),
+      longestDurationScene: normalizeSceneSummary(longestDurationScene?.scene),
+      longestDurationMinutes: Number(longestDurationScene?.value || 0),
+      shortestDurationScene: normalizeSceneSummary(shortestDurationScene?.scene),
+      shortestDurationMinutes: Number(shortestDurationScene?.value || 0),
+      largestSceneSize: normalizeSceneSummary(largestSceneSize?.scene),
+      largestSceneSizeBytes: Number(largestSceneSize?.value || 0),
+      smallestSceneSize: normalizeSceneSummary(smallestSceneSize?.scene),
+      smallestSceneSizeBytes: Number(smallestSceneSize?.value || 0),
       topRatedScenes: normalizeSceneSummaries(
         scenes
           .filter((scene) => Number(scene?.rating100 || 0) > 0)
@@ -2080,6 +2371,97 @@
       leastOCountScene: normalizeSceneSummary(leastOCountScene),
     };
     return stats;
+  }
+
+  function buildNeedsAttention(scenes, performers) {
+    const sceneList = Array.isArray(scenes) ? scenes : [];
+    const performerList = Array.isArray(performers) ? performers : [];
+    const sceneBuckets = [
+      {
+        key: "notOrganized",
+        label: "Not organized",
+        target: "scenes",
+        criteria: [buildAttentionCriterion("organized")],
+        items: sceneList.filter((scene) => scene?.organized !== true).map(normalizeSceneSummary).filter(Boolean),
+      },
+      {
+        key: "missingStashIds",
+        label: "Missing Stash IDs",
+        target: "scenes",
+        criteria: [buildAttentionCriterion("stashId")],
+        items: sceneList.filter((scene) => !hasSceneStashIds(scene)).map(normalizeSceneSummary).filter(Boolean),
+      },
+      {
+        key: "missingDates",
+        label: "Missing dates",
+        target: "scenes",
+        criteria: [buildAttentionCriterion("date")],
+        items: sceneList.filter((scene) => !String(scene?.date || "").trim()).map(normalizeSceneSummary).filter(Boolean),
+      },
+      {
+        key: "unrated",
+        label: "Unrated",
+        target: "scenes",
+        criteria: [buildRatingNullCriterion()],
+        items: sceneList.filter((scene) => Number(scene?.rating100 || 0) <= 0).map(normalizeSceneSummary).filter(Boolean),
+      },
+      {
+        key: "noPerformers",
+        label: "No performers",
+        target: "scenes",
+        criteria: [buildAttentionCriterion("performers")],
+        items: sceneList.filter((scene) => !Array.isArray(scene?.performers) || !scene.performers.length).map(normalizeSceneSummary).filter(Boolean),
+      },
+    ];
+    const performerBuckets = [
+      {
+        key: "missingCountry",
+        label: "Missing nationality",
+        target: "performers",
+        criteria: [buildAttentionCriterion("country")],
+        items: performerList.filter((performer) => !String(performer?.country || "").trim()).map(normalizeAttentionPerformer).filter(Boolean),
+      },
+      {
+        key: "missingBirthdate",
+        label: "Missing birthdate",
+        target: "performers",
+        criteria: [buildAttentionCriterion("birthdate")],
+        items: performerList.filter((performer) => !String(performer?.birthdate || "").trim()).map(normalizeAttentionPerformer).filter(Boolean),
+      },
+      {
+        key: "unrated",
+        label: "Unrated",
+        target: "performers",
+        criteria: [buildRatingNullCriterion()],
+        items: performerList.filter((performer) => Number(performer?.performerRating || 0) <= 0).map(normalizeAttentionPerformer).filter(Boolean),
+      },
+      {
+        key: "missingImage",
+        label: "Missing image",
+        target: "performers",
+        criteria: [buildAttentionCriterion("image")],
+        items: performerList.filter((performer) => !String(performer?.imagePath || "").trim()).map(normalizeAttentionPerformer).filter(Boolean),
+      },
+    ];
+    return {
+      scenes: sceneBuckets.filter((bucket) => bucket.items.length),
+      performers: performerBuckets.filter((bucket) => bucket.items.length),
+    };
+  }
+
+  function hasSceneStashIds(scene) {
+    const stashIds = scene?.stash_ids || scene?.stashIds || [];
+    return Array.isArray(stashIds) && stashIds.some((item) => String(item?.stash_id || item?.stashId || "").trim());
+  }
+
+  function normalizeAttentionPerformer(performer) {
+    if (!performer?.id) return null;
+    return {
+      id: String(performer.id || ""),
+      name: String(performer.name || "Unknown performer"),
+      count: Number(performer.count || 0),
+      performerRating: Number(performer.performerRating || 0),
+    };
   }
 
   function normalizeSceneSummary(scene) {
@@ -2159,6 +2541,7 @@
       <div class="studio-dashboard__status">Loading studio stats...</div>
     `;
     document.body.appendChild(tooltip);
+    tooltip.style.setProperty("--studio-dashboard-performer-card-aspect-ratio", getDashboardPerformerCardAspectRatio());
     state.tooltip = tooltip;
     state.tooltipAnchor = anchor;
     tooltip.addEventListener("mouseenter", cancelTooltipClose);
@@ -2224,7 +2607,7 @@
       title.className = "studio-dashboard__section-title";
       title.textContent = "TOP TAGS";
       section.appendChild(title);
-      renderTagCards(section, stats.studio, stats.topTags.slice(0, limits.tags));
+      renderTagCards(section, stats, stats.topTags.slice(0, limits.tags));
     }
 
     if (limits.showTimeline) {
@@ -2239,6 +2622,146 @@
     }
   }
 
+  function renderDashboardInsights(container, stats) {
+    const items = buildDashboardInsights(stats);
+    if (!items.length) return;
+    const section = createPageSection(container, "INSIGHTS");
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__insights";
+    items.forEach((item) => {
+      const tile = document.createElement("div");
+      tile.className = "studio-dashboard__insight";
+      tile.innerHTML = `
+        <div class="studio-dashboard__insight-label">${escapeHtml(item.label)}</div>
+        <div class="studio-dashboard__insight-value">${item.valueHtml || escapeHtml(item.value)}</div>
+        ${item.detailHtml || item.detail ? `<div class="studio-dashboard__insight-detail">${item.detailHtml || escapeHtml(item.detail)}</div>` : ""}
+      `;
+      grid.appendChild(tile);
+    });
+    section.appendChild(grid);
+  }
+
+  function buildDashboardInsights(stats) {
+    const counts = stats?.counts || {};
+    const topResolution = getTopResolutionInsight(stats);
+    const topPerformer = stats?.topPerformers?.[0];
+    const topPerformerDetail = topPerformer
+      ? `${topPerformer.name}: ${formatNumber(topPerformer.count)}, ${formatInsightPercent(topPerformer.count, counts.scenes)}`
+      : "";
+    const topOCount = Number(stats?.topOCountScene?.oCounter || 0);
+    const oCountDetailHtml = [
+      formatInsightLink(
+        makeStudioScenesUrl(stats.studio, [buildOCountCriterion()]),
+        `${formatNumber(counts.oSceneCount)} scenes, ${formatInsightPercent(counts.oSceneCount, counts.scenes)}`
+      ),
+      topOCount ? `top scene: ${formatInsightLink(makeSceneUrl(stats.topOCountScene), formatNumber(topOCount))}` : "",
+    ].filter(Boolean).join("; ");
+    const averageRating = Number(counts.averageRating100 || 0);
+    const ratedDetailHtml = [
+      formatInsightLink(makeStudioScenesUrl(stats.studio, [buildRatingNotNullCriterion()]), `${formatNumber(counts.ratedScenes)} rated`),
+      formatInsightLink(makeStudioScenesUrl(stats.studio, [buildRatingNullCriterion()]), `${formatNumber(counts.unratedScenes)} unrated`),
+    ].join(", ");
+    const items = [
+      { label: "Scenes", value: formatNumber(counts.scenes), detail: `${formatDurationMinutes(counts.totalDurationMinutes)}; ${formatBytes(counts.totalSceneSizeBytes)}` },
+      { label: "Images", value: formatNumber(counts.images), detail: `${formatNumber(counts.galleries)} galleries` },
+      { label: "Performers", value: formatNumber(counts.performers), detail: topPerformerDetail },
+      { label: "O Count", value: formatNumber(counts.oCount), detailHtml: oCountDetailHtml },
+      { label: "Average scene rating", value: averageRating ? formatRating(averageRating) : "N/A", detailHtml: ratedDetailHtml },
+      stats?.largestSceneSize ? {
+        label: "Largest scene size",
+        valueHtml: formatInsightLink(makeSceneUrl(stats.largestSceneSize), formatBytes(stats.largestSceneSizeBytes)),
+        detailHtml: `Smallest: ${formatInsightLink(makeSceneUrl(stats.smallestSceneSize), formatBytes(stats.smallestSceneSizeBytes))}`,
+      } : null,
+      stats?.longestDurationScene ? {
+        label: "Longest Scene",
+        valueHtml: formatInsightLink(makeSceneUrl(stats.longestDurationScene), formatDurationLong(stats.longestDurationMinutes)),
+        detailHtml: `Shortest: ${formatInsightLink(makeSceneUrl(stats.shortestDurationScene), formatDurationLong(stats.shortestDurationMinutes))}`,
+      } : null,
+      topResolution ? { label: "Top resolution", value: topResolution.label, detail: `${formatNumber(topResolution.count)} scene${Number(topResolution.count) === 1 ? "" : "s"}${topResolution.percent ? `, ${topResolution.percent}%` : ""}` } : null,
+      stats?.timeline?.startMonth ? { label: "Release span", value: formatInsightDateRange(stats.timeline), detail: `${formatNumber(stats.timeline.months?.length || 0)} covered month${Number(stats.timeline.months?.length || 0) === 1 ? "" : "s"}` } : null,
+    ];
+    return items.filter(Boolean);
+  }
+
+  function getTopResolutionInsight(stats) {
+    return (stats?.sceneResolutions?.items || [])
+      .filter((item) => item && !item.metricUnknown && !item.metricOther)
+      .slice()
+      .sort((left, right) => {
+        const countDelta = Number(right.count || 0) - Number(left.count || 0);
+        if (countDelta) return countDelta;
+        return String(left.label || "").localeCompare(String(right.label || ""));
+      })[0] || null;
+  }
+
+  function renderNeedsAttention(container, stats) {
+    const sceneBuckets = Array.isArray(stats?.needsAttention?.scenes) ? stats.needsAttention.scenes : [];
+    const performerBuckets = Array.isArray(stats?.needsAttention?.performers) ? stats.needsAttention.performers : [];
+    if (!sceneBuckets.length && !performerBuckets.length) return;
+
+    const section = createPageSection(container, "NEEDS ATTENTION");
+    const grid = document.createElement("div");
+    grid.className = "studio-dashboard__attention-grid";
+    sceneBuckets.forEach((bucket) => renderAttentionBucket(grid, "Scenes", bucket, makeSceneUrl, stats));
+    performerBuckets.forEach((bucket) => renderAttentionBucket(grid, "Performers", bucket, makePerformerUrl, stats));
+    section.appendChild(grid);
+  }
+
+  function renderAttentionBucket(container, entityLabel, bucket, hrefBuilder, stats) {
+    const items = Array.isArray(bucket?.items) ? bucket.items.filter(Boolean) : [];
+    if (!items.length) return;
+    const card = document.createElement("div");
+    card.className = "studio-dashboard__attention-card";
+    const visible = items.slice(0, NEEDS_ATTENTION_ITEM_LIMIT);
+    const hiddenCount = Math.max(0, items.length - visible.length);
+    const bucketUrl = makeAttentionBucketUrl(bucket, stats);
+    const headingText = `
+      <span>${escapeHtml(bucket.label)}</span>
+      <strong>${escapeHtml(formatNumber(items.length))}</strong>
+    `;
+    card.innerHTML = `
+      ${bucketUrl
+        ? `<a class="studio-dashboard__attention-heading" href="${escapeHtml(bucketUrl)}" target="_blank" rel="noopener noreferrer">${headingText}</a>`
+        : `<div class="studio-dashboard__attention-heading">${headingText}</div>`}
+      <div class="studio-dashboard__attention-type">${escapeHtml(entityLabel)}</div>
+      <div class="studio-dashboard__attention-list">
+        ${visible.map((item) => {
+          const href = typeof hrefBuilder === "function" ? hrefBuilder(item) : "";
+          const meta = getAttentionItemMeta(item);
+          return `
+            <a class="studio-dashboard__attention-item" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">
+              <span>${escapeHtml(item.title || item.name || "Untitled")}</span>
+              ${meta ? `<small>${escapeHtml(meta)}</small>` : ""}
+            </a>
+          `;
+        }).join("")}
+        ${hiddenCount ? `<div class="studio-dashboard__attention-more">+${escapeHtml(formatNumber(hiddenCount))} more</div>` : ""}
+      </div>
+    `;
+    container.appendChild(card);
+  }
+
+  function makeAttentionBucketUrl(bucket, stats) {
+    const criteria = (bucket?.criteria || []).filter(Boolean);
+    if (!criteria.length) return "";
+    if (bucket?.target === "performers") return makeStudioPerformersUrl(stats?.studio, criteria);
+    return makeStudioScenesUrl(stats?.studio, criteria);
+  }
+
+  function getAttentionItemMeta(item) {
+    if (item?.date) return formatDate(item.date);
+    if (Number(item?.count || 0) > 0) return `${formatNumber(item.count)} scene${Number(item.count) === 1 ? "" : "s"}`;
+    if (Number(item?.rating100 || 0) > 0) return formatRating(item.rating100);
+    if (Number(item?.performerRating || 0) > 0) return formatRating(item.performerRating);
+    return "";
+  }
+
+  function formatInsightLink(href, label) {
+    const text = String(label ?? "").trim();
+    if (!href || !text) return escapeHtml(text);
+    return `<a class="studio-dashboard__meta-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`;
+  }
+
   function renderStudioPageDashboard(container, stats) {
     if (!(container instanceof HTMLElement) || !stats) return;
     container.innerHTML = "";
@@ -2247,25 +2770,29 @@
     container.style.setProperty("--studio-dashboard-header-font-size", `${getDashboardHeaderFontSize()}px`);
     container.style.setProperty("--studio-dashboard-subheader-font-size", `${getDashboardSubheaderFontSize()}px`);
     container.style.setProperty("--studio-dashboard-content-font-size", `${getDashboardContentFontSize()}px`);
-    container.style.setProperty("--studio-dashboard-tag-width", `${getDashboardTagWidth()}px`);
+    container.style.setProperty("--studio-dashboard-tag-max-width", `${getDashboardMaxTagCardWidth()}px`);
     container.style.setProperty("--studio-dashboard-surface-color", getDashboardSurfaceColor());
     container.style.setProperty("--studio-dashboard-surface-opacity", String(getDashboardSurfaceOpacity()));
+    container.style.setProperty("--studio-dashboard-performer-card-aspect-ratio", getDashboardPerformerCardAspectRatio());
 
     const body = document.createElement("div");
     body.className = "studio-dashboard__page-body";
     container.appendChild(body);
 
     const renderers = {
+      insights: () => {
+        renderDashboardInsights(body, stats);
+      },
       performerHighlights: () => {
         const performerHighlights = Array.isArray(stats.performerHighlights) ? stats.performerHighlights : [];
         if (!performerHighlights.length) return;
         const section = createPageSection(body, "PERFORMER HIGHLIGHTS");
         renderPerformerCards(section, performerHighlights.slice(0, 8));
       },
-      performersMostScenes: () => renderPerformerRowSection(body, "PERFORMERS WITH MOST SCENES", stats.performerHighlightRows?.performersMostScenes),
-      performersMostOs: () => renderPerformerRowSection(body, "PERFORMERS WITH MOST O'S", stats.performerHighlightRows?.performersMostOs),
-      performersHighestRating: () => renderPerformerRowSection(body, "PERFORMERS WITH HIGHEST RATING", stats.performerHighlightRows?.performersHighestRating),
-      performersHighestRatedScenes: () => renderPerformerRowSection(body, "PERFORMERS WITH HIGHEST RATED SCENES", stats.performerHighlightRows?.performersHighestRatedScenes),
+      performersMostScenes: () => renderPerformerRowSection(body, "PERFORMERS WITH MOST SCENES", stats.performerHighlightRows?.performersMostScenes, stats, "scenes_count", "desc"),
+      performersMostOs: () => renderPerformerRowSection(body, "PERFORMERS WITH MOST O'S", stats.performerHighlightRows?.performersMostOs, stats, "o_counter", "desc"),
+      performersHighestRating: () => renderPerformerRowSection(body, "PERFORMERS WITH HIGHEST RATING", stats.performerHighlightRows?.performersHighestRating, stats, "rating", "desc"),
+      performersHighestRatedScenes: () => renderPerformerRowSection(body, "PERFORMERS WITH HIGHEST RATED SCENES", stats.performerHighlightRows?.performersHighestRatedScenes, stats),
       topTags: () => {
         if (!stats.topTags.length) return;
         const section = createPageSection(body, "TOP TAGS");
@@ -2277,37 +2804,123 @@
       sceneHighlights: () => {
         renderSceneHighlightGrid(body, getSceneHighlights(stats), { title: "SCENE HIGHLIGHTS" });
       },
-      topRatedScenes: () => renderSceneRowSection(body, "TOP RATED SCENES", stats.topRatedScenes, (scene) => formatRating(scene.rating100)),
-      recentReleases: () => renderSceneRowSection(body, "RECENT RELEASES", stats.recentReleases, (scene) => formatDate(scene.date)),
-      scenesMostOs: () => renderSceneRowSection(body, "SCENES WITH MOST O'S", stats.scenesMostOs, (scene) => `${scene.oCounter} O's`),
+      topRatedScenes: () => renderSceneRowSection(body, "TOP RATED SCENES", stats.topRatedScenes, (scene) => formatRating(scene.rating100), stats, "rating", "desc", [buildRatingNotNullCriterion()]),
+      recentReleases: () => renderSceneRowSection(body, "RECENT RELEASES", stats.recentReleases, (scene) => formatDate(scene.date), stats, "date", "desc"),
+      scenesMostOs: () => renderSceneRowSection(body, "SCENES WITH MOST O'S", stats.scenesMostOs, (scene) => `${scene.oCounter} O's`, stats, "o_counter", "desc"),
       performerDemographics: () => {
         renderPerformerDemographics(body, stats);
       },
       sceneCharts: () => {
         renderSceneCharts(body, stats);
       },
+      needsAttention: () => {
+        renderNeedsAttention(body, stats);
+      },
     };
     getDashboardSectionOrder().forEach((key) => renderers[key]?.());
   }
 
-  function createPageSection(container, titleText) {
+  function createPageSection(container, titleText, options = {}) {
     const section = document.createElement("div");
     section.className = "studio-dashboard__page-section";
+    const body = document.createElement("div");
+    body.className = "studio-dashboard__page-section-body";
     if (titleText) {
-      const title = document.createElement("h5");
+      const collapsedKey = getDashboardSectionCollapseKey(titleText);
+      const defaultState = getDashboardSectionDefaultState();
+      const isCollapsed = defaultState === "collapsed" ||
+        defaultState === "remember" && getCollapsedDashboardSections().has(collapsedKey);
+      const header = document.createElement("div");
+      header.className = "studio-dashboard__page-section-header";
+      const main = document.createElement("div");
+      main.className = "studio-dashboard__page-section-header-main";
+      main.setAttribute("role", "button");
+      main.setAttribute("tabindex", "0");
+      main.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+      const caret = document.createElement("span");
+      caret.className = "studio-dashboard__page-section-caret";
+      caret.textContent = ">";
+      const title = document.createElement("span");
       title.className = "studio-dashboard__page-section-title";
       title.textContent = titleText;
-      section.appendChild(title);
+      const actions = document.createElement("span");
+      actions.className = "studio-dashboard__page-section-actions";
+      (options.actions || []).filter(Boolean).forEach((action) => actions.appendChild(action));
+      if (actions.children.length) main.classList.add("has-actions");
+      const toggle = document.createElement("span");
+      toggle.className = "studio-dashboard__page-section-toggle";
+      toggle.textContent = isCollapsed ? "Expand" : "Collapse";
+      main.append(caret, title);
+      if (actions.children.length) main.appendChild(actions);
+      main.appendChild(toggle);
+      header.appendChild(main);
+      section.appendChild(header);
+      if (isCollapsed) section.classList.add("is-collapsed");
+      main.addEventListener("click", () => {
+        const nextCollapsed = !section.classList.contains("is-collapsed");
+        section.classList.toggle("is-collapsed", nextCollapsed);
+        main.setAttribute("aria-expanded", nextCollapsed ? "false" : "true");
+        toggle.textContent = nextCollapsed ? "Expand" : "Collapse";
+        if (defaultState === "remember") setDashboardSectionCollapsed(collapsedKey, nextCollapsed);
+      });
+      main.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        main.click();
+      });
     }
+    section.appendChild(body);
     container.appendChild(section);
-    return section;
+    return body;
+  }
+
+  function createShowAllAction(url, label = "Show all") {
+    if (!url) return null;
+    const link = document.createElement("a");
+    link.className = "studio-dashboard__section-action studio-dashboard__section-action-link";
+    link.href = url;
+    link.textContent = label;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.addEventListener("click", (event) => event.stopPropagation());
+    link.addEventListener("keydown", (event) => event.stopPropagation());
+    return link;
+  }
+
+  function getDashboardSectionCollapseKey(titleText) {
+    return String(titleText || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+  }
+
+  function getCollapsedDashboardSections() {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(DASHBOARD_COLLAPSED_SECTIONS_KEY) || "[]");
+      return new Set(Array.isArray(parsed) ? parsed.filter(Boolean).map(String) : []);
+    } catch (_err) {
+      return new Set();
+    }
+  }
+
+  function setDashboardSectionCollapsed(key, isCollapsed) {
+    if (!key) return;
+    const collapsed = getCollapsedDashboardSections();
+    if (isCollapsed) collapsed.add(key);
+    else collapsed.delete(key);
+    try {
+      window.localStorage.setItem(DASHBOARD_COLLAPSED_SECTIONS_KEY, JSON.stringify([...collapsed]));
+    } catch (_err) {
+      // Collapsed state is only a convenience, so storage failures are harmless.
+    }
   }
 
   function renderDashboardTopTags(container, stats) {
     const groups = Array.isArray(stats.topTagGroups) ? stats.topTagGroups : [];
     const limit = getDashboardTopTagLimit();
     if (!groups.length) {
-      renderTagCards(container, stats.studio, stats.topTags.slice(0, limit));
+      renderTagCards(container, stats, stats.topTags.slice(0, limit));
       return;
     }
 
@@ -2321,23 +2934,29 @@
       title.className = "studio-dashboard__tag-group-title";
       title.textContent = group.name;
       row.appendChild(title);
-      renderTagCards(row, stats.studio, group.tags.slice(0, limit));
+      renderTagCards(row, stats, group.tags.slice(0, limit));
       grouped.appendChild(row);
     });
     container.appendChild(grouped);
   }
 
-  function renderPerformerRowSection(container, title, performers) {
+  function renderPerformerRowSection(container, title, performers, stats, sortBy = "", sortDir = "desc") {
     const visible = Array.isArray(performers) ? performers.filter(Boolean) : [];
     if (!visible.length) return;
-    const section = createPageSection(container, title);
+    const showAllUrl = sortBy ? makeStudioPerformersUrl(stats?.studio, [], { sortBy, sortDir }) : "";
+    const section = createPageSection(container, title, {
+      actions: showAllUrl ? [createShowAllAction(showAllUrl)] : [],
+    });
     renderPerformerCards(section, visible.slice(0, DASHBOARD_ROW_CARD_LIMIT));
   }
 
-  function renderSceneRowSection(container, title, scenes, metaFormatter) {
+  function renderSceneRowSection(container, title, scenes, metaFormatter, stats, sortBy = "", sortDir = "desc", criteria = []) {
     const visible = Array.isArray(scenes) ? scenes.filter(Boolean) : [];
     if (!visible.length) return;
-    const section = createPageSection(container, title);
+    const showAllUrl = sortBy ? makeStudioScenesUrl(stats?.studio, criteria, { sortBy, sortDir }) : "";
+    const section = createPageSection(container, title, {
+      actions: showAllUrl ? [createShowAllAction(showAllUrl)] : [],
+    });
     const grid = document.createElement("div");
     grid.className = "studio-dashboard__scene-grid";
     visible.slice(0, DASHBOARD_SCENE_ROW_LIMIT).forEach((scene) => {
@@ -2356,30 +2975,35 @@
         title: "Most recent release",
         scene: stats.recentScene,
         meta: stats.recentScene ? formatDate(stats.recentScene.date) : "",
+        url: makeStudioScenesUrl(stats.studio, [], { sortBy: "date", sortDir: "desc" }),
       },
       {
         enabled: true,
         title: "Top rated scene",
         scene: stats.topScene,
         meta: stats.topScene ? formatRating(stats.topScene.rating100) : "",
+        url: makeStudioScenesUrl(stats.studio, [buildRatingNotNullCriterion()], { sortBy: "rating", sortDir: "desc" }),
       },
       {
         enabled: true,
         title: "Lowest rated scene",
         scene: stats.lowestRatedScene,
         meta: stats.lowestRatedScene ? formatRating(stats.lowestRatedScene.rating100) : "",
+        url: makeStudioScenesUrl(stats.studio, [buildRatingNotNullCriterion()], { sortBy: "rating", sortDir: "asc" }),
       },
       {
         enabled: true,
         title: "Most O's",
         scene: stats.topOCountScene,
         meta: stats.topOCountScene ? `${stats.topOCountScene.oCounter} O's` : "",
+        url: makeStudioScenesUrl(stats.studio, [], { sortBy: "o_counter", sortDir: "desc" }),
       },
       {
         enabled: true,
         title: "Least O's",
         scene: stats.leastOCountScene,
         meta: stats.leastOCountScene ? `${stats.leastOCountScene.oCounter} O's` : "",
+        url: makeStudioScenesUrl(stats.studio, [buildOCountCriterion()], { sortBy: "o_counter", sortDir: "asc" }),
       },
     ];
   }
@@ -2412,7 +3036,17 @@
       item.className = "studio-dashboard__scene-grid-item";
       const title = document.createElement("div");
       title.className = "studio-dashboard__section-title";
-      title.textContent = highlight.title;
+      if (highlight.url) {
+        const link = document.createElement("a");
+        link.className = "studio-dashboard__meta-link";
+        link.href = highlight.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = highlight.title;
+        title.appendChild(link);
+      } else {
+        title.textContent = highlight.title;
+      }
       item.appendChild(title);
       renderSceneCard(item, highlight.scene, highlight.meta);
       grid.appendChild(item);
@@ -3119,7 +3753,7 @@
     } else {
       criteria = buildAgeFilterCriteria(includeItems, excludeItems);
     }
-    window.location.href = makeStudioScenesUrl(studio, criteria);
+    window.open(makeStudioScenesUrl(studio, criteria), "_blank", "noopener,noreferrer");
   }
 
   function formatPerformerMeta(performer) {
@@ -3207,7 +3841,11 @@
       card.innerHTML = `
         ${performer.metricTitle ? `<div class="studio-dashboard__card-kicker">${escapeHtml(performer.metricTitle)}</div>` : ""}
         <div class="studio-dashboard__card-name studio-dashboard__performer-title">${formatPerformerName(performer)}</div>
-        ${performer.imagePath ? `<img src="${escapeHtml(performer.imagePath)}" alt="${escapeHtml(performer.name)}">` : ""}
+        ${performer.imagePath ? `
+          <span class="studio-dashboard__performer-image">
+            <img src="${escapeHtml(performer.imagePath)}" alt="${escapeHtml(performer.name)}">
+          </span>
+        ` : ""}
         ${showMeta ? `<div class="studio-dashboard__muted studio-dashboard__performer-meta">${formatPerformerMeta(performer)}</div>` : ""}
       `;
       grid.appendChild(card);
@@ -3215,29 +3853,123 @@
     container.appendChild(grid);
   }
 
-  function renderTagCards(container, studio, tags) {
+  function renderTagCards(container, statsOrStudio, tags) {
+    const stats = statsOrStudio?.studio ? statsOrStudio : { studio: statsOrStudio };
     const grid = document.createElement("div");
     grid.className = "studio-dashboard__tag-cards";
     tags.forEach((tag) => {
-      const card = document.createElement("a");
+      const scopedUrl = makeStudioTagUrl(stats.studio, tag);
+      const allUrl = makeGlobalTagUrl(tag);
+      const scopedCount = Number(tag?.count || 0);
+      const allCount = Number(tag?.allCount || tag?.count || 0);
+      const card = document.createElement("div");
       card.className = "studio-dashboard__tag-card";
-      card.href = makeStudioTagUrl(studio, tag);
       card.innerHTML = `
-        <span class="studio-dashboard__tag-image">
-          ${tag.imagePath ? `<img src="${escapeHtml(tag.imagePath)}" alt="${escapeHtml(tag.name)}">` : ""}
-        </span>
-        <span class="studio-dashboard__card-name">${escapeHtml(tag.name)}</span>
-        <span class="studio-dashboard__muted studio-dashboard__tag-meta">
-          <span class="studio-dashboard__meta-icon" title="Scenes">🎬</span><strong>${escapeHtml(tag.count)}</strong>
-        </span>
+        <a class="studio-dashboard__tag-main" href="${escapeHtml(scopedUrl)}" target="_blank" rel="noopener noreferrer">
+          <span class="studio-dashboard__tag-image">
+            ${tag.imagePath ? `<img src="${escapeHtml(tag.imagePath)}" alt="${escapeHtml(tag.name)}">` : ""}
+          </span>
+          <span class="studio-dashboard__card-name">${escapeHtml(tag.name)}</span>
+        </a>
+        <table class="studio-dashboard__tag-count-table">
+          <thead>
+            <tr>
+              <th>Studio</th>
+              <th>All</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <a class="studio-dashboard__meta-link" href="${escapeHtml(scopedUrl)}" target="_blank" rel="noopener noreferrer">
+                  <span class="studio-dashboard__meta-icon" title="Studio scenes">🎬</span><strong>${escapeHtml(scopedCount)}</strong>
+                </a>
+              </td>
+              <td>
+                <a class="studio-dashboard__meta-link" href="${escapeHtml(allUrl)}" target="_blank" rel="noopener noreferrer">
+                  <span class="studio-dashboard__meta-icon" title="All scenes">🎬</span><strong>${escapeHtml(allCount)}</strong>
+                </a>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       `;
       grid.appendChild(card);
     });
+    grid.querySelectorAll(".studio-dashboard__tag-image img").forEach((img) => {
+      if (!(img instanceof HTMLImageElement)) return;
+      if (img.complete && img.naturalWidth && img.naturalHeight) {
+        syncTagGridAspectRatio(grid, img);
+      } else {
+        img.addEventListener("load", () => syncTagGridAspectRatio(grid, img), { once: true });
+      }
+    });
     container.appendChild(grid);
+    observeTagGridLayout(grid);
   }
 
   function makeStudioTagUrl(studio, tag) {
     return makeStudioScenesUrl(studio, [buildTagCriterion(tag)]);
+  }
+
+  function makeGlobalTagUrl(tag) {
+    return makeStudioScenesUrl(null, [buildTagCriterion(tag)]);
+  }
+
+  function buildOCountCriterion() {
+    return {
+      type: "o_counter",
+      value: 0,
+      modifier: "GREATER_THAN",
+    };
+  }
+
+  function buildRatingNullCriterion() {
+    return {
+      type: "rating100",
+      modifier: "IS_NULL",
+    };
+  }
+
+  function buildRatingNotNullCriterion() {
+    return {
+      type: "rating100",
+      modifier: "NOT_NULL",
+    };
+  }
+
+  function buildAttentionCriterion(type) {
+    const filterTypes = {
+      organized: "organized",
+      stashId: "stash_id",
+      date: "date",
+      performers: "performers",
+      studios: "studios",
+      country: "country",
+      birthdate: "birthdate",
+      image: "image",
+      scenes: "scenes",
+    };
+    const filterType = filterTypes[type] || type;
+    if (!filterType) return null;
+    return {
+      type: filterType,
+      modifier: "IS_NULL",
+    };
+  }
+
+  function buildStudioSelectionCriterion(studio) {
+    const id = String(studio?.id || "");
+    if (!id) return null;
+    return {
+      type: "studios",
+      value: {
+        items: [{ id, label: String(studio?.name || "Studio") }],
+        excluded: [],
+        depth: -1,
+      },
+      modifier: "INCLUDES",
+    };
   }
 
   function buildTagCriterion(tag, modifier = "INCLUDES") {
@@ -3488,11 +4220,37 @@
     };
   }
 
-  function makeStudioScenesUrl(studio, criteria = []) {
+  function addSortParams(params, options = {}) {
+    if (!params || !options?.sortBy) return;
+    params.set("sortby", String(options.sortBy));
+    params.set("sortdir", String(options.sortDir || "desc").toLowerCase() === "asc" ? "asc" : "desc");
+  }
+
+  function makeStudioScenesUrl(studio, criteria = [], options = {}) {
     const params = new URLSearchParams();
+    addSortParams(params, options);
     criteria.filter(Boolean).forEach((criterion) => params.append("c", JSON.stringify(criterion)));
     const query = params.toString();
-    return `/studios/${encodeURIComponent(studio?.id || "")}/scenes${query ? `?${query}` : ""}`;
+    if (!studio?.id) return `/scenes${query ? `?${query}` : ""}`;
+    return `/studios/${encodeURIComponent(studio.id)}/scenes${query ? `?${query}` : ""}`;
+  }
+
+  function makeStudioPerformersUrl(studio, criteria = [], options = {}) {
+    const params = new URLSearchParams();
+    addSortParams(params, options);
+    [buildStudioSelectionCriterion(studio), ...criteria].filter(Boolean).forEach((criterion) => {
+      params.append("c", JSON.stringify(criterion));
+    });
+    const query = params.toString();
+    return `/performers${query ? `?${query}` : ""}`;
+  }
+
+  function makeSceneUrl(scene) {
+    return scene?.id ? `/scenes/${encodeURIComponent(scene.id)}` : "";
+  }
+
+  function makePerformerUrl(performer) {
+    return performer?.id ? `/performers/${encodeURIComponent(performer.id)}` : "";
   }
 
   function renderReleaseTimeline(container, studio, timeline) {
@@ -3532,6 +4290,8 @@
       const groupIndex = yearGroupMap.get(item.year) || 0;
       bar.className = `studio-dashboard__timeline-bar ${groupIndex % 2 ? "is-alt" : "is-base"}`;
       bar.href = makeStudioScenesUrl(studio, [buildDateCriterion(item)]);
+      bar.target = "_blank";
+      bar.rel = "noopener noreferrer";
       if (!item.count) bar.classList.add("is-empty");
       bar.style.setProperty("--studio-dashboard-bar-value", String(item.count / item.max));
       bar.title = `${item.label}: ${item.count} scene${item.count === 1 ? "" : "s"}`;
