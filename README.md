@@ -412,7 +412,7 @@ How To:
 - Select all studios or only the studios you want in the dashboard
 - Load selected studios (this takes a VERY long time depending on stash size)
 
-Recomendation: for the initial set up, only cache a handful of studios to tweak the settings and build out pie charts/tags/dashboard elements. changes to the plugin settings clears the cache so its better to set up the plugin with a small manageable cache first, and then cache your entire stash or a larger selection of studios
+Recommendation: for the initial set up, only cache a handful of studios to tweak the settings and build out pie charts/tags/dashboard elements. changes to the plugin settings clears the cache so its better to set up the plugin with a small manageable cache first, and then cache your entire stash or a larger selection of studios
 
 <h2>Preview</h2>
 <p>
