@@ -1,5 +1,5 @@
 name: Studio Dashboard
-description: Adds a dashboard tab to studio pages to view performer highlights, top tags, scene release timelines, highlighted scenes, and configurable pie charts
+description: Adds a dashboard tab to studio pages with insights, performer and scene highlights, top tags, release timelines, configurable pie charts, and needs-attention checks
 version: 0.1.0
 ui:
   css:
@@ -18,7 +18,11 @@ settings:
   a03DashboardSectionOrder:
     displayName: Dashboard Section Order
     type: STRING
-    description: "Comma-separated dashboard sections in display order. Omit a section to hide it. Valid sections: performerHighlights, performersMostScenes, performersMostOs, performersHighestRating, performersHighestRatedScenes, topTags, releaseTimeline, sceneHighlights, topRatedScenes, recentReleases, scenesMostOs, performerDemographics, sceneCharts. Empty uses the default order."
+    description: "Comma-separated dashboard sections in display order. Omit a section to hide it. Valid sections: insights, performerHighlights, performersMostScenes, performersMostOs, performersHighestRating, performersHighestRatedScenes, topTags, releaseTimeline, sceneHighlights, topRatedScenes, recentReleases, scenesMostOs, performerDemographics, sceneCharts, needsAttention. Empty uses the default order."
+  a04DashboardSectionDefaultState:
+    displayName: Dashboard Section Default State
+    type: STRING
+    description: "Default dashboard section state: expanded, collapsed, or remember. Remember keeps your last expand/collapse choices. Default remember."
   c01TopTagCategories:
     displayName: Top Tag Categories
     type: STRING
@@ -123,10 +127,10 @@ settings:
     displayName: Dashboard Content Font Size
     type: STRING
     description: Dashboard-only counts, metadata, secondary text, and timeline count font size in pixels. Default 15.
-  z04DashboardTagWidth:
-    displayName: Dashboard Tag Width
+  z04DashboardMaxTagCardWidth:
+    displayName: Dashboard Max Tag Card Width
     type: STRING
-    description: Dashboard-only fixed tag card width in pixels. Values below 100 are treated as 100. Default 200.
+    description: Dashboard-only maximum tag card width in pixels. Cards auto-fit available space up to this cap. Default 250.
   z05DashboardSurfaceBackgroundColor:
     displayName: Dashboard Surface Background Color
     type: STRING
