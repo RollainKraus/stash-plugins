@@ -1,5 +1,5 @@
 name: Simple Right Click Tagging
-description: Quick performer and tag editing from image, scene, and performer cards
+description: Quick performer, studio, and tag editing from image, scene, and performer cards
 version: 0.1.0
 url: https://github.com/RollainKraus/stash-plugins
 
@@ -8,6 +8,61 @@ settings:
     displayName: Menu Access Mode
     type: STRING
     description: "rightClick or hoverZone. HoverZone uses the right third of each card. (Default: rightClick)"
+
+  quickAccessPerformers:
+    displayName: Quick Access Performers
+    type: STRING
+    description: "Comma-separated performer names to show as direct add actions on image and scene menus."
+
+  quickAccessStudios:
+    displayName: Quick Access Studios
+    type: STRING
+    description: "Comma-separated studio names to show as direct set actions on image and scene menus."
+
+  quickAccessTags:
+    displayName: Quick Access Tags
+    type: STRING
+    description: "Comma-separated tag names to show as direct add actions on image, scene, and performer menus."
+
+  quickAccessPreset1:
+    displayName: Quick Access Preset 1
+    type: STRING
+    description: "Optional preset. Format: Name | tags: Tag A, Tag B | performers: Performer A | studio: Studio A"
+
+  quickAccessPreset2:
+    displayName: Quick Access Preset 2
+    type: STRING
+    description: "Optional preset. Format: Name | tags: Tag A, Tag B | performers: Performer A | studio: Studio A"
+
+  quickAccessPreset3:
+    displayName: Quick Access Preset 3
+    type: STRING
+    description: "Optional preset. Format: Name | tags: Tag A, Tag B | performers: Performer A | studio: Studio A"
+
+  customFieldPresets:
+    displayName: Custom Field Presets
+    type: STRING
+    description: "Comma-separated performer custom field names to show as ready-to-fill rows. Existing fields are not overwritten."
+
+  missingTagsTagId:
+    displayName: Missing Tags Flag Tag ID
+    type: STRING
+    description: "Optional tag ID for the Needs tags quick flag."
+
+  missingPerformersTagId:
+    displayName: Missing Performers Flag Tag ID
+    type: STRING
+    description: "Optional tag ID for the Needs performer quick flag on image and scene cards."
+
+  missingStudioTagId:
+    displayName: Missing Studio Flag Tag ID
+    type: STRING
+    description: "Optional tag ID for the Needs studio quick flag on image and scene cards."
+
+  needsReviewTagId:
+    displayName: Needs Review Flag Tag ID
+    type: STRING
+    description: "Optional tag ID for the Needs review quick flag."
 
   defaultExpanded:
     displayName: Default Expanded
