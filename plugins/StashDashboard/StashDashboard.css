@@ -184,7 +184,15 @@
   aspect-ratio: var(--stash-dashboard-tag-aspect-ratio, 1 / 1);
 }
 
-.stash-dashboard__card img,
+.stash-dashboard__performer-image {
+  display: block;
+  overflow: hidden;
+  border-radius: 0.35rem;
+  background: rgba(255, 255, 255, 0.08);
+  aspect-ratio: var(--stash-dashboard-performer-card-aspect-ratio, 2 / 3);
+}
+
+.stash-dashboard__performer-image img,
 .stash-dashboard__tag-card img,
 .stash-dashboard__scene img,
 .stash-dashboard__scene video {
@@ -218,10 +226,6 @@
   filter: blur(32px) grayscale(0.85) contrast(0.7) brightness(0.62);
   opacity: 0.22;
   transform: scale(1.14);
-}
-
-.stash-dashboard__card img {
-  aspect-ratio: var(--stash-dashboard-performer-card-aspect-ratio, 2 / 3);
 }
 
 .stash-dashboard__card-name,
