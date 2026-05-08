@@ -682,6 +682,11 @@
     `;
   }
 
+  function isEditableShortcutTarget(target) {
+    if (!(target instanceof Element)) return false;
+    return !!target.closest("input, textarea, select, [contenteditable='true'], [contenteditable='plaintext-only']");
+  }
+
   function openContextMenuAt(x, y, itemType, imageIds) {
     closeContextMenu();
     closeModal();
@@ -972,6 +977,7 @@
         }
         return;
       }
+      if (isEditableShortcutTarget(keyEvent.target)) return;
       if (keyEvent.metaKey || keyEvent.ctrlKey || keyEvent.altKey) return;
       const shortcut = String(keyEvent.key || "").toLowerCase();
       const shortcutMap = {
