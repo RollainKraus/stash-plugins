@@ -28,11 +28,11 @@ settings:
   emoji:
     displayName: Emoji
     type: STRING
-    description: Emoji to use when Sticker Type is emoji. Default 💦.
+    description: Emoji or comma separated emoji list to use when Sticker Type is emoji. Random starts at a stable random emoji per card; fixed cycles through the list. Default U+1F4A6.
   imageMode:
     displayName: Image Mode
     type: STRING
-    description: random or fixed. Default random.
+    description: random or fixed. Applies to image stickers and emoji lists. Default random.
   sizePercent:
     displayName: Size Percent
     type: STRING
