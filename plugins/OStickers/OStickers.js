@@ -3,6 +3,9 @@
 
   const PLUGIN_ID = "OStickers";
   const ROUTE_EVENT = "ostickers:navigation";
+  const ENABLED_STORAGE_KEY = "ostickers:enabled";
+  const TOGGLE_BUTTON_CLASS = "ostickers-toggle-button";
+  const DEFAULT_EMOJI = "\u{1F4A6}";
   const CARD_SELECTOR = ".scene-card, .image-card, .performer-card, .studio-card, [data-scene-id], [data-image-id], [data-performer-id], [data-studio-id]";
   const CONTENT_TYPES = new Set(["scene", "image", "performer", "studio"]);
   const MODES = new Set(["repeat", "incremental", "single", "thresholds"]);
@@ -17,7 +20,7 @@
     stickersPerOCount: 1,
     mode: "incremental",
     type: "image",
-    emoji: "💦",
+    emoji: DEFAULT_EMOJI,
     imageMode: "random",
     sizePercent: 25,
     opacity: 0.3,
@@ -37,7 +40,31 @@
     assetProbePromise: null,
     assetWarningShown: false,
     suppressObserverUntil: 0,
+    enabled: getStoredEnabled(),
   };
+
+  function registerRuntime() {
+    const previous = window.__ostickersRuntime;
+    if (previous?.observer) previous.observer.disconnect();
+    if (previous?.refreshTimer) window.clearTimeout(previous.refreshTimer);
+    window.__ostickersRuntime = state;
+  }
+
+  function getStoredEnabled() {
+    try {
+      return localStorage.getItem(ENABLED_STORAGE_KEY) !== "false";
+    } catch (err) {
+      return true;
+    }
+  }
+
+  function setStoredEnabled(enabled) {
+    try {
+      localStorage.setItem(ENABLED_STORAGE_KEY, enabled ? "true" : "false");
+    } catch (err) {
+      // Local storage can be unavailable in hardened browser contexts.
+    }
+  }
 
   function gql(query, variables = {}) {
     return fetch("/graphql", {
@@ -195,6 +222,14 @@
       .filter((value) => Number.isFinite(value) && value > 0)
       .sort((left, right) => left - right);
     return uniqueValues(values);
+  }
+
+  function parseEmojiList() {
+    const emojis = String(state.config.emoji || DEFAULTS.emoji)
+      .split(",")
+      .map((emoji) => emoji.trim())
+      .filter(Boolean);
+    return emojis.length ? emojis : [DEFAULTS.emoji];
   }
 
   function getCardInfo(card) {
@@ -399,6 +434,7 @@
     const maxStickers = Math.round(state.config.maxStickers);
     const stickersPerOCount = Math.max(1, Math.round(state.config.stickersPerOCount || 1));
     const thresholds = parseThresholds();
+    const emojis = state.config.type === "emoji" ? parseEmojiList() : [];
     let countUnits = 0;
 
     if (mode === "single") {
@@ -418,10 +454,21 @@
       models.push({
         key: `${info.cacheKey}:${mode}:${oCount}:${index}`,
         imageIndex: state.config.type === "image" ? resolveImageIndex(mode, oCount, index, info.cacheKey) : null,
-        emoji: state.config.emoji || DEFAULTS.emoji,
+        emoji: state.config.type === "emoji" ? resolveEmoji(emojis, mode, oCount, index, info.cacheKey) : DEFAULTS.emoji,
       });
     }
     return models;
+  }
+
+  function resolveEmoji(emojis, mode, oCount, index, seedBase) {
+    if (!emojis.length) return DEFAULTS.emoji;
+    if (state.config.imageMode === "random") {
+      const offset = hashString(`${seedBase}:${mode}:${oCount}:emoji`) % emojis.length;
+      return emojis[(offset + index - 1) % emojis.length];
+    }
+
+    if (mode === "single") return emojis[(normalizeCount(oCount) - 1) % emojis.length];
+    return emojis[(index - 1) % emojis.length];
   }
 
   function resolveImageIndex(mode, oCount, index, seedBase) {
@@ -456,6 +503,8 @@
   async function enhanceCards() {
     suppressObserver();
     clearRenderedCards();
+
+    if (!state.enabled) return;
 
     const activeBrowseType = getActiveBrowseType();
     if (!activeBrowseType) return;
@@ -629,11 +678,76 @@
   function scheduleRefresh() {
     window.clearTimeout(state.refreshTimer);
     state.refreshTimer = window.setTimeout(() => {
+      if (!state.enabled) {
+        clearRenderedCards();
+        return;
+      }
       enhanceCards().catch((err) => console.warn("[OStickers] Refresh failed", err));
     }, 80);
   }
 
+  function setupToggleButton() {
+    if (document.querySelector(`.${TOGGLE_BUTTON_CLASS}`)) {
+      updateToggleButton();
+      return true;
+    }
+
+    const parentNode = document.querySelector(".navbar-buttons");
+    if (!(parentNode instanceof HTMLElement)) return false;
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `nav-utility btn minimal ${TOGGLE_BUTTON_CLASS}`;
+    button.textContent = DEFAULT_EMOJI;
+    button.addEventListener("click", () => {
+      state.enabled = !state.enabled;
+      setStoredEnabled(state.enabled);
+      updateToggleButton();
+      if (state.enabled) {
+        scheduleRefresh();
+      } else {
+        clearRenderedCards();
+      }
+    });
+
+    parentNode.appendChild(button);
+    updateToggleButton();
+    return true;
+  }
+
+  function updateToggleButton() {
+    const button = document.querySelector(`.${TOGGLE_BUTTON_CLASS}`);
+    if (!(button instanceof HTMLButtonElement)) return;
+    button.classList.toggle("is-disabled", !state.enabled);
+    button.setAttribute("aria-pressed", state.enabled ? "true" : "false");
+    button.title = state.enabled ? "O Stickers enabled. Click to hide stickers." : "O Stickers disabled. Click to show stickers.";
+  }
+
+  function scheduleToggleButtonSetup() {
+    REFRESH_DELAYS.forEach((delay) => {
+      window.setTimeout(() => {
+        if (!setupToggleButton()) {
+          window.setTimeout(setupToggleButton, 1500);
+        }
+      }, delay);
+    });
+  }
+
   function installRouteHooks() {
+    window.__ostickersRouteHandler = () => {
+      scheduleToggleButtonSetup();
+      REFRESH_DELAYS.forEach((delay) => window.setTimeout(scheduleRefresh, delay));
+    };
+
+    if (!window.__ostickersRouteEventListener) {
+      window.__ostickersRouteEventListener = () => {
+        if (typeof window.__ostickersRouteHandler === "function") {
+          window.__ostickersRouteHandler();
+        }
+      };
+      window.addEventListener(ROUTE_EVENT, window.__ostickersRouteEventListener);
+    }
+
     if (window.__ostickersRouteHooksInstalled) return;
     window.__ostickersRouteHooksInstalled = true;
 
@@ -647,16 +761,16 @@
     });
 
     window.addEventListener("popstate", () => window.dispatchEvent(new Event(ROUTE_EVENT)));
-    window.addEventListener(ROUTE_EVENT, () => {
-      REFRESH_DELAYS.forEach((delay) => window.setTimeout(scheduleRefresh, delay));
-    });
   }
 
   async function main() {
+    registerRuntime();
     await loadConfig();
     installRouteHooks();
+    scheduleToggleButtonSetup();
     state.observer = new MutationObserver(() => {
       if (Date.now() < state.suppressObserverUntil) return;
+      setupToggleButton();
       scheduleRefresh();
     });
     state.observer.observe(document.body, { childList: true, subtree: true });
