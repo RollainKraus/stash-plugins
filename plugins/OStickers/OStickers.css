@@ -12,6 +12,35 @@
   overflow: var(--ostickers-overflow, hidden);
 }
 
+.ostickers-toggle-button {
+  align-items: center;
+  color: #fff !important;
+  display: inline-flex;
+  filter: grayscale(1) brightness(2.2);
+  font-size: 1.12rem;
+  justify-content: center;
+  line-height: 1;
+  min-height: 2rem;
+  min-width: 2rem;
+  opacity: 0.95;
+  padding: 0.25rem 0.45rem;
+  text-shadow: 0 0 0.18rem rgba(255, 255, 255, 0.45);
+  transition: filter 140ms ease, opacity 140ms ease, transform 140ms ease;
+}
+
+.ostickers-toggle-button:hover,
+.ostickers-toggle-button:focus {
+  filter: grayscale(1) brightness(2.8);
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.ostickers-toggle-button.is-disabled {
+  filter: grayscale(1) brightness(1.25);
+  opacity: 0.36;
+  text-shadow: none;
+}
+
 .ostickers-sticker {
   position: absolute;
   left: var(--osticker-left, 0px);
