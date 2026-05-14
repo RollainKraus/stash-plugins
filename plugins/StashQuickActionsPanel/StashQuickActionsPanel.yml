@@ -1,0 +1,81 @@
+name: Stash Quick Actions Panel
+description: Comprehensive quick action panel for editing image, scene, and performer metadata from cards
+version: 0.1.0
+url: https://github.com/RollainKraus/stash-plugins
+
+settings:
+  menuAccessMode:
+    displayName: Menu Access Mode
+    type: STRING
+    description: "Use rightClick for card context menus, or selectionButton to show an Edit selected button after using Stash card selection. (Default: rightClick)"
+
+  selectionHotkey:
+    displayName: Selection Hotkey
+    type: STRING
+    description: "Optional hotkey to open the menu for selected cards, such as Alt+E or Ctrl+Shift+E. Empty disables the hotkey. No default."
+
+  ratingDisplayMode:
+    displayName: Rating Display Mode
+    type: STRING
+    description: "percent, tenPoint, or fiveStar. This changes labels only; Stash still stores rating100. (Default: percent)"
+
+  quickAccessPerformers:
+    displayName: Quick Access Performers
+    type: STRING
+    description: "Comma-separated performer names to show as direct add actions on image and scene menus."
+
+  quickAccessStudios:
+    displayName: Quick Access Studios
+    type: STRING
+    description: "Comma-separated studio names to show as direct set actions on image and scene menus."
+
+  quickAccessTags:
+    displayName: Quick Access Tags
+    type: STRING
+    description: "Comma-separated tag names to show as direct add actions on image, scene, and performer menus."
+
+  quickAccessPreset1:
+    displayName: Quick Access Preset 1
+    type: STRING
+    description: "Optional preset. Format: Name | tags: Tag A, Tag B | performers: Performer A | studio: Studio A. Performer menus only use preset tags."
+
+  quickAccessPreset2:
+    displayName: Quick Access Preset 2
+    type: STRING
+    description: "Optional preset. Format: Name | tags: Tag A, Tag B | performers: Performer A | studio: Studio A. Performer menus only use preset tags."
+
+  quickAccessPreset3:
+    displayName: Quick Access Preset 3
+    type: STRING
+    description: "Optional preset. Format: Name | tags: Tag A, Tag B | performers: Performer A | studio: Studio A. Performer menus only use preset tags."
+
+  customFieldPresets:
+    displayName: Custom Field Presets
+    type: STRING
+    description: "Comma-separated performer custom field names to show as ready-to-fill rows. Existing fields are not overwritten."
+
+  defaultExpanded:
+    displayName: Default Expanded
+    type: BOOLEAN
+    description: "Expand tag groups by default (Default: false)"
+
+  autoExpandIfSelected:
+    displayName: Auto Expand If Selected
+    type: BOOLEAN
+    description: "Expand groups containing selected tags by default (Default: true)"
+
+  duplicateMultiParentTags:
+    displayName: Duplicate Multi-Parent Tags
+    type: BOOLEAN
+    description: "Allow tags with multiple parents to appear under each parent (Default: false)"
+
+  selectedBorderColor:
+    displayName: Selected Border Color
+    type: STRING
+    description: "Border color for selected tags (Default: #ffffff)"
+
+ui:
+  javascript:
+    - StashQuickActionsPanel.js
+  css:
+    - StashQuickActionsPanel.css
