@@ -9,7 +9,7 @@
 - [Custom Tags Manager](#Custom-Tags-Manager)
 - [Organize Images By Performer](#Organize-Images-By-Performer)
 - [Visage](#Visage)
-- [Simple Right Click Tagging](#Simple-Right-Click-Tagging)
+- [Stash Quick Actions Panel](#Stash-Quick-Actions-Panel)
 - [Background Images Slideshow](#Background-Images-Slideshow)
 - [Studio Dashboard](#Studio-Dashboard)
 - [Stash Dashboard](#Stash-Dashboard)
@@ -353,15 +353,16 @@ Largely untested
 
 All credit goes to the original uploader cc1234
 
-# Simple Right Click Tagging
+# Stash Quick Actions Panel
 
-Simple menu to add tags or performers to images/scenes/performers directly from the content browser pages
+Comprehensive quick action panel for editing image, scene, and performer metadata from cards
+Previously Simple Right Click tagging but functionality expanded beyond tagging
 
 - Supports multi-select for batch editing
 - Images support Visage for quick 'right click >> edit performers >> crop >> find matches'  (Requires Visage)
-- Right click or hover over right 1/3 of content card to show menu (hoverZone makes this compatible with other plugins that add right click menus)
+- Right click or specific 'edit' button when checking selection box on card. also supports keyboard command to open the panel (some nuance with having to click off the selected card for the hotkey to fire)
 
-<h2>Preview</h2>
+<h2>Outdated Previews</h2>
 <p>
   <img src="/pluginPreviews/SimpleRightClickTaggingPreview.gif" alt="SimpleRightClickTagging preview" width="600">
 </p>
