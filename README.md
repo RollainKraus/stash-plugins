@@ -430,10 +430,10 @@ Adds O count 'stickers' to scenes, images, studios and performers based on o cou
 
 <h2>Preview</h2>
 <p>
-  <img src="/pluginPreviews/OStickersPreviewEmoji.png" alt="OStickersPreviewEmoji preview" width="600">
+  <img src="/pluginPreviews/OStickersPreviewEmoji.png" alt="OStickersPreviewEmoji preview" width="200">
 </p>
 <p>
-  <img src="/pluginPreviews/OStickersPreview.png" alt="SOStickersPreview preview" width="600">
+  <img src="/pluginPreviews/OStickersPreview.png" alt="SOStickersPreview preview" width="200">
 </p>
 
 ## License
