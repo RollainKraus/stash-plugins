@@ -9,7 +9,6 @@
   const CARD_SELECTOR = ".scene-card, .image-card, .performer-card, .studio-card, [data-scene-id], [data-image-id], [data-performer-id], [data-studio-id]";
   const CONTENT_TYPES = new Set(["scene", "image", "performer", "studio"]);
   const MODES = new Set(["repeat", "incremental", "single", "thresholds"]);
-  const STICKER_TYPES = new Set(["image", "emoji"]);
   const IMAGE_MODES = new Set(["random", "fixed"]);
   const ANIMATIONS = new Set(["none", "float", "wiggle", "pulse", "rain"]);
   const REFRESH_DELAYS = [0, 150, 450, 1000];
@@ -19,14 +18,17 @@
     maxStickers: 50,
     stickersPerOCount: 1,
     mode: "incremental",
-    type: "image",
-    emoji: DEFAULT_EMOJI,
+    emoji: "",
     imageMode: "random",
     sizePercent: 25,
     opacity: 0.3,
     animation: "none",
     animationSpeedMs: 5000,
     allowOverflow: true,
+    hideOnHover: false,
+    maxOverflowPercent: 50,
+    renderAreaWidth: "0,100",
+    renderAreaHeight: "0,100",
     thresholds: "1,5,10,25,50",
     contentTypes: "image,scene,studio,performer",
   };
@@ -128,7 +130,7 @@
   }
 
   async function ensureAssetCount() {
-    if (state.config.type !== "image") return 0;
+    if (getStickerType() !== "image") return 0;
     if (Number.isInteger(state.assetCount)) return state.assetCount;
     if (state.assetProbePromise) return state.assetProbePromise;
 
@@ -185,14 +187,17 @@
         maxStickers: getConfigNumber(raw.maxStickers, DEFAULTS.maxStickers, 1, 500),
         stickersPerOCount: Math.round(getConfigNumber(raw.stickersPerOCount, DEFAULTS.stickersPerOCount, 1, 100)),
         mode: normalizeEnum(raw.mode, MODES, DEFAULTS.mode),
-        type: normalizeEnum(raw.type, STICKER_TYPES, DEFAULTS.type),
-        emoji: getConfigString(raw.emoji, DEFAULTS.emoji),
+        emoji: String(raw.emoji ?? "").trim(),
         imageMode: normalizeEnum(raw.imageMode, IMAGE_MODES, DEFAULTS.imageMode),
         sizePercent: getConfigNumber(raw.sizePercent, DEFAULTS.sizePercent, 0.05, 100),
         opacity: getConfigNumber(raw.opacity, DEFAULTS.opacity, 0, 1),
         animation: normalizeEnum(raw.animation, ANIMATIONS, DEFAULTS.animation),
         animationSpeedMs: getConfigNumber(raw.animationSpeedMs, DEFAULTS.animationSpeedMs, 200, 60000),
         allowOverflow: getConfigBoolean(raw.allowOverflow, DEFAULTS.allowOverflow),
+        hideOnHover: getConfigBoolean(raw.hideOnHover, DEFAULTS.hideOnHover),
+        maxOverflowPercent: getConfigNumber(raw.maxOverflowPercent, DEFAULTS.maxOverflowPercent, 0, 100),
+        renderAreaWidth: getConfigString(raw.renderAreaWidth, DEFAULTS.renderAreaWidth),
+        renderAreaHeight: getConfigString(raw.renderAreaHeight, DEFAULTS.renderAreaHeight),
         thresholds: getConfigString(raw.thresholds, DEFAULTS.thresholds),
         contentTypes: getConfigString(raw.contentTypes, DEFAULTS.contentTypes),
       };
@@ -225,11 +230,52 @@
   }
 
   function parseEmojiList() {
-    const emojis = String(state.config.emoji || DEFAULTS.emoji)
+    const emojis = String(state.config.emoji || "")
       .split(",")
       .map((emoji) => emoji.trim())
       .filter(Boolean);
-    return emojis.length ? emojis : [DEFAULTS.emoji];
+    return emojis;
+  }
+
+  function getStickerType() {
+    return parseEmojiList().length ? "emoji" : "image";
+  }
+
+  function parsePercentRange(value, fallback = [0, 100]) {
+    const values = String(value ?? "")
+      .split(",")
+      .map((part) => Number(part.trim()))
+      .filter((part) => Number.isFinite(part));
+    const first = values.length >= 2 ? values[0] : fallback[0];
+    const second = values.length >= 2 ? values[1] : fallback[1];
+    const min = Math.max(0, Math.min(100, Math.min(first, second)));
+    const max = Math.max(0, Math.min(100, Math.max(first, second)));
+    return { min, max };
+  }
+
+  function getAxisBounds(range, halfSizePercent) {
+    const overflowFraction = state.config.allowOverflow
+      ? Math.max(0, Math.min(100, state.config.maxOverflowPercent)) / 100
+      : 0;
+    const edgeCenterInset = halfSizePercent * (1 - overflowFraction * 2);
+    let min = state.config.allowOverflow && range.min <= 0
+      ? edgeCenterInset
+      : range.min;
+    let max = state.config.allowOverflow && range.max >= 100
+      ? 100 - edgeCenterInset
+      : range.max;
+
+    if (!state.config.allowOverflow) {
+      min = Math.max(min, halfSizePercent);
+      max = Math.min(max, 100 - halfSizePercent);
+    }
+
+    if (max < min) {
+      const center = (min + max) / 2;
+      return { min: center, max: center };
+    }
+
+    return { min, max };
   }
 
   function getCardInfo(card) {
@@ -434,7 +480,8 @@
     const maxStickers = Math.round(state.config.maxStickers);
     const stickersPerOCount = Math.max(1, Math.round(state.config.stickersPerOCount || 1));
     const thresholds = parseThresholds();
-    const emojis = state.config.type === "emoji" ? parseEmojiList() : [];
+    const stickerType = getStickerType();
+    const emojis = stickerType === "emoji" ? parseEmojiList() : [];
     let countUnits = 0;
 
     if (mode === "single") {
@@ -453,15 +500,15 @@
     for (let index = 1; index <= count; index += 1) {
       models.push({
         key: `${info.cacheKey}:${mode}:${oCount}:${index}`,
-        imageIndex: state.config.type === "image" ? resolveImageIndex(mode, oCount, index, info.cacheKey) : null,
-        emoji: state.config.type === "emoji" ? resolveEmoji(emojis, mode, oCount, index, info.cacheKey) : DEFAULTS.emoji,
+        imageIndex: stickerType === "image" ? resolveImageIndex(mode, oCount, index, info.cacheKey) : null,
+        emoji: stickerType === "emoji" ? resolveEmoji(emojis, mode, oCount, index, info.cacheKey) : DEFAULT_EMOJI,
       });
     }
     return models;
   }
 
   function resolveEmoji(emojis, mode, oCount, index, seedBase) {
-    if (!emojis.length) return DEFAULTS.emoji;
+    if (!emojis.length) return DEFAULT_EMOJI;
     if (state.config.imageMode === "random") {
       const offset = hashString(`${seedBase}:${mode}:${oCount}:emoji`) % emojis.length;
       return emojis[(offset + index - 1) % emojis.length];
@@ -493,7 +540,9 @@
 
   function clearRenderedCards() {
     document.querySelectorAll(".ostickers-layer").forEach((layer) => layer.remove());
-    document.querySelectorAll(".ostickers-card").forEach((card) => card.classList.remove("ostickers-card"));
+    document.querySelectorAll(".ostickers-card").forEach((card) =>
+      card.classList.remove("ostickers-card", "ostickers-card--hide-on-hover")
+    );
   }
 
   function suppressObserver(ms = 250) {
@@ -509,7 +558,7 @@
     const activeBrowseType = getActiveBrowseType();
     if (!activeBrowseType) return;
 
-    if (state.config.type === "image") {
+    if (getStickerType() === "image") {
       const assetCount = await ensureAssetCount();
       if (!assetCount) {
         if (!state.assetWarningShown) {
@@ -546,6 +595,7 @@
     if (!rect.width || !rect.height) return;
 
     card.classList.add("ostickers-card");
+    card.classList.toggle("ostickers-card--hide-on-hover", !!state.config.hideOnHover);
 
     const layer = document.createElement("div");
     layer.className = "ostickers-layer";
@@ -575,11 +625,16 @@
     const halfHeightPercent = (stickerSizePx / rect.height) * 50;
     const seed = hashString(`${info.cacheKey}:${index + 1}`);
     const isRain = state.config.animation === "rain";
-    const minX = state.config.allowOverflow ? -halfWidthPercent : halfWidthPercent;
-    const maxX = state.config.allowOverflow ? 100 + halfWidthPercent : 100 - halfWidthPercent;
-    const minY = state.config.allowOverflow ? -halfHeightPercent : halfHeightPercent;
-    const maxY = state.config.allowOverflow ? 100 + halfHeightPercent : 100 - halfHeightPercent;
+    const xRange = parsePercentRange(state.config.renderAreaWidth, [0, 100]);
+    const yRange = parsePercentRange(state.config.renderAreaHeight, [0, 100]);
+    const xBounds = getAxisBounds(xRange, halfWidthPercent);
+    const yBounds = getAxisBounds(yRange, halfHeightPercent);
+    const minX = xBounds.min;
+    const maxX = xBounds.max;
+    const minY = yBounds.min;
+    const maxY = yBounds.max;
     const duration = Math.max(200, state.config.animationSpeedMs);
+    const rainSpanPx = Math.max(stickerSizePx, ((maxY - minY) / 100) * rect.height);
     const desiredSpacingPx = stickerSizePx * (isRain ? 0.92 : 0.84);
     const attemptCount = isRain ? 24 : 18;
     let bestCandidate = null;
@@ -589,20 +644,20 @@
       const attemptSeed = seed + attempt * 97;
       const candidate = isRain
         ? {
-            leftPercent: randomBetween(attemptSeed + 17, minX, Math.max(minX, maxX)),
-            topPercent: -halfHeightPercent - randomBetween(attemptSeed + 31, 2, 12),
+            leftPercent: randomBetween(attemptSeed + 17, minX, maxX),
+            topPercent: minY - halfHeightPercent - randomBetween(attemptSeed + 31, 2, 12),
             rotation: randomBetween(attemptSeed + 43, -10, 10),
             delay: -Math.round(randomBetween(attemptSeed + 59, 0, duration)),
             rainOffsetPercent: Math.round(randomBetween(attemptSeed + 71, 8, 22)),
-            rainDistancePx: Math.round(rect.height + stickerSizePx * randomBetween(attemptSeed + 83, 1.25, 2)),
+            rainDistancePx: Math.round(rainSpanPx + stickerSizePx * randomBetween(attemptSeed + 83, 1.25, 2)),
           }
         : {
-            leftPercent: randomBetween(attemptSeed + 17, minX, Math.max(minX, maxX)),
-            topPercent: randomBetween(attemptSeed + 31, minY, Math.max(minY, maxY)),
+            leftPercent: randomBetween(attemptSeed + 17, minX, maxX),
+            topPercent: randomBetween(attemptSeed + 31, minY, maxY),
             rotation: randomBetween(attemptSeed + 43, -14, 14),
             delay: Math.round(randomBetween(attemptSeed + 59, 0, Math.min(duration * 0.6, 3000))),
             rainOffsetPercent: Math.round(randomBetween(attemptSeed + 71, 8, 22)),
-            rainDistancePx: Math.round(rect.height + stickerSizePx),
+            rainDistancePx: Math.round(rainSpanPx + stickerSizePx),
           };
 
       const score = scorePlacement(candidate, priorPlacements, rect, isRain);
@@ -616,12 +671,12 @@
     }
 
     return bestCandidate || {
-      leftPercent: randomBetween(seed + 17, minX, Math.max(minX, maxX)),
-      topPercent: isRain ? -halfHeightPercent - 6 : randomBetween(seed + 31, minY, Math.max(minY, maxY)),
+      leftPercent: randomBetween(seed + 17, minX, maxX),
+      topPercent: isRain ? minY - halfHeightPercent - 6 : randomBetween(seed + 31, minY, maxY),
       rotation: randomBetween(seed + 43, -14, 14),
       delay: isRain ? -Math.round(randomBetween(seed + 59, 0, duration)) : Math.round(randomBetween(seed + 59, 0, Math.min(duration * 0.6, 3000))),
       rainOffsetPercent: 12,
-      rainDistancePx: Math.round(rect.height + stickerSizePx),
+      rainDistancePx: Math.round(rainSpanPx + stickerSizePx),
     };
   }
 
@@ -646,7 +701,8 @@
 
   function createStickerElement(sticker, stickerSizePx, placement, index) {
     const node = document.createElement("div");
-    node.className = `ostickers-sticker${state.config.type === "emoji" ? " ostickers-sticker--emoji" : ""}${getAnimationClass()}`;
+    const stickerType = getStickerType();
+    node.className = `ostickers-sticker${stickerType === "emoji" ? " ostickers-sticker--emoji" : ""}${getAnimationClass()}`;
     node.style.setProperty("--osticker-left", `${placement.leftPercent}%`);
     node.style.setProperty("--osticker-top", `${placement.topPercent}%`);
     node.style.setProperty("--osticker-size", `${stickerSizePx}px`);
@@ -658,7 +714,7 @@
     node.style.setProperty("--osticker-rain-distance", `${placement.rainDistancePx}px`);
     node.dataset.ostickerIndex = String(index + 1);
 
-    if (state.config.type === "image") {
+    if (stickerType === "image") {
       const image = document.createElement("img");
       image.alt = "O sticker";
       image.src = `/plugin/${PLUGIN_ID}/assets/${sticker.imageIndex}.png`;
@@ -687,19 +743,20 @@
   }
 
   function setupToggleButton() {
-    if (document.querySelector(`.${TOGGLE_BUTTON_CLASS}`)) {
-      updateToggleButton();
-      return true;
-    }
+    let button = document.querySelector(`.${TOGGLE_BUTTON_CLASS}`);
 
     const parentNode = document.querySelector(".navbar-buttons");
-    if (!(parentNode instanceof HTMLElement)) return false;
+    if (!(button instanceof HTMLButtonElement) && !(parentNode instanceof HTMLElement)) return false;
 
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `nav-utility btn minimal ${TOGGLE_BUTTON_CLASS}`;
-    button.textContent = DEFAULT_EMOJI;
-    button.addEventListener("click", () => {
+    if (!(button instanceof HTMLButtonElement)) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.className = `nav-utility btn minimal ${TOGGLE_BUTTON_CLASS}`;
+      button.textContent = DEFAULT_EMOJI;
+      parentNode.appendChild(button);
+    }
+
+    button.onclick = () => {
       state.enabled = !state.enabled;
       setStoredEnabled(state.enabled);
       updateToggleButton();
@@ -708,9 +765,8 @@
       } else {
         clearRenderedCards();
       }
-    });
+    };
 
-    parentNode.appendChild(button);
     updateToggleButton();
     return true;
   }
@@ -778,7 +834,7 @@
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", main);
+    document.addEventListener("DOMContentLoaded", main, { once: true });
   } else {
     main();
   }
