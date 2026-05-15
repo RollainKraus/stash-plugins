@@ -436,6 +436,11 @@ Adds O count 'stickers' to scenes, images, studios and performers based on o cou
   <img src="/pluginPreviews/OStickersPreview.png" alt="SOStickersPreview preview" width="200">
 </p>
 
+<h2>Settings Preview</h2>
+<p>
+  <img src="/pluginPreviews/OStickersSettingsPreview.png" alt="OStickersSettingsPreview preview" width="600">
+</p>
+
 ## License
 
 The default license is set to [AGPL-3.0](/LICENCE). Before publishing any plugins you can change it.
