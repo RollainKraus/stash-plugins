@@ -1,6 +1,6 @@
 name: O Stickers
 description: Randomly overlays O-count stickers or emoji on scene, image, studio, and performer cards.
-version: 0.1.0
+version: 1.1.0
 ui:
   css:
     - OStickers.css
@@ -21,14 +21,10 @@ settings:
     displayName: Mode
     type: STRING
     description: repeat, incremental, single, or thresholds. Default incremental.
-  type:
-    displayName: Sticker Type
-    type: STRING
-    description: image or emoji. Default image.
   emoji:
     displayName: Emoji
     type: STRING
-    description: Emoji or comma separated emoji list to use when Sticker Type is emoji. Random starts at a stable random emoji per card; fixed cycles through the list. Default U+1F4A6.
+    description: Leave empty to use PNG files from the assets folder, or enter one emoji / a comma-separated emoji list to use emoji stickers. Default empty.
   imageMode:
     displayName: Image Mode
     type: STRING
@@ -53,6 +49,22 @@ settings:
     displayName: Allow Overflow
     type: BOOLEAN
     description: Allow stickers to overflow beyond card edges. Default true.
+  hideOnHover:
+    displayName: Hide On Hover
+    type: BOOLEAN
+    description: Hide stickers while hovering over a decorated card. Default false.
+  maxOverflowPercent:
+    displayName: Max Overflow Percent
+    type: NUMBER
+    description: Maximum percentage of a sticker that may sit outside a card edge when overflow is enabled. Default 50.
+  renderAreaWidth:
+    displayName: Render Area Width
+    type: STRING
+    description: Comma separated min,max card-width percentages for sticker centers. Example 10,90 keeps stickers right of 10% and left of 90%. Default 0,100.
+  renderAreaHeight:
+    displayName: Render Area Height
+    type: STRING
+    description: Comma separated min,max card-height percentages for sticker centers. Example 20,80 keeps stickers between 20% and 80% of card height. Default 0,100.
   thresholds:
     displayName: Thresholds
     type: STRING
