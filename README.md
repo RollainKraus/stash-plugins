@@ -428,6 +428,14 @@ Adds O count 'stickers' to scenes, images, studios and performers based on o cou
 - Supports custom images as long as they follow the naming convention 1.png, 2.png, 3.png etc
 - Customizable animations and styling
 
+<h2>Preview</h2>
+<p>
+  <img src="/pluginPreviews/OStickersPreviewEmoji.png" alt="OStickersPreviewEmoji preview" width="600">
+</p>
+<p>
+  <img src="/pluginPreviews/OStickersPreview.png" alt="SOStickersPreview preview" width="600">
+</p>
+
 ## License
 
 The default license is set to [AGPL-3.0](/LICENCE). Before publishing any plugins you can change it.
