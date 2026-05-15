@@ -10,6 +10,13 @@
   pointer-events: none;
   border-radius: inherit;
   overflow: var(--ostickers-overflow, hidden);
+  opacity: 1;
+  transition: opacity 140ms ease;
+}
+
+.ostickers-card--hide-on-hover:hover .ostickers-layer,
+.ostickers-card--hide-on-hover:focus-within .ostickers-layer {
+  opacity: 0;
 }
 
 .ostickers-toggle-button {
