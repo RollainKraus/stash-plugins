@@ -355,12 +355,24 @@ All credit goes to the original uploader cc1234
 
 # Stash Quick Actions Panel
 
-Comprehensive quick action panel for editing image, scene, and performer metadata from cards
-Previously Simple Right Click tagging but functionality expanded beyond tagging
+Comprehensive quick action panel for editing image, scene, and performer metadata from cards. Previously Simple Right Click tagging but functionality expanded beyond tagging
 
 - Supports multi-select for batch editing
 - Images support Visage for quick 'right click >> edit performers >> crop >> find matches'  (Requires Visage)
 - Right click or specific 'edit' button when checking selection box on card. also supports keyboard command to open the panel (some nuance with having to click off the selected card for the hotkey to fire)
+- Copy paste/replace
+- Edit images on performers
+- Directly edit or add custom fields
+- Quick keyboard actions like typing 't' activates the tag search bar
+- Create presets for quickly adding multiple tags (or performers and +1 studio) to content
+- Recent actions
+- Reapply last action
+- Quick rating
+- Edit date
+- Flag organized or unorganized
+- Add or subtract O's
+- Clear data
+- Content aware right clicking (Can't add performer to performer cards for example)
 
 <h2>Outdated Previews</h2>
 <p>
