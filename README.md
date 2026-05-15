@@ -440,6 +440,8 @@ Adds O count 'stickers' to scenes, images, studios and performers based on o cou
 - Supports custom images as long as they follow the naming convention 1.png, 2.png, 3.png etc
 - Customizable animations and styling
 
+prepackaged assets are from cumfacegenerator
+
 <h2>Preview</h2>
 <p>
   <img src="/pluginPreviews/OStickersPreviewEmoji.png" alt="OStickersPreviewEmoji preview" width="200">
