@@ -374,15 +374,18 @@ Comprehensive quick action panel for editing image, scene, and performer metadat
 - Clear data
 - Content aware right clicking (Can't add performer to performer cards for example)
 
-<h2>Outdated Previews</h2>
+<h2>Previews</h2>
 <p>
   <img src="/pluginPreviews/SimpleRightClickTaggingPreview.gif" alt="SimpleRightClickTagging preview" width="600">
 </p>
 <p>
-  <img src="/pluginPreviews/SimpleRightClickTaggingPerformerPreview.png" alt="SimpleRightClickTaggingPerformers preview" width="600">
+  <img src="/pluginPreviews/StashQuickActionsPanelImagePreview.png" alt="StashQuickActionsPanelImagePreview preview" width="600">
 </p>
 <p>
-  <img src="/pluginPreviews/SimpleRightClickTaggingTagsPreview.png.png" alt="SimpleRightClickTaggingTags preview" width="600">
+  <img src="/pluginPreviews/StashQuickActionsPanelPerformerPreview.png" alt="StashQuickActionsPanelPerformerPreview preview" width="600">
+</p>
+<p>
+  <img src="/pluginPreviews/StashQuickActionsPanelScenePreviewCompact.png" alt="StashQuickActionsPanelScenePreviewCompact preview" width="600">
 </p>
 
 # Background Images Slideshow
