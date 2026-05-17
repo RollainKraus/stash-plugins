@@ -449,6 +449,19 @@
     saveJson(PREVIOUS_ACTION_KEY, state.previousAction);
   }
 
+  function clearSavedQuickActionData() {
+    state.recentQuickActions = getEmptyRecentQuickActions();
+    state.metadataClipboard = null;
+    state.previousAction = null;
+    try {
+      localStorage.removeItem(RECENT_QUICK_ACTIONS_KEY);
+      localStorage.removeItem(METADATA_CLIPBOARD_KEY);
+      localStorage.removeItem(PREVIOUS_ACTION_KEY);
+    } catch (err) {
+      console.warn("[StashQuickActionsPanel] saved quick action data clear failed", err);
+    }
+  }
+
   function loadMenuSectionState() {
     if (state.menuSectionState) return state.menuSectionState;
     const stored = loadSavedJson(MENU_SECTION_STATE_KEY);
@@ -1241,6 +1254,13 @@
       `,
       {}
     );
+    const savedDataPanelHtml = renderMenuSection(
+      "savedData",
+      "Saved data",
+      `
+        <button type="button" class="stash-quick-actions-panel__menu-item stash-quick-actions-panel__menu-item--quick" data-sqap-action="clear-saved-data">Clear recent / last / clipboard</button>
+      `
+    );
     const customFieldsPanelHtml = showInlineCustomFields
       ? renderMenuSection(
           "customFields",
@@ -1251,8 +1271,8 @@
           }
         )
       : "";
-    const sidePanelHtml = presetsPanelHtml || recentPanelHtml || clipboardPanelHtml || previousPanelHtml || customFieldsPanelHtml
-      ? `<div class="stash-quick-actions-panel__menu-side">${presetsPanelHtml}${recentPanelHtml}${clipboardPanelHtml}${previousPanelHtml}${customFieldsPanelHtml}</div>`
+    const sidePanelHtml = presetsPanelHtml || recentPanelHtml || clipboardPanelHtml || previousPanelHtml || savedDataPanelHtml || customFieldsPanelHtml
+      ? `<div class="stash-quick-actions-panel__menu-side">${presetsPanelHtml}${recentPanelHtml}${clipboardPanelHtml}${previousPanelHtml}${savedDataPanelHtml}${customFieldsPanelHtml}</div>`
       : "";
     menu.innerHTML = `
       <div class="stash-quick-actions-panel__menu-layout ${sidePanelHtml ? "has-side-panel" : ""}">
@@ -1346,6 +1366,10 @@
         clearMetadataSection(itemType, normalizedImageIds, metadataKind);
       } else if (action === "previous-action") {
         repeatPreviousAction(itemType, normalizedImageIds);
+      } else if (action === "clear-saved-data") {
+        clearSavedQuickActionData();
+        showQuickAccessToast("Cleared recent actions, last action, and clipboard.");
+        closeContextMenu();
       }
     });
     menu.addEventListener("toggle", (toggleEvent) => {
