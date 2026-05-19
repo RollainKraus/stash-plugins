@@ -14,6 +14,7 @@
 - [Studio Dashboard](#Studio-Dashboard)
 - [Stash Dashboard](#Stash-Dashboard)
 - [O Stickers](#O-Stickers)
+- [Stash Mini GUI](#Stash-Mini-GUI)
 
 ## Installation
 
@@ -457,6 +458,11 @@ prepackaged assets are from cumfacegenerator
 <p>
   <img src="/pluginPreviews/OStickersSettingsPreview.png" alt="OStickersSettingsPreview preview" width="600">
 </p>
+
+# Stash Mini GUI
+Small companion app for browsing content while content is full screened. 
+
+No new features of functions, just a simple and customizable phone like GUI to quickly browse content on the same window. 
 
 ## License
 
