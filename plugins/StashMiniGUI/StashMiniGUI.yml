@@ -1,0 +1,21 @@
+name: Stash Mini Gui
+description: Adds a floating Stash Mini Gui for viewing scene details, performers, images, studios, tags, and related content without navigating the main page.
+version: 0.2.60
+ui:
+  javascript:
+    - StashMiniGUI.js
+  css:
+    - StashMiniGUI.css
+settings:
+  initialPosition:
+    displayName: Initial Position
+    type: STRING
+    description: Initial panel position as right,bottom offsets in pixels. Default 22,22. Dragging the panel saves a custom position.
+  launcherPosition:
+    displayName: Stash Mini Gui Button Position
+    type: STRING
+    description: Stash Mini Gui button position as x,y viewport percentages from the top-left. Default 96,92.
+  keyboardShortcut:
+    displayName: Keyboard Shortcut
+    type: STRING
+    description: Optional shortcut to toggle Stash Mini Gui. Supports ctrl+shift+m or alt+m. Default ctrl+shift+m.
