@@ -6,8 +6,36 @@
   const ENABLED_STORAGE_KEY = "ostickers:enabled";
   const TOGGLE_BUTTON_CLASS = "ostickers-toggle-button";
   const DEFAULT_EMOJI = "\u{1F4A6}";
-  const CARD_SELECTOR = ".scene-card, .image-card, .performer-card, .studio-card, [data-scene-id], [data-image-id], [data-performer-id], [data-studio-id]";
-  const CONTENT_TYPES = new Set(["scene", "image", "performer", "studio"]);
+  const DATA_CARD_SELECTOR = [
+    "[data-scene-id]",
+    "[data-image-id]",
+    "[data-performer-id]",
+    "[data-studio-id]",
+    "[data-group-id]",
+    "[data-movie-id]",
+  ].join(", ");
+  const CARD_LINK_SELECTOR = [
+    'a[href*="/scenes/"]',
+    'a[href*="/images/"]',
+    'a[href*="/performers/"]',
+    'a[href*="/studios/"]',
+    'a[href*="/groups/"]',
+    'a[href*="/movies/"]',
+  ].join(", ");
+  const CARD_SELECTOR = [
+    ".scene-card",
+    ".image-card",
+    ".performer-card",
+    ".studio-card",
+    ".group-card",
+    ".movie-card",
+    DATA_CARD_SELECTOR,
+    CARD_LINK_SELECTOR,
+  ].join(", ");
+  const CONTENT_TYPES = new Set(["scene", "image", "performer", "studio", "group"]);
+  const CONTENT_CARD_CLASS_SELECTOR = ".scene-card, .image-card, .performer-card, .studio-card, .group-card, .movie-card";
+  const GENERIC_CARD_SELECTOR = ".card";
+  const METADATA_CACHE_TTL_MS = 30000;
   const MODES = new Set(["repeat", "incremental", "single", "thresholds"]);
   const IMAGE_MODES = new Set(["random", "fixed"]);
   const ANIMATIONS = new Set(["none", "float", "wiggle", "pulse", "rain"]);
@@ -30,7 +58,9 @@
     renderAreaWidth: "0,100",
     renderAreaHeight: "0,100",
     thresholds: "1,5,10,25,50",
-    contentTypes: "image,scene,studio,performer",
+    contentTypes: "image,scene,studio,performer,group",
+    showOnHomePage: false,
+    showOnOtherPages: false,
   };
 
   const state = {
@@ -200,6 +230,8 @@
         renderAreaHeight: getConfigString(raw.renderAreaHeight, DEFAULTS.renderAreaHeight),
         thresholds: getConfigString(raw.thresholds, DEFAULTS.thresholds),
         contentTypes: getConfigString(raw.contentTypes, DEFAULTS.contentTypes),
+        showOnHomePage: getConfigBoolean(raw.showOnHomePage, DEFAULTS.showOnHomePage),
+        showOnOtherPages: getConfigBoolean(raw.showOnOtherPages, DEFAULTS.showOnOtherPages),
       };
     } catch (err) {
       console.warn("[OStickers] Config load failed", err);
@@ -286,6 +318,7 @@
       { type: "image", id: card.dataset.imageId || findIdFromHref(card, "/images/") },
       { type: "performer", id: card.dataset.performerId || findIdFromHref(card, "/performers/") },
       { type: "studio", id: card.dataset.studioId || findIdFromHref(card, "/studios/") },
+      { type: "group", id: card.dataset.groupId || card.dataset.movieId || findIdFromHref(card, "/groups/") || findIdFromHref(card, "/movies/") },
     ];
 
     const match = candidates.find((candidate) => candidate.id);
@@ -304,12 +337,23 @@
     if (path === "/images") return "image";
     if (path === "/performers") return "performer";
     if (path === "/studios") return "studio";
+    if (path === "/groups" || path === "/movies") return "group";
     return null;
   }
 
+  function getActiveDecorationContext() {
+    const path = String(location.pathname || "").replace(/\/+$/, "").toLowerCase() || "/";
+    const browseType = getActiveBrowseType();
+    if (browseType) return { mode: "browse", browseType };
+    if ((path === "/" || path === "/home") && state.config.showOnHomePage) return { mode: "home", browseType: null };
+    if (state.config.showOnOtherPages) return { mode: "other", browseType: null };
+    return { mode: "disabled", browseType: null };
+  }
+
   function findIdFromHref(card, prefix) {
+    const ownHref = card.matches?.(`a[href*="${prefix}"]`) ? card.getAttribute("href") : "";
     const link = card.querySelector(`a[href*="${prefix}"]`);
-    const href = link?.getAttribute("href") || "";
+    const href = ownHref || link?.getAttribute("href") || "";
     const match = href.match(new RegExp(`${prefix.replace(/\//g, "\\/")}([^/?#]+)`));
     return match?.[1] || null;
   }
@@ -322,7 +366,8 @@
 
   async function fetchMetadata(info) {
     if (!info?.type || !info?.id) return null;
-    if (state.metadataCache.has(info.cacheKey)) return state.metadataCache.get(info.cacheKey);
+    const cached = state.metadataCache.get(info.cacheKey);
+    if (cached && Date.now() - cached.createdAt < METADATA_CACHE_TTL_MS) return cached.promise;
 
     const promise = fetchMetadataInner(info)
       .catch((err) => {
@@ -331,7 +376,7 @@
         return null;
       });
 
-    state.metadataCache.set(info.cacheKey, promise);
+    state.metadataCache.set(info.cacheKey, { createdAt: Date.now(), promise });
     return promise;
   }
 
@@ -376,10 +421,48 @@
       return { oCount: sceneOCount + imageOCount };
     }
 
+    if (info.type === "group") {
+      return { oCount: await fetchGroupOCount(info.id) };
+    }
+
     return { oCount: 0 };
   }
 
-  async function fetchAggregateOCount(kind, id) {
+  async function fetchGroupOCount(id) {
+    const attempts = [
+      () => fetchAggregateOCount("groupScene", id, true),
+      () => fetchAggregateOCount("movieScene", id, true),
+      () => fetchGroupEntityOCount("findGroup", id),
+      () => fetchGroupEntityOCount("findMovie", id),
+    ];
+
+    for (const attempt of attempts) {
+      const count = await attempt();
+      if (count > 0) return count;
+    }
+
+    return 0;
+  }
+
+  async function fetchGroupEntityOCount(fieldName, id) {
+    try {
+      const data = await gql(`
+        query OStickersGroupEntityOCount($id: ID!) {
+          ${fieldName}(id: $id) {
+            id
+            scenes {
+              o_counter
+            }
+          }
+        }
+      `, { id: String(id) });
+      return sumOCount(data?.[fieldName]?.scenes);
+    } catch (err) {
+      return 0;
+    }
+  }
+
+  async function fetchAggregateOCount(kind, id, quiet = false) {
     try {
       if (kind === "performerScene") {
         const data = await gql(`
@@ -462,8 +545,48 @@
         });
         return sumOCount(data?.findImages?.images);
       }
+
+      if (kind === "groupScene") {
+        const data = await gql(`
+          query OStickersGroupSceneOCount($sceneFilter: SceneFilterType) {
+            findScenes(scene_filter: $sceneFilter, filter: { per_page: -1 }) {
+              scenes {
+                o_counter
+              }
+            }
+          }
+        `, {
+          sceneFilter: {
+            groups: {
+              value: [String(id)],
+              modifier: "INCLUDES_ALL",
+            },
+          },
+        });
+        return sumOCount(data?.findScenes?.scenes);
+      }
+
+      if (kind === "movieScene") {
+        const data = await gql(`
+          query OStickersMovieSceneOCount($sceneFilter: SceneFilterType) {
+            findScenes(scene_filter: $sceneFilter, filter: { per_page: -1 }) {
+              scenes {
+                o_counter
+              }
+            }
+          }
+        `, {
+          sceneFilter: {
+            movies: {
+              value: [String(id)],
+              modifier: "INCLUDES_ALL",
+            },
+          },
+        });
+        return sumOCount(data?.findScenes?.scenes);
+      }
     } catch (err) {
-      console.warn("[OStickers] Aggregate O-count lookup failed", kind, id, err);
+      if (!quiet) console.warn("[OStickers] Aggregate O-count lookup failed", kind, id, err);
     }
     return 0;
   }
@@ -555,8 +678,8 @@
 
     if (!state.enabled) return;
 
-    const activeBrowseType = getActiveBrowseType();
-    if (!activeBrowseType) return;
+    const context = getActiveDecorationContext();
+    if (context.mode === "disabled") return;
 
     if (getStickerType() === "image") {
       const assetCount = await ensureAssetCount();
@@ -570,13 +693,14 @@
     }
 
     const enabledTypes = getEnabledContentTypes();
-    if (!enabledTypes.has(activeBrowseType)) return;
+    if (context.mode === "browse" && !enabledTypes.has(context.browseType)) return;
     const cards = Array.from(document.querySelectorAll(CARD_SELECTOR));
-    const uniqueCards = uniqueValues(cards);
+    const uniqueCards = uniqueValues(cards.map(getStickerCardElement).filter(Boolean));
 
     for (const card of uniqueCards) {
       const info = getCardInfo(card);
-      if (!info || info.type !== activeBrowseType || !enabledTypes.has(info.type)) continue;
+      if (!info || !enabledTypes.has(info.type)) continue;
+      if (context.mode === "browse" && info.type !== context.browseType) continue;
 
       const metadata = await fetchMetadata(info);
       if (!metadata?.oCount) continue;
@@ -588,6 +712,39 @@
     }
 
     suppressObserver();
+  }
+
+  function getStickerCardElement(node) {
+    if (!(node instanceof HTMLElement)) return null;
+
+    if (node.matches(CONTENT_CARD_CLASS_SELECTOR)) return node;
+    const contentCard = node.closest(CONTENT_CARD_CLASS_SELECTOR);
+    if (contentCard instanceof HTMLElement) return contentCard;
+
+    const genericCard = node.matches(GENERIC_CARD_SELECTOR)
+      ? node
+      : node.closest(GENERIC_CARD_SELECTOR);
+    if (
+      genericCard instanceof HTMLElement
+      && isReasonableCardElement(genericCard)
+      && getCardInfo(genericCard)
+    ) {
+      return genericCard;
+    }
+
+    if ((node.matches(DATA_CARD_SELECTOR) || node.matches(CARD_LINK_SELECTOR)) && isReasonableCardElement(node)) return node;
+    return null;
+  }
+
+  function isReasonableCardElement(node) {
+    const rect = node.getBoundingClientRect();
+    if (!rect.width || !rect.height) return false;
+    if (rect.width < 80 || rect.height < 70) return false;
+    const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
+    const nodeArea = rect.width * rect.height;
+    return rect.width <= Math.max(900, window.innerWidth * 0.8)
+      && rect.height <= Math.max(900, window.innerHeight * 0.8)
+      && nodeArea <= viewportArea * 0.6;
   }
 
   function renderCard(card, info, stickers) {
