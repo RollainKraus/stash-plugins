@@ -1,0 +1,26 @@
+name: Clean Up Queue
+description: Focused queue workflow for fixing missing metadata across scenes, images, performers, and studios.
+version: 0.1.0
+url: https://github.com/RollainKraus/stash-plugins
+ui:
+  javascript:
+    - CleanUpQueue.js
+  css:
+    - CleanUpQueue.css
+settings:
+  contentPageSize:
+    displayName: Content Page Size
+    description: Number of items to fetch per request when building the cleanup queue. Higher values load faster but can feel heavier.
+    type: NUMBER
+  contentLoadLimit:
+    displayName: Content Load Limit
+    description: Maximum number of items to inspect while building the queue.
+    type: NUMBER
+  saveNextShortcut:
+    displayName: Save And Next Shortcut
+    description: Keyboard shortcut for saving edits and moving to the next item. Use values like Ctrl+Enter, Alt+S, or Ctrl+Shift+S.
+    type: STRING
+  skipShortcut:
+    displayName: Skip Shortcut
+    description: Keyboard shortcut for skipping the current item. Default is ArrowRight. Use values like ArrowRight, Alt+K, or Ctrl+Shift+K.
+    type: STRING
