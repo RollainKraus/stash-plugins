@@ -6,6 +6,9 @@
   const THRESHOLD = 0.5;
   const MAX_RESULTS = 5;
   const GRADIO_CLIENT_URL = "https://cdn.jsdelivr.net/npm/@gradio/client@1.15.3/dist/index.js";
+  const PLUGIN_ID = "visage";
+  const ROUTE_EVENT = "visage:route-change";
+  const FLOATING_BUTTON_ID = "visage-floating-button";
 
   let activeSession = null;
   let lastCropBlob = null;
@@ -14,6 +17,9 @@
   let lastCropPngDataUrl = null;
   let gradioClientModule = null;
   let gradioClient = null;
+  let config = {
+    floatingImageButton: false,
+  };
 
   function getScenario() {
     const match = document.URL.match(/(scenes|images)\/(\d+)/);
@@ -83,6 +89,30 @@
 
   async function callGQL(query, variables) {
     return gqlData(await getCsLib().callGQL({ query, variables }));
+  }
+
+  async function loadConfig() {
+    try {
+      const data = await callGQL(`{
+        configuration {
+          plugins
+        }
+      }`);
+      const raw = data?.configuration?.plugins?.[PLUGIN_ID] || {};
+      config = {
+        floatingImageButton: normalizeBoolean(raw.floatingImageButton, false),
+      };
+    } catch (error) {
+      console.warn("[Visage] Could not load plugin settings.", error);
+    }
+  }
+
+  function normalizeBoolean(value, fallback) {
+    if (typeof value === "boolean") return value;
+    const normalized = String(value ?? "").trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+    return fallback;
   }
 
   async function getConfiguredStashboxEndpoint() {
@@ -620,6 +650,55 @@
     });
   }
 
+  function isImagePage() {
+    return getScenario()?.type === "images";
+  }
+
+  function setupFloatingButton() {
+    const existing = document.getElementById(FLOATING_BUTTON_ID);
+    if (!config.floatingImageButton || !isImagePage()) {
+      existing?.remove();
+      return;
+    }
+
+    if (existing) return;
+
+    const button = document.createElement("button");
+    button.id = FLOATING_BUTTON_ID;
+    button.type = "button";
+    button.className = "visage-floating-button";
+    button.title = "Select a face crop with Visage";
+    button.setAttribute("aria-label", "Select a face crop with Visage");
+    button.innerHTML = `
+      <span class="visage-floating-button-icon" aria-hidden="true">V</span>
+      <span class="visage-floating-button-label">Visage</span>
+    `;
+    document.body.appendChild(button);
+  }
+
+  function scheduleFloatingButtonSetup() {
+    [0, 150, 500, 1000].forEach((delay) => {
+      window.setTimeout(setupFloatingButton, delay);
+    });
+  }
+
+  function installRouteHooks() {
+    if (!window.__visageRouteListenerInstalled) {
+      window.__visageRouteListenerInstalled = true;
+      window.addEventListener(ROUTE_EVENT, scheduleFloatingButtonSetup);
+      window.addEventListener("popstate", () => window.dispatchEvent(new Event(ROUTE_EVENT)));
+
+      ["pushState", "replaceState"].forEach((method) => {
+        const original = history[method];
+        history[method] = function patchedVisageHistoryMethod(...args) {
+          const result = original.apply(this, args);
+          window.dispatchEvent(new Event(ROUTE_EVENT));
+          return result;
+        };
+      });
+    }
+  }
+
   function getLastCrop() {
     return {
       dataUrl: lastCropDataUrl,
@@ -671,10 +750,17 @@
 
   window.dispatchEvent(new CustomEvent("visage:quick-tagging-ready"));
 
+  loadConfig()
+    .catch((error) => console.warn("[Visage] Setup failed.", error))
+    .finally(() => {
+      installRouteHooks();
+      scheduleFloatingButtonSetup();
+    });
+
   document.addEventListener(
     "click",
     (event) => {
-      const button = event.target.closest?.("#visage");
+      const button = event.target.closest?.(`#visage, #${FLOATING_BUTTON_ID}`);
       if (!button) return;
 
       event.preventDefault();
