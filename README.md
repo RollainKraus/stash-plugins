@@ -14,6 +14,7 @@
 - [Studio Dashboard](#Studio-Dashboard)
 - [Stash Dashboard](#Stash-Dashboard)
 - [O Stickers](#O-Stickers)
+- [Clean Up Queue](#Clean-Up-Queue)
 - [Stash Mini GUI](#Stash-Mini-GUI)
 
 ## Installation
@@ -458,6 +459,11 @@ prepackaged assets are from cumfacegenerator
 <p>
   <img src="/pluginPreviews/OStickersSettingsPreview.png" alt="OStickersSettingsPreview preview" width="600">
 </p>
+
+# Clean Up Queue
+Simple GUI for filtering content by missing metadata for convenient editing
+
+Filter content based on specific missing metadata. Just another way to go through and clean/complete content that might not be covered by common scrapers
 
 # Stash Mini GUI
 Small companion app for browsing content while content is full screened. 
