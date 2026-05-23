@@ -1,6 +1,6 @@
 name: O Stickers
 description: Randomly overlays O-count stickers or emoji on scene, image, studio, performer, and group cards.
-version: 1.3.2
+version: 1.4.2
 ui:
   css:
     - OStickers.css
@@ -81,3 +81,7 @@ settings:
     displayName: Show On Other Pages
     type: BOOLEAN
     description: Decorate eligible cards outside the main scene, image, performer, studio, and group browser pages. Includes embedded content cards when enabled by Content Types. Default false.
+  showToggleButton:
+    displayName: Show Header Toggle Button
+    type: BOOLEAN
+    description: Show the header button for quickly toggling stickers on or off. Default true.
