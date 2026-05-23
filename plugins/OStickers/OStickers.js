@@ -61,6 +61,7 @@
     contentTypes: "image,scene,studio,performer,group",
     showOnHomePage: false,
     showOnOtherPages: false,
+    showToggleButton: true,
   };
 
   const state = {
@@ -232,6 +233,7 @@
         contentTypes: getConfigString(raw.contentTypes, DEFAULTS.contentTypes),
         showOnHomePage: getConfigBoolean(raw.showOnHomePage, DEFAULTS.showOnHomePage),
         showOnOtherPages: getConfigBoolean(raw.showOnOtherPages, DEFAULTS.showOnOtherPages),
+        showToggleButton: getConfigBoolean(raw.showToggleButton, DEFAULTS.showToggleButton),
       };
     } catch (err) {
       console.warn("[OStickers] Config load failed", err);
@@ -900,6 +902,11 @@
   }
 
   function setupToggleButton() {
+    if (!state.config.showToggleButton) {
+      document.querySelector(`.${TOGGLE_BUTTON_CLASS}`)?.remove();
+      return true;
+    }
+
     let button = document.querySelector(`.${TOGGLE_BUTTON_CLASS}`);
 
     const parentNode = document.querySelector(".navbar-buttons");
