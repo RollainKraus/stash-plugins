@@ -1,0 +1,49 @@
+name: Content Banners
+description: Adds configurable scene preview banners to Stash detail pages.
+version: 0.1.1
+ui:
+  css:
+    - ContentBanners.css
+  javascript:
+    - ContentBanners.js
+settings:
+  pageTypes:
+    displayName: Page Types
+    type: STRING
+    description: Comma separated detail pages to decorate. Supports performer,studio,group,tag. Default performer,studio,group,tag.
+  bannerMode:
+    displayName: Banner Mode
+    type: STRING
+    description: preview, screenshot, or mixed. Preview uses generated scene preview videos. Screenshot uses still images. Mixed prefers preview and falls back to screenshot. Default mixed.
+  selectionMode:
+    displayName: Selection Mode
+    type: STRING
+    description: random, highest rating, most recent releases, or recently added. Modes with no matching scenes fall back to random. Default random.
+  resultLimit:
+    displayName: Result Limit
+    type: NUMBER
+    description: Number of scenes to load for each banner pool. Default 40.
+  bannerCount:
+    displayName: Banner Count
+    type: STRING
+    description: Banner panels per page type, from 1 to 3. Example studio:2,performer:2,groups:2,tag:2. Default studio:2,performer:2,groups:2,tag:2.
+  rotationSeconds:
+    displayName: Rotation Seconds
+    type: NUMBER
+    description: Seconds before switching to another banner item. Default 12.
+  transitionMs:
+    displayName: Transition Milliseconds
+    type: NUMBER
+    description: Crossfade duration in milliseconds. Default 700.
+  brightnessPercent:
+    displayName: Brightness Percent
+    type: NUMBER
+    description: Brightness filter applied to banner media. Accepts values from 0 to 100. Default 62.
+  overlayOpacity:
+    displayName: Overlay Opacity
+    type: STRING
+    description: Dark overlay strength from 0 to 1. Supports decimals such as 0.38. Default 0.38.
+  showTitle:
+    displayName: Show Scene Title
+    type: BOOLEAN
+    description: Show clickable scene title badges when hovering over the banner. Default true.
