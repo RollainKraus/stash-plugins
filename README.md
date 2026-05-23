@@ -15,6 +15,7 @@
 - [Stash Dashboard](#Stash-Dashboard)
 - [O Stickers](#O-Stickers)
 - [Clean Up Queue](#Clean-Up-Queue)
+- [Content Banners](#Content-Banners)
 - [Stash Mini GUI](#Stash-Mini-GUI)
 
 ## Installation
@@ -464,6 +465,14 @@ prepackaged assets are from cumfacegenerator
 Simple GUI for filtering content by missing metadata for convenient editing
 
 Filter content based on specific missing metadata. Just another way to go through and clean/complete content that might not be covered by common scrapers
+
+# Content Banners
+Adds configurable scene preview banners to Stash detail pages.
+
+Supported pages: studio, performer, group, tag
+up to 3 concurrent scene previews
+filter scenes to use for previews by rating, recently added, recently released, or random
+scene previews are clickable to open the scene in a new tab
 
 # Stash Mini GUI
 Small companion app for browsing content while content is full screened. 
