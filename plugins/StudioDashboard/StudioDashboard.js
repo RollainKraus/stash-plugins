@@ -962,6 +962,21 @@
     return new Date(Date.UTC(year, month, 0)).getUTCDate();
   }
 
+  function formatDateFromUtc(date) {
+    return formatDateLabel(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+  }
+
+  function getDateBeforeMonth(year, month) {
+    const date = new Date(Date.UTC(year, month - 1, 1));
+    date.setUTCDate(date.getUTCDate() - 1);
+    return formatDateFromUtc(date);
+  }
+
+  function getDateAfterMonth(year, month) {
+    const date = new Date(Date.UTC(year, month, 1));
+    return formatDateFromUtc(date);
+  }
+
   function buildReleaseTimeline(scenes) {
     const monthCounts = new Map();
     const yearCounts = new Map();
@@ -1035,11 +1050,15 @@
     const bucketSize = totalMonths <= 36 ? 1 : totalMonths <= 96 ? 3 : 12;
     const monthCounts = new Map(timeline.months.map((item) => [item.label, item.count]));
     const buckets = [];
+    const first = getTimelineBucketStart(startYear, startMonth, bucketSize);
+    const last = getTimelineBucketStart(endYear, endMonth, bucketSize);
 
-    for (let offset = 0; offset < totalMonths; offset += bucketSize) {
-      const start = addMonths(startYear, startMonth, offset);
-      const remaining = totalMonths - offset;
-      const monthsInBucket = Math.min(bucketSize, remaining);
+    for (
+      let start = first;
+      start.year < last.year || (start.year === last.year && start.month <= last.month);
+      start = addMonths(start.year, start.month, bucketSize)
+    ) {
+      const monthsInBucket = bucketSize;
       const end = addMonths(start.year, start.month, monthsInBucket - 1);
       let count = 0;
       for (let inner = 0; inner < monthsInBucket; inner += 1) {
@@ -1058,11 +1077,19 @@
         count,
         startDate: formatDateLabel(start.year, start.month, 1),
         endDate: formatDateLabel(end.year, end.month, lastDayOfMonth(end.year, end.month)),
+        filterStartDate: getDateBeforeMonth(start.year, start.month),
+        filterEndDate: getDateAfterMonth(end.year, end.month),
       });
     }
 
     const max = Math.max(1, ...buckets.map((item) => item.count));
     return buckets.map((item) => ({ ...item, max }));
+  }
+
+  function getTimelineBucketStart(year, month, bucketSize) {
+    if (bucketSize === 12) return { year, month: 1 };
+    if (bucketSize === 3) return { year, month: Math.floor((month - 1) / 3) * 3 + 1 };
+    return { year, month };
   }
 
   function getTimelineYearGroups(items) {
@@ -4213,8 +4240,8 @@
     return {
       type: "date",
       value: {
-        value: item.startDate,
-        value2: item.endDate,
+        value: item.filterStartDate || item.startDate,
+        value2: item.filterEndDate || item.endDate,
       },
       modifier: "BETWEEN",
     };
