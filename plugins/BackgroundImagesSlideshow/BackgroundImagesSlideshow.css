@@ -2,9 +2,11 @@
  * Background Images Slideshow
  ******************************/
 :root {
-    --background-opacity: 0.3;
     --background-images-slideshow-transition-duration: 2s;
     --background-images-slideshow-column-blend-width: 160px;
+    --background-images-slideshow-filter: brightness(1) saturate(1) blur(0px);
+    --background-images-slideshow-blur-inset: 0px;
+    --background-images-slideshow-backdrop: #000;
 }
 
 #background-images-slideshow-background {
@@ -13,12 +15,18 @@
     z-index: -1;
     overflow: hidden;
     pointer-events: none;
+    background: transparent;
+}
+
+#background-images-slideshow-background.background-images-slideshow__background--backdrop {
+    background: var(--background-images-slideshow-backdrop);
 }
 
 .background-images-slideshow__layer {
     position: absolute;
-    inset: 0;
+    inset: calc(var(--background-images-slideshow-blur-inset) * -1);
     opacity: 0;
+    filter: var(--background-images-slideshow-filter);
     transition: opacity var(--background-images-slideshow-transition-duration) cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -46,10 +54,34 @@
     );
 }
 
-/* styles the view background button in nav */
+/* styles the background display control in nav */
 .background-images-slideshow__view {
-    filter: grayscale(1);
-    opacity: 0.8;
+    align-items: center;
+    display: inline-flex;
+    justify-content: center;
+    min-width: 2.25rem;
+    opacity: 0.85;
     transform: translateY(-1px);
     cursor: pointer;
+}
+
+.background-images-slideshow__view[data-background-mode="disabled"] {
+    opacity: 0.55;
+}
+
+html.background-images-slideshow--transparent-main {
+    background: var(--background-images-slideshow-backdrop) !important;
+    background-color: var(--background-images-slideshow-backdrop) !important;
+}
+
+.background-images-slideshow--transparent-main body,
+.background-images-slideshow--transparent-main #root,
+.background-images-slideshow--transparent-main .main,
+.background-images-slideshow--transparent-main main,
+.background-images-slideshow--transparent-main .content,
+.background-images-slideshow--transparent-main .page,
+.background-images-slideshow--transparent-main .container,
+.background-images-slideshow--transparent-main .container-fluid {
+    background: transparent !important;
+    background-color: transparent !important;
 }
