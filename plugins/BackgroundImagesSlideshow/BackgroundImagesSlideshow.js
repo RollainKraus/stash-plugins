@@ -3,7 +3,17 @@
 
     const PLUGIN_ID = 'BackgroundImagesSlideshow';
     const BACKGROUND_CONTAINER_ID = 'background-images-slideshow-background';
+    const NAVIGATION_EVENT = 'background-images-slideshow:navigation';
+    const GLOBAL_HOOK_KEY = '__backgroundImagesSlideshowHooks';
+    const DISPLAY_MODE_STORAGE_KEY = 'BackgroundImagesSlideshow.displayMode';
+    const BACKGROUND_MODE_ENABLED = 'enabled';
+    const BACKGROUND_MODE_VIEWING = 'viewing';
+    const BACKGROUND_MODE_DISABLED = 'disabled';
     const DEFAULT_BACKGROUND_OPACITY = 0.3;
+    const DEFAULT_BACKGROUND_BRIGHTNESS = 1;
+    const DEFAULT_BACKGROUND_SATURATION = 1;
+    const DEFAULT_BACKGROUND_BLUR = 0;
+    const MAX_BACKGROUND_BLUR_PX = 16;
     const DEFAULT_SLIDESHOW_DURATION_SECONDS = 0;
     const DEFAULT_TRANSITION_DURATION_MS = 2000;
     const DEFAULT_COLUMN_COUNT = 1;
@@ -28,9 +38,14 @@
         columnWidthMode: COLUMN_WIDTH_MODE_EQUAL,
         columnWidths: [],
         columnBlendWidth: DEFAULT_COLUMN_BLEND_WIDTH,
+        backgroundOpacity: DEFAULT_BACKGROUND_OPACITY,
+        backgroundBrightness: DEFAULT_BACKGROUND_BRIGHTNESS,
+        backgroundSaturation: DEFAULT_BACKGROUND_SATURATION,
+        backgroundBlur: DEFAULT_BACKGROUND_BLUR,
+        forceTransparentMainBackground: false,
+        showViewBackgroundButton: true,
         imageAspectRatios: new Map(),
         globalBackgroundImages: [],
-        performerBackgroundImages: [],
         activeImages: [],
         activeImageIndex: 0,
         activeSourceKey: '',
@@ -42,8 +57,14 @@
         slideshowTimer: 0,
         transitionTimer: 0,
         navigationToken: 0,
-        viewingBackground: false,
+        backgroundDisplayMode: BACKGROUND_MODE_ENABLED,
     };
+
+    const validBackgroundModes = new Set([
+        BACKGROUND_MODE_ENABLED,
+        BACKGROUND_MODE_VIEWING,
+        BACKGROUND_MODE_DISABLED,
+    ]);
 
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -72,6 +93,41 @@
         if (Number.isFinite(min) && parsed < min) return fallback;
         if (Number.isFinite(max) && parsed > max) return fallback;
         return parsed;
+    };
+
+    const clampNumber = (value, fallback, min, max) => {
+        const parsed = Number.parseFloat(String(value ?? '').trim());
+        if (!Number.isFinite(parsed)) return fallback;
+        return Math.min(max, Math.max(min, parsed));
+    };
+
+    const parseBackgroundAdjustments = (value) => {
+        const values = String(value ?? '')
+            .split(',')
+            .map((part) => part.trim());
+        return {
+            opacity: clampNumber(values[0], DEFAULT_BACKGROUND_OPACITY, 0, 1),
+            brightness: clampNumber(values[1], DEFAULT_BACKGROUND_BRIGHTNESS, 0, 1),
+            saturation: clampNumber(values[2], DEFAULT_BACKGROUND_SATURATION, 0, 1),
+            blur: clampNumber(values[3], DEFAULT_BACKGROUND_BLUR, 0, 1),
+        };
+    };
+
+    const loadBackgroundDisplayMode = () => {
+        try {
+            const storedMode = localStorage.getItem(DISPLAY_MODE_STORAGE_KEY);
+            return validBackgroundModes.has(storedMode) ? storedMode : BACKGROUND_MODE_ENABLED;
+        } catch (err) {
+            return BACKGROUND_MODE_ENABLED;
+        }
+    };
+
+    const saveBackgroundDisplayMode = (mode) => {
+        try {
+            localStorage.setItem(DISPLAY_MODE_STORAGE_KEY, mode);
+        } catch (err) {
+            // Storage can be unavailable in hardened/private browser contexts.
+        }
     };
 
     const getEqualColumnWidths = (count) => {
@@ -161,6 +217,19 @@
             0,
             800
         );
+        const backgroundAdjustments = parseBackgroundAdjustments(config.backgroundAdjustments);
+        state.backgroundOpacity = backgroundAdjustments.opacity;
+        state.backgroundBrightness = backgroundAdjustments.brightness;
+        state.backgroundSaturation = backgroundAdjustments.saturation;
+        state.backgroundBlur = backgroundAdjustments.blur;
+        state.forceTransparentMainBackground = getConfigBoolean(
+            config.forceTransparentMainBackground,
+            false
+        );
+        state.showViewBackgroundButton = getConfigBoolean(config.showViewBackgroundButton, true);
+        state.backgroundDisplayMode = state.showViewBackgroundButton
+            ? loadBackgroundDisplayMode()
+            : BACKGROUND_MODE_ENABLED;
 
         state.root.style.setProperty(
             '--background-images-slideshow-transition-duration',
@@ -170,18 +239,21 @@
             '--background-images-slideshow-column-blend-width',
             `${Math.max(0, state.columnBlendWidth)}px`
         );
+        applyThemeCompatibilityStyles();
         ensureBackgroundContainer();
 
         state.globalBackgroundImages = await getBackgroundImages();
 
+        installNavigationHooks();
+
         if (state.uniquePerformerPage) {
-            installNavigationHooks();
             await onPageNavigation();
         } else {
             setActiveBackgrounds(state.globalBackgroundImages, 'global');
         }
 
         setupViewBackgroundButton();
+        applyBackgroundDisplayMode();
     };
 
     const getCurrentPerformerId = () => {
@@ -208,6 +280,37 @@
         return container;
     };
 
+    const applyThemeCompatibilityStyles = () => {
+        const blurPx = Math.max(0, state.backgroundBlur * MAX_BACKGROUND_BLUR_PX);
+        const blurInset = Math.ceil(blurPx * 2);
+        const filterValue = [
+            `brightness(${state.backgroundBrightness})`,
+            `saturate(${state.backgroundSaturation})`,
+            `blur(${blurPx}px)`,
+        ].join(' ');
+
+        state.root.style.setProperty('--background-images-slideshow-filter', filterValue);
+        state.root.style.setProperty('--background-images-slideshow-blur-inset', `${blurInset}px`);
+        const shouldForceTransparentMain =
+            state.forceTransparentMainBackground &&
+            state.backgroundDisplayMode !== BACKGROUND_MODE_DISABLED;
+
+        document.documentElement.classList.toggle(
+            'background-images-slideshow--transparent-main',
+            shouldForceTransparentMain
+        );
+        state.root.classList.toggle(
+            'background-images-slideshow--transparent-main',
+            shouldForceTransparentMain
+        );
+        if (state.backgroundContainer) {
+            state.backgroundContainer.classList.toggle(
+                'background-images-slideshow__background--backdrop',
+                shouldForceTransparentMain
+            );
+        }
+    };
+
     const createBackgroundLayer = (modifierClass) => {
         const layer = document.createElement('div');
         layer.className = `background-images-slideshow__layer ${modifierClass}`;
@@ -225,41 +328,71 @@
             const images = await getBackgroundImages(performerId);
             if (token !== state.navigationToken || getCurrentPerformerId() !== performerId) return;
 
-            state.performerBackgroundImages = images;
             setActiveBackgrounds(images, `performer:${performerId}`);
+            applyBackgroundDisplayMode();
             return;
         }
 
-        state.performerBackgroundImages = [];
         setActiveBackgrounds(state.globalBackgroundImages, 'global');
+        applyBackgroundDisplayMode();
+    };
+
+    const onAppNavigation = () => {
+        setupViewBackgroundButton();
+
+        if (state.uniquePerformerPage) {
+            onPageNavigation();
+        } else {
+            applyBackgroundDisplayMode();
+        }
+
+        window.setTimeout(applyBackgroundDisplayMode, 150);
     };
 
     const installNavigationHooks = () => {
-        const title = document.querySelector('title');
-        if (title) {
-            const observer = new MutationObserver(onPageNavigation);
-            observer.observe(title, { subtree: true, characterData: true, childList: true });
+        const hooks = window[GLOBAL_HOOK_KEY] || {};
+        window[GLOBAL_HOOK_KEY] = hooks;
+
+        if (hooks.titleObserver) {
+            hooks.titleObserver.disconnect();
+        }
+        if (hooks.navigationListener) {
+            window.removeEventListener(NAVIGATION_EVENT, hooks.navigationListener);
         }
 
-        const originalPushState = history.pushState;
-        const originalReplaceState = history.replaceState;
+        const title = document.querySelector('title');
+        if (title) {
+            hooks.titleObserver = new MutationObserver(onAppNavigation);
+            hooks.titleObserver.observe(title, {
+                subtree: true,
+                characterData: true,
+                childList: true,
+            });
+        }
 
-        history.pushState = function () {
-            const result = originalPushState.apply(this, arguments);
-            window.dispatchEvent(new Event('background-images-slideshow:navigation'));
-            return result;
-        };
+        if (!hooks.historyWrapped) {
+            hooks.originalPushState = history.pushState;
+            hooks.originalReplaceState = history.replaceState;
 
-        history.replaceState = function () {
-            const result = originalReplaceState.apply(this, arguments);
-            window.dispatchEvent(new Event('background-images-slideshow:navigation'));
-            return result;
-        };
+            history.pushState = function () {
+                const result = hooks.originalPushState.apply(this, arguments);
+                window.dispatchEvent(new Event(NAVIGATION_EVENT));
+                return result;
+            };
 
-        window.addEventListener('popstate', () =>
-            window.dispatchEvent(new Event('background-images-slideshow:navigation'))
-        );
-        window.addEventListener('background-images-slideshow:navigation', onPageNavigation);
+            history.replaceState = function () {
+                const result = hooks.originalReplaceState.apply(this, arguments);
+                window.dispatchEvent(new Event(NAVIGATION_EVENT));
+                return result;
+            };
+
+            hooks.popstateListener = () => window.dispatchEvent(new Event(NAVIGATION_EVENT));
+            window.addEventListener('popstate', hooks.popstateListener);
+            hooks.historyWrapped = true;
+        }
+
+        hooks.navigationListener = onAppNavigation;
+        window.addEventListener(NAVIGATION_EVENT, hooks.navigationListener);
     };
 
     const setActiveBackgrounds = (images, sourceKey) => {
@@ -350,8 +483,11 @@
         return a.every((image, index) => image === b[index]);
     };
 
-    const getTargetOpacity = () =>
-        state.viewingBackground ? 1 : DEFAULT_BACKGROUND_OPACITY;
+    const getTargetOpacity = () => {
+        if (state.backgroundDisplayMode === BACKGROUND_MODE_VIEWING) return 1;
+        if (state.backgroundDisplayMode === BACKGROUND_MODE_DISABLED) return 0;
+        return state.backgroundOpacity;
+    };
 
     const normalizeWidths = (widths) => {
         const total = widths.reduce((sum, width) => sum + width, 0);
@@ -489,45 +625,103 @@
     };
 
     /**
-     * Create and prepend the button to view background in the nav bar utilities.
+     * Create and prepend the background display control in the nav bar utilities.
      */
     const setupViewBackgroundButton = async () => {
+        if (!state.showViewBackgroundButton) {
+            setBackgroundDisplayMode(BACKGROUND_MODE_ENABLED, { persist: true });
+            document.querySelector('.background-images-slideshow__view')?.remove();
+            return;
+        }
+
         const parentNode = await waitForElement('.navbar-buttons');
-        if (document.querySelector('.background-images-slideshow__view')) return;
+        const existingNode = document.querySelector('.background-images-slideshow__view');
+        if (existingNode) {
+            existingNode.remove();
+        }
 
         const node = document.createElement('button');
         node.classList = 'nav-utility btn minimal background-images-slideshow__view';
-        node.innerHTML = '&#x1f441;&#xfe0e;';
-        node.title = 'Display background image.';
 
-        node.addEventListener('click', onViewBackground);
+        node.addEventListener('click', cycleBackgroundDisplayMode);
+        updateBackgroundControlButton(node);
 
-        parentNode.prepend(node);
+        parentNode.append(node);
     };
 
-    const onViewBackground = () => {
-        const mainElement = document.querySelector('.main');
+    const getBackgroundControlMeta = () => {
+        if (state.backgroundDisplayMode === BACKGROUND_MODE_VIEWING) {
+            return {
+                icon: '<i class="fa-solid fa-arrows-to-eye"></i>',
+                title: 'Showing background only. Click to disable background images.',
+            };
+        }
 
-        if (state.viewingBackground) {
-            state.viewingBackground = false;
-            if (state.baseLayer) state.baseLayer.style.opacity = DEFAULT_BACKGROUND_OPACITY;
-            if (state.nextLayer && state.transitionTimer) {
-                state.nextLayer.style.opacity = DEFAULT_BACKGROUND_OPACITY;
-            }
-            if (mainElement) mainElement.style.opacity = 1;
-            document.removeEventListener('keydown', escapeListener);
-        } else {
-            state.viewingBackground = true;
-            if (state.baseLayer) state.baseLayer.style.opacity = 1;
-            if (state.nextLayer && state.transitionTimer) state.nextLayer.style.opacity = 1;
+        if (state.backgroundDisplayMode === BACKGROUND_MODE_DISABLED) {
+            return {
+                icon: '<i class="fa-regular fa-eye-slash"></i>',
+                title: 'Background images disabled. Click to enable background images.',
+            };
+        }
+
+        return {
+            icon: '<i class="fa-regular fa-eye"></i>',
+            title: 'Background images enabled. Click to show only the background.',
+        };
+    };
+
+    const updateBackgroundControlButton = (node = document.querySelector('.background-images-slideshow__view')) => {
+        if (!node) return;
+        const meta = getBackgroundControlMeta();
+        node.innerHTML = meta.icon;
+        node.title = meta.title;
+        node.setAttribute('aria-label', meta.title);
+        node.dataset.backgroundMode = state.backgroundDisplayMode;
+    };
+
+    const cycleBackgroundDisplayMode = () => {
+        if (state.backgroundDisplayMode === BACKGROUND_MODE_ENABLED) {
+            setBackgroundDisplayMode(BACKGROUND_MODE_VIEWING, { persist: true });
+            return;
+        }
+
+        if (state.backgroundDisplayMode === BACKGROUND_MODE_VIEWING) {
+            setBackgroundDisplayMode(BACKGROUND_MODE_DISABLED, { persist: true });
+            return;
+        }
+
+        setBackgroundDisplayMode(BACKGROUND_MODE_ENABLED, { persist: true });
+    };
+
+    const setBackgroundDisplayMode = (mode, options = {}) => {
+        if (!validBackgroundModes.has(mode)) return;
+        state.backgroundDisplayMode = mode;
+        if (options.persist) saveBackgroundDisplayMode(mode);
+        applyBackgroundDisplayMode();
+    };
+
+    const applyBackgroundDisplayMode = () => {
+        const mainElement = document.querySelector('.main');
+        const targetOpacity = getTargetOpacity();
+
+        applyThemeCompatibilityStyles();
+
+        if (state.backgroundDisplayMode === BACKGROUND_MODE_VIEWING) {
             if (mainElement) mainElement.style.opacity = 0;
             document.addEventListener('keydown', escapeListener);
+        } else {
+            if (mainElement) mainElement.style.opacity = '';
+            document.removeEventListener('keydown', escapeListener);
         }
+
+        if (state.baseLayer) state.baseLayer.style.opacity = targetOpacity;
+        if (state.nextLayer && state.transitionTimer) state.nextLayer.style.opacity = targetOpacity;
+        updateBackgroundControlButton();
     };
 
     const escapeListener = (e) => {
         if (e.key === 'Escape') {
-            onViewBackground();
+            setBackgroundDisplayMode(BACKGROUND_MODE_ENABLED, { persist: true });
         }
     };
 
