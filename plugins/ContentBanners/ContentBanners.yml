@@ -1,16 +1,16 @@
 name: Content Banners
 description: Adds configurable scene preview banners to Stash detail pages.
-version: 0.1.1
+version: 1.1.2
 ui:
   css:
     - ContentBanners.css
   javascript:
     - ContentBanners.js
 settings:
-  pageTypes:
-    displayName: Page Types
+  bannerContentTypes:
+    displayName: Banner Content Type and Count
     type: STRING
-    description: Comma separated detail pages to decorate. Supports performer,studio,group,tag. Default performer,studio,group,tag.
+    description: Comma-separated content types and banner counts. Omit a type to disable banners there. Supports studio, performer, group, and tag with counts from 1 to 3. Example studio:3,performer:1,groups:3,tag:2. Default studio:2,performer:2,groups:2,tag:2.
   bannerMode:
     displayName: Banner Mode
     type: STRING
@@ -23,10 +23,6 @@ settings:
     displayName: Result Limit
     type: NUMBER
     description: Number of scenes to load for each banner pool. Default 40.
-  bannerCount:
-    displayName: Banner Count
-    type: STRING
-    description: Banner panels per page type, from 1 to 3. Example studio:2,performer:2,groups:2,tag:2. Default studio:2,performer:2,groups:2,tag:2.
   rotationSeconds:
     displayName: Rotation Seconds
     type: NUMBER
@@ -35,14 +31,14 @@ settings:
     displayName: Transition Milliseconds
     type: NUMBER
     description: Crossfade duration in milliseconds. Default 700.
-  brightnessPercent:
-    displayName: Brightness Percent
-    type: NUMBER
-    description: Brightness filter applied to banner media. Accepts values from 0 to 100. Default 62.
-  overlayOpacity:
-    displayName: Overlay Opacity
+  bannerAdjustments:
+    displayName: Banner Adjustments
     type: STRING
-    description: Dark overlay strength from 0 to 1. Supports decimals such as 0.38. Default 0.38.
+    description: Comma-separated overlay opacity, brightness, saturation, blur values from 0.0 to 1.0. Example 0.38,0.62,1.0,0.0 means 38% dark overlay, 62% brightness, full saturation, no blur. Blur maps 0.0-1.0 to 0-16px. Default 0.38,0.62,1.0,0.0.
+  bannerObjectPosition:
+    displayName: Banner Object Position
+    type: STRING
+    description: CSS object-position for banner media. Use values like center 18%, center 35%, or center top to shift the cropped banner view. Default center 18%.
   showTitle:
     displayName: Show Scene Title
     type: BOOLEAN
