@@ -19,6 +19,7 @@
   const DASHBOARD_INCLUDE_SUB_STUDIOS_KEY = "StashDashboard.includeSubStudios";
   const DASHBOARD_HIDE_UNKNOWN_PERFORMER_CHARTS_KEY = "StashDashboard.hideUnknownPerformerCharts";
   const DASHBOARD_HIDE_UNKNOWN_SCENE_CHARTS_KEY = "StashDashboard.hideUnknownSceneCharts";
+  const DASHBOARD_HIDE_UNKNOWN_STUDIO_CHARTS_KEY = "StashDashboard.hideUnknownStudioCharts";
   const DASHBOARD_COMPARISON_LEFT_KEY = "StashDashboard.comparisonLeft";
   const DASHBOARD_COMPARISON_RIGHT_KEY = "StashDashboard.comparisonRight";
   const DASHBOARD_FILTER_PRESETS_KEY = "StashDashboard.filterPresets";
@@ -52,6 +53,7 @@
   const DEFAULT_DASHBOARD_SECTION_ORDER = [
     "insights",
     "studioComparison",
+    "studioCharts",
     "performerHighlights",
     "performersMostScenes",
     "performersMostOs",
@@ -75,6 +77,10 @@
     studiocomparison: "studioComparison",
     comparison: "studioComparison",
     compare: "studioComparison",
+    studiocharts: "studioCharts",
+    studiochart: "studioCharts",
+    studio: "studioCharts",
+    studios: "studioCharts",
     performers: "performerHighlights",
     performer: "performerHighlights",
     performerhighlights: "performerHighlights",
@@ -157,6 +163,14 @@
     { label: "60-90m", min: 60, max: 90 },
     { label: "90-120m", min: 90, max: 120 },
     { label: "120m+", min: 120, max: null },
+  ];
+  const STUDIO_SCENE_COUNT_BUCKETS = [
+    { label: "0", min: 0, max: 0, exact: true },
+    { label: "1-10", min: 1, max: 11 },
+    { label: "11-50", min: 11, max: 51 },
+    { label: "51-100", min: 51, max: 101 },
+    { label: "101-250", min: 101, max: 251 },
+    { label: "251+", min: 251, max: null },
   ];
   const COUNTRY_NAMES = {
     AD: "Andorra", AE: "United Arab Emirates", AF: "Afghanistan", AG: "Antigua and Barbuda", AI: "Anguilla",
@@ -295,6 +309,7 @@
           id: studio.id,
           name: studio.name,
           imagePath: studio.imagePath || "",
+          rating100: Number(studio.rating100 || 0),
           synthetic: Boolean(studio.synthetic),
         },
         scope,
@@ -466,11 +481,16 @@
     return "alphabetical";
   }
 
+  function normalizeDashboardStudioListSort(value) {
+    const normalized = getConfigString(value, "name").toLowerCase().replace(/[\s_-]+/g, "");
+    if (["scene", "scenes", "count", "scenecount", "mostscenes"].includes(normalized)) return "scenes";
+    if (["rating", "ratings", "studiorating", "highestrating"].includes(normalized)) return "rating";
+    return "name";
+  }
+
   function getDashboardStudioListSort() {
     const stored = getLocalStorageValue(DASHBOARD_STUDIO_SORT_KEY);
-    const value = getConfigString(stored, "name").toLowerCase();
-    if (["scene", "scenes", "count", "scene-count", "most-scenes", "mostscenes"].includes(value)) return "scenes";
-    return "name";
+    return normalizeDashboardStudioListSort(stored);
   }
 
   function getDashboardIncludeSubStudios() {
@@ -640,12 +660,20 @@
   }
 
   function getHideUnknownChartSlices(kind) {
-    const key = kind === "scene" ? DASHBOARD_HIDE_UNKNOWN_SCENE_CHARTS_KEY : DASHBOARD_HIDE_UNKNOWN_PERFORMER_CHARTS_KEY;
+    const key = kind === "scene"
+      ? DASHBOARD_HIDE_UNKNOWN_SCENE_CHARTS_KEY
+      : kind === "studio"
+        ? DASHBOARD_HIDE_UNKNOWN_STUDIO_CHARTS_KEY
+        : DASHBOARD_HIDE_UNKNOWN_PERFORMER_CHARTS_KEY;
     return getConfigBoolean(getLocalStorageValue(key), false);
   }
 
   function setHideUnknownChartSlices(kind, value) {
-    const key = kind === "scene" ? DASHBOARD_HIDE_UNKNOWN_SCENE_CHARTS_KEY : DASHBOARD_HIDE_UNKNOWN_PERFORMER_CHARTS_KEY;
+    const key = kind === "scene"
+      ? DASHBOARD_HIDE_UNKNOWN_SCENE_CHARTS_KEY
+      : kind === "studio"
+        ? DASHBOARD_HIDE_UNKNOWN_STUDIO_CHARTS_KEY
+        : DASHBOARD_HIDE_UNKNOWN_PERFORMER_CHARTS_KEY;
     setLocalStorageValue(key, value ? "true" : "false");
   }
 
@@ -692,6 +720,24 @@
     const configured = getConfigString(getSetting("e02SceneDurationGroups"), "");
     const buckets = parseMetricBuckets(configured, { unit: "m" });
     return buckets.length ? buckets : DURATION_BUCKETS;
+  }
+
+  function getStudioRatingBuckets() {
+    const configured = getConfigString(getSetting("b01StudioRatingGroups"), "");
+    const buckets = parseRatingBuckets(configured);
+    return buckets.length ? buckets : RATING_BUCKETS;
+  }
+
+  function getStudioSceneCountBuckets() {
+    const configured = getConfigString(getSetting("b02StudioSceneCountGroups"), "");
+    const buckets = parseCountBuckets(configured);
+    return buckets.length ? buckets : STUDIO_SCENE_COUNT_BUCKETS;
+  }
+
+  function getStudioAverageSceneRatingBuckets() {
+    const configured = getConfigString(getSetting("b03StudioAverageSceneRatingGroups"), "");
+    const buckets = parseRatingBuckets(configured);
+    return buckets.length ? buckets : RATING_BUCKETS;
   }
 
   function getPerformerPieChartTagRef(index) {
@@ -852,7 +898,7 @@
       );
     }
     if (Object.prototype.hasOwnProperty.call(preferences, "studioListSort")) {
-      setLocalStorageValue(DASHBOARD_STUDIO_SORT_KEY, getConfigString(preferences.studioListSort, "name").toLowerCase() === "scenes" ? "scenes" : "name");
+      setLocalStorageValue(DASHBOARD_STUDIO_SORT_KEY, normalizeDashboardStudioListSort(preferences.studioListSort));
     }
     if (Object.prototype.hasOwnProperty.call(preferences, "includeSubStudios")) {
       setLocalStorageValue(
@@ -877,6 +923,7 @@
       id: String(studio.id),
       name: String(studio.name || "Studio"),
       imagePath: String(studio.image_path || "").trim(),
+      rating100: Number(studio.rating100 || 0),
     };
   }
 
@@ -1476,15 +1523,12 @@
     const bucketSize = totalMonths <= 36 ? 1 : totalMonths <= 96 ? 3 : 12;
     const monthCounts = new Map(timeline.months.map((item) => [item.label, item.count]));
     const buckets = [];
-    const first = bucketSize === 12
-      ? { year: startYear, month: 1 }
-      : bucketSize === 3
-        ? { year: startYear, month: Math.floor((startMonth - 1) / 3) * 3 + 1 }
-        : { year: startYear, month: startMonth };
+    const first = getTimelineBucketStart(startYear, startMonth, bucketSize);
+    const last = getTimelineBucketStart(endYear, endMonth, bucketSize);
 
     for (
       let start = first;
-      start.year < endYear || (start.year === endYear && start.month <= endMonth);
+      start.year < last.year || (start.year === last.year && start.month <= last.month);
       start = addMonths(start.year, start.month, bucketSize)
     ) {
       const monthsInBucket = bucketSize;
@@ -1513,6 +1557,12 @@
 
     const max = Math.max(1, ...buckets.map((item) => item.count));
     return buckets.map((item) => ({ ...item, max }));
+  }
+
+  function getTimelineBucketStart(year, month, bucketSize) {
+    if (bucketSize === 12) return { year, month: 1 };
+    if (bucketSize === 3) return { year, month: Math.floor((month - 1) / 3) * 3 + 1 };
+    return { year, month };
   }
 
   function getTimelineYearGroups(items) {
@@ -1734,7 +1784,8 @@
     (items || []).forEach((item) => {
       const metric = Number(options.getMetric ? options.getMetric(item) : NaN);
       const entity = options.getEntity ? options.getEntity(item) : item;
-      if (!Number.isFinite(metric) || metric <= 0) {
+      const zeroIsKnown = Boolean(options.zeroIsKnown);
+      if (!Number.isFinite(metric) || (zeroIsKnown ? metric < 0 : metric <= 0)) {
         unknownEntities.push(entity);
         return;
       }
@@ -1767,7 +1818,7 @@
         label: "Other",
         count: otherEntities.length,
         percent: formatPercent(otherEntities.length, total),
-        filterable: false,
+        filterable: options.filterOther === true,
         metricType: options.metricType || "",
         metricOther: true,
         [entityKey]: otherEntities.filter(Boolean),
@@ -1778,13 +1829,80 @@
         label: "Unknown",
         count: unknownEntities.length,
         percent: formatPercent(unknownEntities.length, total),
-        filterable: false,
+        filterable: options.filterUnknown === true,
         metricType: options.metricType || "",
         metricUnknown: true,
         [entityKey]: unknownEntities.filter(Boolean),
       });
     }
     return { total, items: itemsOut };
+  }
+
+  function buildStudioCharts(loadSummary) {
+    const studios = getDashboardStudioChartSummaries(loadSummary);
+    const studioRatingBuckets = getStudioRatingBuckets();
+    const averageSceneRatingBuckets = getStudioAverageSceneRatingBuckets();
+    const studioRatings = buildRatingDistribution(studios, {
+      buckets: studioRatingBuckets,
+      ratingScale: getRatingDisplayScale(studioRatingBuckets),
+      getRating: (studio) => Number(studio?.rating100 || 0),
+      getEntity: (studio) => studio,
+      entityKey: "studios",
+    });
+    const sceneCounts = buildMetricDistribution(studios, getStudioSceneCountBuckets(), {
+      getMetric: (studio) => Number(studio?.sceneCount ?? -1),
+      getEntity: (studio) => studio,
+      entityKey: "studios",
+      metricType: "studio-scene-count",
+      zeroIsKnown: true,
+      filterOther: true,
+      filterUnknown: true,
+    });
+    const averageSceneRatings = buildRatingDistribution(studios, {
+      buckets: averageSceneRatingBuckets,
+      ratingScale: getRatingDisplayScale(averageSceneRatingBuckets),
+      getRating: (studio) => Number(studio?.averageSceneRating100 || 0),
+      getEntity: (studio) => studio,
+      entityKey: "studios",
+    });
+    return {
+      total: studios.length,
+      ratings: studioRatings,
+      sceneCounts,
+      averageSceneRatings,
+    };
+  }
+
+  function getDashboardStudioChartSummaries(loadSummary) {
+    const sourceStudios = Array.isArray(loadSummary?.selectedStudios) && loadSummary.selectedStudios.length
+      ? loadSummary.selectedStudios
+      : getCachedDashboardStudios();
+    const byId = new Map((state.dashboardStudios || []).map((studio) => [String(studio.id), studio]));
+    const summaries = [];
+    const seen = new Set();
+    (sourceStudios || []).forEach((source) => {
+      const id = String(source?.id || "");
+      if (!id || seen.has(id) || source.synthetic || id === NO_STUDIO_ID) return;
+      seen.add(id);
+      const studio = byId.get(id) || source;
+      const scope = getCachedDashboardScope(studio);
+      const scenes = scope?.scenes || [];
+      const ratedScenes = scenes.filter((scene) => Number(scene?.rating100 || 0) > 0);
+      const averageSceneRating100 = ratedScenes.length
+        ? ratedScenes.reduce((total, scene) => total + Number(scene?.rating100 || 0), 0) / ratedScenes.length
+        : 0;
+      summaries.push({
+        id,
+        name: String(studio?.name || source?.name || "Studio"),
+        label: String(studio?.name || source?.name || "Studio"),
+        filterLabel: String(studio?.name || source?.name || "Studio"),
+        imagePath: String(studio?.imagePath || source?.imagePath || ""),
+        rating100: Number(studio?.rating100 || source?.rating100 || 0),
+        sceneCount: Number(scope?.sceneCount ?? getDashboardStudioSceneCount(id, false) ?? scenes.length ?? 0),
+        averageSceneRating100,
+      });
+    });
+    return summaries;
   }
 
   async function buildCustomPerformerPieDistributions(performers) {
@@ -2249,6 +2367,38 @@
       .filter(Boolean);
   }
 
+  function parseCountBuckets(value) {
+    return String(value || "")
+      .split(",")
+      .map((item) => parseCountBucket(item.trim()))
+      .filter(Boolean);
+  }
+
+  function parseCountBucket(value) {
+    if (!value) return null;
+    const normalized = value.replace(/\s+/g, "").toLowerCase();
+    let match = normalized.match(/^<(\d+)$/);
+    if (match) return { label: `<${Number(match[1])}`, min: null, max: Number(match[1]) };
+    match = normalized.match(/^<=?(\d+)$/);
+    if (match) return { label: `<=${Number(match[1])}`, min: null, max: Number(match[1]) + 1 };
+    match = normalized.match(/^(\d+)-(\d+)$/);
+    if (match) {
+      const min = Number(match[1]);
+      const max = Number(match[2]);
+      if (min <= max) return { label: `${min}-${max}`, min, max: max + 1 };
+    }
+    match = normalized.match(/^(\d+)\+$/);
+    if (match) return { label: `${Number(match[1])}+`, min: Number(match[1]), max: null };
+    match = normalized.match(/^>=?(\d+)$/);
+    if (match) return { label: `${Number(match[1])}+`, min: Number(match[1]), max: null };
+    match = normalized.match(/^=?(\d+)$/);
+    if (match) {
+      const exact = Number(match[1]);
+      return { label: String(exact), min: exact, max: exact, exact: true };
+    }
+    return null;
+  }
+
   function parseMetricBucket(value, options = {}) {
     if (!value) return null;
     const unit = String(options.unit || "").trim();
@@ -2588,6 +2738,7 @@
         id: String(studio?.id || ""),
         name: String(studio?.name || "Studio"),
         imagePath: String(studio?.image_path || ""),
+        rating100: Number(studio?.rating100 || 0),
         parentId: String(studio?.parent_studio?.id || ""),
         parentName: String(studio?.parent_studio?.name || ""),
       }))
@@ -2595,13 +2746,13 @@
     const data = await gql(`
       query StashDashboardStudios {
         findStudios(filter: { per_page: -1, sort: "name", direction: ASC }) {
-          studios { id name image_path parent_studio { id name } }
+          studios { id name image_path rating100 parent_studio { id name } }
         }
       }
     `);
     const studios = normalize(data?.findStudios?.studios);
     if (studios.length) return [
-      { id: NO_STUDIO_ID, name: "_NoStudio", imagePath: "", synthetic: true },
+      { id: NO_STUDIO_ID, name: "_NoStudio", imagePath: "", rating100: 0, synthetic: true },
       ...studios,
     ];
 
@@ -2609,7 +2760,7 @@
       query StashDashboardStudiosFromScenes {
         findScenes(filter: { per_page: 1000, sort: "date", direction: DESC }) {
           scenes {
-            studio { id name image_path parent_studio { id name } }
+            studio { id name image_path rating100 parent_studio { id name } }
           }
         }
       }
@@ -2620,7 +2771,7 @@
       if (studio?.id && !map.has(String(studio.id))) map.set(String(studio.id), studio);
     });
     return [
-      { id: NO_STUDIO_ID, name: "_NoStudio", imagePath: "", synthetic: true },
+      { id: NO_STUDIO_ID, name: "_NoStudio", imagePath: "", rating100: 0, synthetic: true },
       ...normalize(Array.from(map.values())).sort((left, right) => left.name.localeCompare(right.name)),
     ];
   }
@@ -2962,6 +3113,11 @@
     const averageRating100 = ratedScenes.length
       ? ratedScenes.reduce((total, scene) => total + Number(scene?.rating100 || 0), 0) / ratedScenes.length
       : 0;
+    const studioRatingSummary = getDashboardStudioRatingSummary(
+      Array.isArray(loadSummary?.selectedStudios) && loadSummary.selectedStudios.length
+        ? loadSummary.selectedStudios
+        : (studio?.id ? [studio] : [])
+    );
     const sceneRatingDistribution = buildRatingDistribution(scenes, {
       getRating: (scene) => Number(scene?.rating100 || 0),
       getEntity: normalizeSceneSummary,
@@ -2989,6 +3145,10 @@
         averageRating100,
         ratedScenes: ratedScenes.length,
         unratedScenes: Math.max(0, scenes.length - ratedScenes.length),
+        averageStudioRating100: studioRatingSummary.averageRating100,
+        studios: studioRatingSummary.total,
+        ratedStudios: studioRatingSummary.rated,
+        unratedStudios: studioRatingSummary.unrated,
       },
       loadSummary,
       topPerformers,
@@ -2996,6 +3156,7 @@
       performerHighlightRows,
       topTags: buildTopTags(scenes, tagFilters, allCachedScenes),
       topTagGroups: buildTopTagGroups(scenes, tagFilters, topTagCategories, allCachedScenes),
+      studioCharts: buildStudioCharts(loadSummary),
       performerDemographics: await buildPerformerDemographics(performers, scenes),
       sceneRatings: sceneRatingDistribution,
       sceneResolutions: sceneResolutionDistribution,
@@ -3221,6 +3382,7 @@
       selectedStudios: studios.map((studio) => ({
         id: studio.id,
         name: studio.name,
+        rating100: Number(studio.rating100 || 0),
         synthetic: Boolean(studio.synthetic),
       })),
     });
@@ -3315,6 +3477,7 @@
       selectedStudios: studios.map((studio) => ({
         id: studio.id,
         name: studio.name,
+        rating100: Number(studio.rating100 || 0),
         synthetic: Boolean(studio.synthetic),
       })),
     });
@@ -3353,6 +3516,7 @@
       selectedStudios: loadedStudios.map((studio) => ({
         id: studio.id,
         name: studio.name,
+        rating100: Number(studio.rating100 || 0),
         synthetic: Boolean(studio.synthetic),
       })),
       skippedScenes,
@@ -3462,6 +3626,26 @@
       .filter(Boolean);
   }
 
+  function getDashboardStudioRatingSummary(studios) {
+    const uniqueStudios = new Map();
+    (studios || []).forEach((studio) => {
+      if (!studio?.id || studio.synthetic) return;
+      uniqueStudios.set(String(studio.id), studio);
+    });
+    const ratings = Array.from(uniqueStudios.values())
+      .map((studio) => Number(studio?.rating100 || 0))
+      .filter((rating) => Number.isFinite(rating) && rating > 0);
+    const total = uniqueStudios.size;
+    return {
+      total,
+      rated: ratings.length,
+      unrated: Math.max(0, total - ratings.length),
+      averageRating100: ratings.length
+        ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length
+        : 0,
+    };
+  }
+
   function renderDashboardContent(container, stats) {
     if (!(container instanceof HTMLElement) || !stats) return;
     const isStashDashboardPage = Boolean(container.closest(".stash-dashboard__shell"));
@@ -3481,6 +3665,9 @@
       },
       studioComparison: () => {
         renderStudioComparison(body);
+      },
+      studioCharts: () => {
+        renderStudioCharts(body, stats);
       },
       performerHighlights: () => {
         const performerHighlights = Array.isArray(stats.performerHighlights) ? stats.performerHighlights : [];
@@ -3560,12 +3747,18 @@
       formatInsightLink(makeDashboardScenesUrl(stats, [buildRatingNotNullCriterion()]), `${formatNumber(counts.ratedScenes)} rated`),
       formatInsightLink(makeDashboardScenesUrl(stats, [buildRatingNullCriterion()]), `${formatNumber(counts.unratedScenes)} unrated`),
     ].join(", ");
+    const averageStudioRating = Number(counts.averageStudioRating100 || 0);
+    const studioRatingDetail = [
+      `${formatNumber(counts.ratedStudios)} rated`,
+      `${formatNumber(counts.unratedStudios)} unrated`,
+    ].join(", ");
     const items = [
       { label: "Scenes", value: formatNumber(counts.scenes), detail: `${formatDurationMinutes(counts.totalDurationMinutes)}; ${formatBytes(counts.totalSceneSizeBytes)}` },
       { label: "Images", value: formatNumber(counts.images), detail: `${formatNumber(counts.galleries)} galleries; ${formatBytes(counts.imageSizeBytes)}` },
       { label: "Performers", value: formatNumber(counts.performers), detail: topPerformerDetail },
       { label: "O Count", value: formatNumber(counts.oCount), detailHtml: oCountDetailHtml },
       { label: "Average scene rating", value: averageRating ? formatRating(averageRating) : "N/A", detailHtml: ratedDetailHtml },
+      counts.studios ? { label: "Average studio rating", value: averageStudioRating ? formatRating(averageStudioRating) : "N/A", detail: studioRatingDetail } : null,
       stats?.largestSceneSize ? {
         label: "Largest scene size",
         valueHtml: formatInsightLink(makeSceneUrl(stats.largestSceneSize), formatBytes(stats.largestSceneSizeBytes)),
@@ -3803,6 +3996,7 @@
     const totalSceneSizeBytes = scenes.reduce((total, scene) => total + getSceneSizeBytes(scene), 0);
     const longestSceneMinutes = scenes.reduce((max, scene) => Math.max(max, getSceneDurationMinutes(scene)), 0);
     const largestSceneSizeBytes = scenes.reduce((max, scene) => Math.max(max, getSceneSizeBytes(scene)), 0);
+    const studioRatingSummary = getDashboardStudioRatingSummary(selectedStudios);
     return {
       title,
       refs,
@@ -3816,6 +4010,9 @@
         longestScene: longestSceneMinutes,
         largestFile: largestSceneSizeBytes,
         averageRating100: ratedScenes.length ? ratedScenes.reduce((total, scene) => total + Number(scene?.rating100 || 0), 0) / ratedScenes.length : 0,
+        averageStudioRating100: studioRatingSummary.averageRating100,
+        studios: studioRatingSummary.total,
+        ratedStudios: studioRatingSummary.rated,
         oCount: sceneOCount,
         performers: performers.length,
         images: counts.images,
@@ -3928,7 +4125,8 @@
       { key: "size", label: "File size", value: formatBytes(counts.size), raw: Number(counts.size || 0) },
       { key: "longest", label: "Longest scene", value: formatDurationMinutes(counts.longestScene), raw: Number(counts.longestScene || 0) },
       { key: "largest", label: "Largest file", value: formatBytes(counts.largestFile), raw: Number(counts.largestFile || 0) },
-      { key: "rating", label: "Avg rating", value: counts.averageRating100 ? formatRating(counts.averageRating100) : "N/A", raw: Number(counts.averageRating100 || 0) },
+      { key: "studioRating", label: "Avg studio rating", value: counts.averageStudioRating100 ? formatRating(counts.averageStudioRating100) : "N/A", raw: Number(counts.averageStudioRating100 || 0) },
+      { key: "rating", label: "Avg scene rating", value: counts.averageRating100 ? formatRating(counts.averageRating100) : "N/A", raw: Number(counts.averageRating100 || 0) },
       { key: "ocount", label: "O count", value: formatNumber(counts.oCount), raw: Number(counts.oCount || 0) },
       { key: "performers", label: "Performers", value: formatNumber(counts.performers), raw: Number(counts.performers || 0) },
     ];
@@ -4545,6 +4743,67 @@
     });
   }
 
+  function renderStudioCharts(container, stats) {
+    const charts = stats?.studioCharts || {};
+    const studioRatings = charts.ratings || {};
+    const sceneCounts = charts.sceneCounts || {};
+    const averageSceneRatings = charts.averageSceneRatings || {};
+    const hasStudioRatings = Array.isArray(studioRatings.items) && studioRatings.items.length;
+    const hasSceneCounts = Array.isArray(sceneCounts.items) && sceneCounts.items.length;
+    const hasAverageSceneRatings = Array.isArray(averageSceneRatings.items) && averageSceneRatings.items.length;
+    if (!hasStudioRatings && !hasSceneCounts && !hasAverageSceneRatings) return;
+
+    const section = createPageSection(container, "STUDIO CHARTS", {
+      actions: [createHideUnknownChartsToggle("studio", () => {
+        const dashboard = container.closest(".stash-dashboard__page-dashboard");
+        if (dashboard instanceof HTMLElement) renderDashboardContent(dashboard, stats);
+      })],
+    });
+    const grid = document.createElement("div");
+    grid.className = "stash-dashboard__demographics";
+    section.appendChild(grid);
+    const hideUnknown = getHideUnknownChartSlices("studio");
+
+    if (hasStudioRatings) {
+      renderDemographicChart(grid, {
+        title: "Studio rating",
+        subtitle: `${studioRatings.total || 0} studio${studioRatings.total === 1 ? "" : "s"}`,
+        items: studioRatings.items || [],
+        unit: "studios",
+        type: "studio-rating",
+        studio: stats.studio,
+        stats,
+        hideUnknown,
+      });
+    }
+
+    if (hasSceneCounts) {
+      renderDemographicChart(grid, {
+        title: "Studio scene count",
+        subtitle: `${sceneCounts.total || 0} studio${sceneCounts.total === 1 ? "" : "s"}`,
+        items: sceneCounts.items || [],
+        unit: "studios",
+        type: "studio-scene-count",
+        studio: stats.studio,
+        stats,
+        hideUnknown,
+      });
+    }
+
+    if (hasAverageSceneRatings) {
+      renderDemographicChart(grid, {
+        title: "Average scene rating",
+        subtitle: `${averageSceneRatings.total || 0} studio${averageSceneRatings.total === 1 ? "" : "s"}`,
+        items: averageSceneRatings.items || [],
+        unit: "studios",
+        type: "studio-average-scene-rating",
+        studio: stats.studio,
+        stats,
+        hideUnknown,
+      });
+    }
+  }
+
   function renderSceneCharts(container, stats) {
     const sceneCharts = Array.isArray(stats?.sceneCharts) ? stats.sceneCharts : [];
     const sceneRatings = stats?.sceneRatings || {};
@@ -4730,10 +4989,11 @@
       chart.appendChild(note);
     }
     if (allDisplayItems.some((item) => item.filterable !== false)) {
+      const goLabel = isStudioChartType(type) ? "Go to studio content" : "Go to scenes";
       const controls = document.createElement("div");
       controls.className = "stash-dashboard__demographic-controls";
       controls.innerHTML = `
-        <button type="button" data-demo-action="go" disabled>Go to scenes</button>
+        <button type="button" data-demo-action="go" disabled>${escapeHtml(goLabel)}</button>
         ${isPerformerDemographicType(type) ? `<button type="button" data-demo-action="performers" disabled>Go to performers</button>` : ""}
         ${isCustomTagChartType(type) ? `
           <button type="button" data-tag-match-mode="any" class="is-active">Any</button>
@@ -5308,12 +5568,18 @@
       criteria = buildSceneMetricFilterCriteria("resolution", includeItems, excludeItems);
     } else if (type === "scene-duration") {
       criteria = buildSceneMetricFilterCriteria("duration", includeItems, excludeItems);
+    } else if (isStudioChartType(type)) {
+      criteria = buildStudioChartFilterCriteria(includeItems, excludeItems);
     } else if (type === "custom-performer" || type === "performer-rating") {
       criteria = buildPerformerGroupFilterCriteria(includeItems, excludeItems);
     } else {
       criteria = buildAgeFilterCriteria(includeItems, excludeItems);
     }
-    openDashboardTarget(stats ? makeDashboardScenesUrl(stats, criteria) : makeStudioScenesUrl(studio, criteria));
+    openDashboardTarget(isStudioChartType(type)
+      ? makeStudioScenesUrl(null, criteria)
+      : stats
+        ? makeDashboardScenesUrl(stats, criteria)
+        : makeStudioScenesUrl(studio, criteria));
   }
 
   function openDemographicPerformers(stats, type, items, rows) {
@@ -5332,6 +5598,10 @@
 
   function isPerformerDemographicType(type) {
     return type === "country" || type === "age" || type === "performer-rating" || type === "custom-performer";
+  }
+
+  function isStudioChartType(type) {
+    return type === "studio-rating" || type === "studio-scene-count" || type === "studio-average-scene-rating";
   }
 
   function isCustomTagChartType(type) {
@@ -5586,6 +5856,34 @@
     if (included.length) criteria.push(buildPerformerCriterion(included, "INCLUDES"));
     if (excluded.length) criteria.push(buildPerformerCriterion(excluded, "EXCLUDES"));
     return criteria;
+  }
+
+  function buildStudioChartFilterCriteria(includeItems, excludeItems) {
+    const criteria = [];
+    const included = normalizeStudioFilterItems(includeItems);
+    const excluded = normalizeStudioFilterItems(excludeItems);
+    if (included.length) criteria.push(buildStudioSelectionCriterion(included, "INCLUDES"));
+    if (excluded.length) criteria.push(buildStudioSelectionCriterion(excluded, "EXCLUDES"));
+    return criteria;
+  }
+
+  function normalizeStudioFilterItems(items) {
+    const studios = [];
+    (items || []).forEach((item) => {
+      if (Array.isArray(item?.studios) && item.studios.length) {
+        item.studios.forEach((studio) => {
+          if (studio?.id) studios.push({ id: String(studio.id), name: String(studio.name || studio.label || "Studio") });
+        });
+        return;
+      }
+      if (item?.id) studios.push({ id: String(item.id), name: String(item.name || item.label || "Studio") });
+    });
+    const seen = new Set();
+    return studios.filter((studio) => {
+      if (!studio.id || seen.has(studio.id)) return false;
+      seen.add(studio.id);
+      return true;
+    });
   }
 
   function buildPerformerBrowserCriteria(type, includeItems, excludeItems, tagMatchMode = "any") {
@@ -5947,10 +6245,10 @@
     };
   }
 
-  function buildStudioSelectionCriterion(studios) {
+  function buildStudioSelectionCriterion(studios, modifier = "INCLUDES") {
     const items = (studios || [])
       .filter((studio) => studio?.id && studio.id !== NO_STUDIO_ID)
-      .map((studio) => ({ id: String(studio.id), label: String(studio.name || "Studio") }));
+      .map((studio) => ({ id: String(studio.id), label: String(studio.name || studio.label || "Studio") }));
     if (!items.length) return null;
     return {
       type: "studios",
@@ -5959,7 +6257,7 @@
         excluded: [],
         depth: -1,
       },
-      modifier: "INCLUDES",
+      modifier,
     };
   }
 
@@ -6318,9 +6616,9 @@
 
   function createDashboardAlphabeticalStudioGroups(studios, query) {
     const matchedStudios = (studios || []).filter((studio) => studioMatchesDashboardSearch(studio, query));
-    if (getDashboardStudioListSort() === "scenes") {
+    if (getDashboardStudioListSort() !== "name") {
       return matchedStudios.length
-        ? [{ key: "__studios_by_scenes__", title: "Studios", studios: sortDashboardStudios(matchedStudios) }]
+        ? [{ key: "__studios_by_metric__", title: "Studios", studios: sortDashboardStudios(matchedStudios) }]
         : [];
     }
     const groups = new Map();
@@ -6412,16 +6710,48 @@
         const countDelta = (rightCount ?? -1) - (leftCount ?? -1);
         if (countDelta) return countDelta;
       }
+      if (sortMode === "rating") {
+        const ratingDelta = getDashboardStudioRating(right) - getDashboardStudioRating(left);
+        if (ratingDelta) return ratingDelta;
+      }
       return String(left.name || "").localeCompare(String(right.name || ""));
     });
   }
 
   function sortDashboardStudioGroups(left, right) {
-    if (getDashboardStudioListSort() === "scenes") {
+    const sortMode = getDashboardStudioListSort();
+    if (sortMode === "scenes") {
       const countDelta = getDashboardStudioGroupSceneCount(right) - getDashboardStudioGroupSceneCount(left);
       if (countDelta) return countDelta;
     }
+    if (sortMode === "rating") {
+      const ratingDelta = getDashboardStudioGroupRating(right) - getDashboardStudioGroupRating(left);
+      if (ratingDelta) return ratingDelta;
+    }
     return String(left.title || "").localeCompare(String(right.title || ""));
+  }
+
+  function getDashboardStudioRating(studioOrId) {
+    const studio = typeof studioOrId === "object"
+      ? studioOrId
+      : (state.dashboardStudios || []).find((item) => item.id === String(studioOrId || ""));
+    const rating = Number(studio?.rating100 || 0);
+    return Number.isFinite(rating) ? rating : 0;
+  }
+
+  function getDashboardStudioGroupRating(group) {
+    if (!group?.studios?.length) return -1;
+    const ratings = group.studios
+      .filter((studio) => studio?.id && !studio.synthetic)
+      .map(getDashboardStudioRating)
+      .filter((rating) => rating > 0);
+    if (!ratings.length) return -1;
+    return ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
+  }
+
+  function formatDashboardStudioRatingLabel(studio) {
+    const rating = getDashboardStudioRating(studio);
+    return rating > 0 ? `★ ${formatRating(rating)}` : "Unrated";
   }
 
   function getDashboardStudioOwnSceneCount(studioId) {
@@ -6496,6 +6826,7 @@
               <span class="stash-dashboard__studio-row-name">${escapeHtml(studio.name)}</span>
               <span class="stash-dashboard__studio-row-meta">
                 ${sceneCount == null ? "" : `<small title="Scene count">(${escapeHtml(formatNumber(sceneCount))})</small>`}
+                <small title="Studio rating">${escapeHtml(formatDashboardStudioRatingLabel(studio))}</small>
                 ${includeSubs && descendantCount ? `<small title="Sub-studios included">+${escapeHtml(descendantCount)}</small>` : ""}
               </span>
             </label>
@@ -6532,7 +6863,10 @@
       return `
         <button type="button" class="stash-dashboard__selected-studio" data-studio-id="${escapeHtml(studio.id)}" title="Remove ${escapeHtml(studio.name)} from selection">
           <span>${escapeHtml(studio.name)}</span>
-          <small>${sceneCount == null ? "" : `(${escapeHtml(formatNumber(sceneCount))})`}</small>
+          <small>${[
+            sceneCount == null ? "" : `(${formatNumber(sceneCount)})`,
+            formatDashboardStudioRatingLabel(studio),
+          ].filter(Boolean).map(escapeHtml).join(" ")}</small>
           <strong aria-hidden="true">x</strong>
         </button>
       `;
@@ -6794,6 +7128,7 @@
                 <span class="stash-dashboard__segmented" data-dashboard-segment="sort">
                   <button type="button" data-value="name">Name</button>
                   <button type="button" data-value="scenes">Most scenes</button>
+                  <button type="button" data-value="rating">Rating</button>
                 </span>
               </div>
               <label class="stash-dashboard__inline-control stash-dashboard__inline-control--check">
@@ -7081,7 +7416,7 @@
           refreshDashboardPicker(host);
           renderCachedDashboardView(host, content).catch((err) => console.warn("[StashDashboard] Studio grouping refresh failed", err));
         } else if (key === "sort") {
-          setLocalStorageValue(DASHBOARD_STUDIO_SORT_KEY, value === "scenes" ? "scenes" : "name");
+          setLocalStorageValue(DASHBOARD_STUDIO_SORT_KEY, normalizeDashboardStudioListSort(value));
           updateDashboardSegmentedControls(host);
           refreshDashboardPicker(host);
         }
