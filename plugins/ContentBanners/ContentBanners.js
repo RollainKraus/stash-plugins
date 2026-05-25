@@ -3,19 +3,23 @@
 
   const PLUGIN_ID = "ContentBanners";
   const ROUTE_EVENT = "content-banners:navigation";
-  const PAGE_TYPES = new Set(["performer", "studio", "group", "tag"]);
+  const ROUTE_HOOK_STATE_KEY = "__contentBannersRouteHookState";
   const BANNER_MODES = new Set(["preview", "screenshot", "mixed"]);
   const SELECTION_MODES = new Set(["random", "highest_rating", "most_recent_releases", "recently_added"]);
+  const DEFAULT_BANNER_OVERLAY = 0.38;
+  const DEFAULT_BANNER_BRIGHTNESS = 0.62;
+  const DEFAULT_BANNER_SATURATION = 1;
+  const DEFAULT_BANNER_BLUR = 0;
+  const MAX_BANNER_BLUR_PX = 16;
   const DEFAULTS = {
-    pageTypes: "performer,studio,group,tag",
+    bannerContentTypes: "studio:2,performer:2,groups:2,tag:2",
     bannerMode: "mixed",
     selectionMode: "random",
     resultLimit: 40,
-    bannerCount: "studio:2,performer:2,groups:2,tag:2",
     rotationSeconds: 12,
     transitionMs: 700,
-    brightnessPercent: 62,
-    overlayOpacity: "0.38",
+    bannerAdjustments: "0.38,0.62,1.0,0.0",
+    bannerObjectPosition: "center 18%",
     showTitle: true,
   };
 
@@ -63,35 +67,6 @@
     return Math.min(max, Math.max(min, parsed));
   }
 
-  function getConfigString(value, fallback) {
-    const normalized = String(value ?? "").trim();
-    return normalized || fallback;
-  }
-
-  function hasConfigKey(config, key) {
-    return Object.prototype.hasOwnProperty.call(config, key);
-  }
-
-  function fillMissingConfigDefaults(config) {
-    const next = { ...(config || {}) };
-    let changed = false;
-    Object.entries(DEFAULTS).forEach(([key, value]) => {
-      if (hasConfigKey(next, key)) return;
-      next[key] = value;
-      changed = true;
-    });
-    return { config: next, changed };
-  }
-
-  async function saveConfig(config) {
-    await gql(
-      `mutation ConfigureContentBanners($pluginId: ID!, $input: Map!) {
-        configurePlugin(plugin_id: $pluginId, input: $input)
-      }`,
-      { pluginId: PLUGIN_ID, input: config }
-    );
-  }
-
   function normalizeMode(value) {
     const normalized = String(value ?? "").trim().toLowerCase();
     return BANNER_MODES.has(normalized) ? normalized : DEFAULTS.bannerMode;
@@ -105,15 +80,7 @@
     return SELECTION_MODES.has(normalized) ? normalized : DEFAULTS.selectionMode;
   }
 
-  function getBannerCountForPage(value, pageType = getCurrentPage()?.type) {
-    const fallback = 1;
-    const direct = Number(value);
-    if (Number.isFinite(direct)) return Math.round(getConfigNumber(direct, fallback, 1, 3));
-
-    const entries = String(value || "")
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter(Boolean);
+  function normalizeContentType(value) {
     const aliases = {
       performers: "performer",
       performer: "performer",
@@ -123,29 +90,71 @@
       group: "group",
       tags: "tag",
       tag: "tag",
-      default: "default",
     };
+    return aliases[String(value ?? "").trim().toLowerCase()] || "";
+  }
+
+  function parseBannerContentTypes(value) {
+    const fallback = 1;
+    if (value == null) return parseBannerContentTypes(DEFAULTS.bannerContentTypes);
+
+    const entries = String(value || "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
     const counts = new Map();
     entries.forEach((entry) => {
       const [rawType, rawCount] = entry.split(":").map((part) => part.trim().toLowerCase());
-      const type = aliases[rawType];
+      const type = normalizeContentType(rawType);
       if (!type) return;
       const count = Math.round(getConfigNumber(rawCount, fallback, 1, 3));
       counts.set(type, count);
     });
-    return counts.get(pageType) || counts.get("default") || fallback;
+    return counts;
   }
 
-  function normalizeOverlayOpacity(value) {
-    return getConfigNumber(value, DEFAULTS.overlayOpacity, 0, 1);
+  function getBannerCountForPage(pageType = getCurrentPage()?.type) {
+    return state.config.bannerContentTypes.get(pageType) || 0;
+  }
+
+  function parseBannerAdjustments(value) {
+    const values = String(value ?? "")
+      .split(",")
+      .map((part) => part.trim());
+    return {
+      overlay: getConfigNumber(values[0], DEFAULT_BANNER_OVERLAY, 0, 1),
+      brightness: getConfigNumber(values[1], DEFAULT_BANNER_BRIGHTNESS, 0, 1),
+      saturation: getConfigNumber(values[2], DEFAULT_BANNER_SATURATION, 0, 1),
+      blur: getConfigNumber(values[3], DEFAULT_BANNER_BLUR, 0, 1),
+    };
+  }
+
+  function normalizeObjectPosition(value) {
+    const position = String(value ?? DEFAULTS.bannerObjectPosition).trim();
+    if (!position || position.length > 60) return DEFAULTS.bannerObjectPosition;
+    return /^[a-z0-9.\-+%\s]+$/i.test(position) ? position : DEFAULTS.bannerObjectPosition;
   }
 
   function getEnabledPageTypes() {
-    const values = String(state.config.pageTypes || "")
-      .split(",")
-      .map((value) => value.trim().toLowerCase())
-      .filter((value) => PAGE_TYPES.has(value));
-    return new Set(values.length ? values : DEFAULTS.pageTypes.split(","));
+    return new Set(state.config.bannerContentTypes.keys());
+  }
+
+  function normalizeConfig(config) {
+    const bannerAdjustments = parseBannerAdjustments(config.bannerAdjustments);
+    return {
+      bannerContentTypes: parseBannerContentTypes(config.bannerContentTypes),
+      bannerMode: normalizeMode(config.bannerMode),
+      selectionMode: normalizeSelectionMode(config.selectionMode),
+      resultLimit: Math.round(getConfigNumber(config.resultLimit, DEFAULTS.resultLimit, 1, 200)),
+      rotationSeconds: getConfigNumber(config.rotationSeconds, DEFAULTS.rotationSeconds, 3, 3600),
+      transitionMs: getConfigNumber(config.transitionMs, DEFAULTS.transitionMs, 0, 10000),
+      overlay: bannerAdjustments.overlay,
+      brightness: bannerAdjustments.brightness,
+      saturation: bannerAdjustments.saturation,
+      blur: bannerAdjustments.blur,
+      bannerObjectPosition: normalizeObjectPosition(config.bannerObjectPosition),
+      showTitle: getConfigBoolean(config.showTitle, DEFAULTS.showTitle),
+    };
   }
 
   async function loadConfig() {
@@ -158,26 +167,10 @@
         }
       `);
       const raw = data?.configuration?.plugins?.[PLUGIN_ID] || {};
-      const defaults = fillMissingConfigDefaults(raw);
-      const hydrated = defaults.config;
-      state.config = {
-        pageTypes: getConfigString(hydrated.pageTypes, DEFAULTS.pageTypes),
-        bannerMode: normalizeMode(hydrated.bannerMode),
-        selectionMode: normalizeSelectionMode(hydrated.selectionMode),
-        resultLimit: Math.round(getConfigNumber(hydrated.resultLimit, DEFAULTS.resultLimit, 1, 200)),
-        bannerCount: getConfigString(hydrated.bannerCount, DEFAULTS.bannerCount),
-        rotationSeconds: getConfigNumber(hydrated.rotationSeconds, DEFAULTS.rotationSeconds, 3, 3600),
-        transitionMs: getConfigNumber(hydrated.transitionMs, DEFAULTS.transitionMs, 0, 10000),
-        brightnessPercent: getConfigNumber(hydrated.brightnessPercent, DEFAULTS.brightnessPercent, 0, 100),
-        overlayOpacity: normalizeOverlayOpacity(hydrated.overlayOpacity),
-        showTitle: getConfigBoolean(hydrated.showTitle, DEFAULTS.showTitle),
-      };
-      if (defaults.changed) {
-        saveConfig(hydrated).catch((error) => console.warn("[ContentBanners] Could not initialize default settings.", error));
-      }
+      state.config = normalizeConfig({ ...DEFAULTS, ...raw });
     } catch (error) {
       console.warn("[ContentBanners] Could not load settings.", error);
-      state.config = { ...DEFAULTS };
+      state.config = normalizeConfig(DEFAULTS);
     }
   }
 
@@ -206,7 +199,11 @@
       state.target.classList.remove("content-banners-target");
       state.target.style.removeProperty("--content-banners-transition");
       state.target.style.removeProperty("--content-banners-brightness");
+      state.target.style.removeProperty("--content-banners-saturation");
+      state.target.style.removeProperty("--content-banners-blur");
+      state.target.style.removeProperty("--content-banners-blur-inset");
       state.target.style.removeProperty("--content-banners-overlay");
+      state.target.style.removeProperty("--content-banners-object-position");
     }
     state.layer?.remove();
     state.titleLayer?.remove();
@@ -219,7 +216,7 @@
   }
 
   function ensureLayer(target, page) {
-    const bannerCount = getBannerCountForPage(state.config.bannerCount, page?.type);
+    const bannerCount = getBannerCountForPage(page?.type);
     if (
       state.target === target &&
       state.layer?.isConnected &&
@@ -267,9 +264,14 @@
   }
 
   function applyCssVars(target) {
+    const blurPx = state.config.blur * MAX_BANNER_BLUR_PX;
     target.style.setProperty("--content-banners-transition", `${state.config.transitionMs}ms`);
-    target.style.setProperty("--content-banners-brightness", `${state.config.brightnessPercent}%`);
-    target.style.setProperty("--content-banners-overlay", String(state.config.overlayOpacity));
+    target.style.setProperty("--content-banners-brightness", String(state.config.brightness));
+    target.style.setProperty("--content-banners-saturation", String(state.config.saturation));
+    target.style.setProperty("--content-banners-blur", `${blurPx}px`);
+    target.style.setProperty("--content-banners-blur-inset", `${Math.ceil(blurPx * 2)}px`);
+    target.style.setProperty("--content-banners-overlay", String(state.config.overlay));
+    target.style.setProperty("--content-banners-object-position", state.config.bannerObjectPosition);
   }
 
   function getFindFilterForSelectionMode(mode) {
@@ -339,19 +341,20 @@
   }
 
   function buildSceneFilter(page) {
+    const filter = {};
     if (page.type === "performer") {
-      return { performers: { value: [page.id], modifier: "INCLUDES_ALL" } };
+      filter.performers = { value: [page.id], modifier: "INCLUDES_ALL" };
     }
     if (page.type === "studio") {
-      return { studios: { value: [page.id], modifier: "INCLUDES_ALL" } };
+      filter.studios = { value: [page.id], modifier: "INCLUDES_ALL" };
     }
     if (page.type === "group") {
-      return { groups: { value: [page.id], modifier: "INCLUDES_ALL" } };
+      filter.groups = { value: [page.id], modifier: "INCLUDES_ALL" };
     }
     if (page.type === "tag") {
-      return { tags: { value: [page.id], modifier: "INCLUDES_ALL" } };
+      filter.tags = { value: [page.id], modifier: "INCLUDES_ALL" };
     }
-    return {};
+    return filter;
   }
 
   function getMediaType(item) {
@@ -524,7 +527,7 @@
 
     state.items = items;
     state.index = Math.floor(Math.random() * Math.max(1, items.length));
-    state.panelIndexes = Array.from({ length: getBannerCountForPage(state.config.bannerCount, page.type) }, (_item, index) => (state.index + index) % Math.max(1, items.length));
+    state.panelIndexes = Array.from({ length: getBannerCountForPage(page.type) }, (_item, index) => (state.index + index) % Math.max(1, items.length));
 
     if (!items.length) {
       showEmpty("No scene previews found for this page.");
@@ -544,19 +547,19 @@
   }
 
   function installRouteHooks() {
-    window.__contentBannersScheduleRefresh = () => scheduleRefresh();
+    const hookState = window[ROUTE_HOOK_STATE_KEY] || {};
+    hookState.scheduleRefresh = () => scheduleRefresh();
+    window[ROUTE_HOOK_STATE_KEY] = hookState;
 
-    if (!window.__contentBannersRouteEventListener) {
-      window.__contentBannersRouteEventListener = () => {
-        if (typeof window.__contentBannersScheduleRefresh === "function") {
-          window.__contentBannersScheduleRefresh();
-        }
+    if (!hookState.routeEventListener) {
+      hookState.routeEventListener = () => {
+        if (typeof hookState.scheduleRefresh === "function") hookState.scheduleRefresh();
       };
-      window.addEventListener(ROUTE_EVENT, window.__contentBannersRouteEventListener);
+      window.addEventListener(ROUTE_EVENT, hookState.routeEventListener);
     }
 
-    if (!window.__contentBannersRouteHooksInstalled) {
-      window.__contentBannersRouteHooksInstalled = true;
+    if (!hookState.historyPatched) {
+      hookState.historyPatched = true;
       ["pushState", "replaceState"].forEach((method) => {
         const original = history[method];
         history[method] = function patchedContentBannersHistoryMethod(...args) {
@@ -565,7 +568,8 @@
           return result;
         };
       });
-      window.addEventListener("popstate", () => window.dispatchEvent(new Event(ROUTE_EVENT)));
+      hookState.popstateListener = () => window.dispatchEvent(new Event(ROUTE_EVENT));
+      window.addEventListener("popstate", hookState.popstateListener);
     }
   }
 
@@ -573,7 +577,12 @@
     window.clearTimeout(state.rotationTimer);
     window.clearTimeout(state.refreshTimer);
     clearBanner();
-    if (window.__contentBannersScheduleRefresh) window.__contentBannersScheduleRefresh = null;
+    const hookState = window[ROUTE_HOOK_STATE_KEY];
+    if (hookState?.routeEventListener) {
+      window.removeEventListener(ROUTE_EVENT, hookState.routeEventListener);
+      hookState.routeEventListener = null;
+    }
+    if (hookState?.scheduleRefresh) hookState.scheduleRefresh = null;
     if (window.__contentBannersCleanup === cleanup) window.__contentBannersCleanup = null;
   }
 
