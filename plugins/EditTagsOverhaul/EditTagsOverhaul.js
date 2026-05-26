@@ -1610,7 +1610,7 @@
     btn.setAttribute("data-eto-fullscreen-popout-group-id", String(groupId));
     btn.setAttribute("aria-label", `Pop out ${groupName}`);
     btn.setAttribute("title", `Pop out ${groupName}`);
-    btn.innerHTML = '<i class="fa-solid fa-outdent"></i>';
+    btn.textContent = "\u21E4";
     return btn;
   }
 
@@ -2167,9 +2167,7 @@
   function updateFullscreenMinimizeButton(panel, minimized) {
     const button = panel?.querySelector("[data-eto-fullscreen-minimize]");
     if (!button) return;
-    button.innerHTML = minimized
-      ? '<i class="fa-solid fa-expand"></i>'
-      : '<i class="fa-solid fa-minimize"></i>';
+    button.textContent = minimized ? "\u25A1" : "\u2212";
     button.setAttribute(
       "aria-label",
       minimized ? "Expand fullscreen tag panel" : "Minimize fullscreen tag panel"
@@ -2386,7 +2384,7 @@
     const controls = document.createElement("div");
     controls.className = "edit-tags-overhaul__fullscreen-controls";
     controls.innerHTML = `
-      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-mini-close="${escapeHtml(groupId)}" aria-label="Collapse ${escapeHtml(group.parent.name)} back to main panel" title="Collapse to main panel"><i class="fa-solid fa-minimize"></i></button>
+      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-mini-close="${escapeHtml(groupId)}" aria-label="Collapse ${escapeHtml(group.parent.name)} back to main panel" title="Collapse to main panel">−</button>
     `;
 
     header.appendChild(titleWrap);
@@ -2514,8 +2512,8 @@
     controls.innerHTML = `
       <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-scale="-1" aria-label="Decrease panel scale">A-</button>
       <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-scale="1" aria-label="Increase panel scale">A+</button>
-      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-reset="1" aria-label="Reset fullscreen tag panel layout" title="Reset layout"><i class="fa-solid fa-arrow-rotate-left"></i></button>
-      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-minimize="1" aria-label="Minimize fullscreen tag panel" title="Minimize"><i class="fa-solid fa-minimize"></i></button>
+      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-reset="1" aria-label="Reset fullscreen tag panel layout" title="Reset layout">↺</button>
+      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-minimize="1" aria-label="Minimize fullscreen tag panel" title="Minimize">−</button>
     `;
 
     header.appendChild(titleWrap);
