@@ -6,7 +6,23 @@
   const STYLE_HIDE_ID = "kmv-edit-tags-overhaul-hide-original";
   const HOVER_PREVIEW_ID = "edit-tags-overhaul-hover-preview";
   const TAG_CLIPBOARD_STORAGE_KEY = "EditTagsOverhaul.tagClipboard";
+  const FULLSCREEN_LAYOUT_STORAGE_KEY = "EditTagsOverhaul.fullscreenQuickTagLayout";
+  const FULLSCREEN_MINI_PANELS_STORAGE_KEY = "EditTagsOverhaul.fullscreenMiniPanels";
+  const ROUTE_EVENT = "edit-tags-overhaul:navigation";
+  const ROUTE_HOOK_STATE_KEY = "__editTagsOverhaulRouteHooks";
+  const CLEANUP_KEY = "__editTagsOverhaulCleanup";
   const ROUTE_RETRY_DELAYS = [0, 200, 600, 1200, 2000, 3500];
+  const FULLSCREEN_SCALE_STEPS = [0.75, 0.85, 1, 1.15, 1.3];
+  const DEFAULT_FULLSCREEN_PANEL_LAYOUT = {
+    width: 420,
+    height: 520,
+    scale: 1,
+    minimized: false,
+  };
+  const DEFAULT_FULLSCREEN_MINI_PANEL_LAYOUT = {
+    width: 320,
+    height: 400,
+  };
   const SUPPLEMENTAL_IMAGE_KEYS = [
     "ctm_supplemental_image_1",
     "ctm_supplemental_image_2",
@@ -105,6 +121,24 @@
     supplementalImagePromises: new Map(),
     hoverTagId: "",
     hoverAnchorRect: null,
+    routeEventListener: null,
+    tabClickListener: null,
+    scrollListener: null,
+    resizeListener: null,
+    fullscreenChangeListener: null,
+    fullscreen: {
+      root: null,
+      launcher: null,
+      panel: null,
+      resizeObserver: null,
+      miniPanels: new Map(),
+      miniResizeObservers: new Map(),
+      groups: [],
+      groupMap: new Map(),
+      entityKey: "",
+      isBuilding: false,
+      dragState: null,
+    },
   };
 
   function escapeHtml(value) {
@@ -250,6 +284,38 @@
       if (normalized === "false") return false;
     }
     return fallback;
+  }
+
+  function isFullscreenQuickTagPanelEnabled(cfg) {
+    return getConfigBoolean(cfg?.enableFullscreenQuickTagPanel, true);
+  }
+
+  function shouldAutoOpenFullscreenQuickTagPanel(cfg) {
+    return getConfigBoolean(cfg?.autoOpenFullscreenQuickTagPanel, false);
+  }
+
+  function getFullscreenButtonPosition(cfg) {
+    const normalized = String(cfg?.fullscreenQuickTagButtonPosition || "bottomright")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_-]+/g, "");
+    return ["topright", "topleft", "bottomleft", "bottomright"].includes(normalized)
+      ? normalized
+      : "bottomright";
+  }
+
+  function getFullscreenIdleOpacity(cfg) {
+    const parsed = Number(cfg?.fullscreenQuickTagIdleOpacity);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0.1;
+    return Math.min(1, Math.max(0.02, parsed));
+  }
+
+  function shouldRefreshSceneUIAfterSave(cfg) {
+    return getConfigBoolean(cfg?.refreshSceneUIAfterSave, false);
+  }
+
+  function shouldUseFullscreenSharedHover(cfg) {
+    return getConfigBoolean(cfg?.fullscreenQuickTagSharedHover, false);
   }
 
   function getDisplayMode(cfg) {
@@ -654,6 +720,34 @@
     return data?.[cfg.updateMutationKey]?.id;
   }
 
+  function refreshNativeSceneUIAfterSave(entity) {
+    if (entity?.type !== "scene") return;
+
+    const expectedPath = `/scenes/${entity.id}`;
+    if (!window.location.pathname.startsWith(expectedPath)) return;
+
+    window.setTimeout(() => {
+      if (!window.location.pathname.startsWith(expectedPath)) return;
+
+      try {
+        const cleanUrl = new URL(window.location.href);
+        const refreshUrl = new URL(window.location.href);
+        refreshUrl.searchParams.set("_eto_refresh", String(Date.now()));
+
+        history.replaceState(history.state, "", refreshUrl.toString());
+        window.dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
+
+        window.setTimeout(() => {
+          if (!window.location.pathname.startsWith(expectedPath)) return;
+          history.replaceState(history.state, "", cleanUrl.toString());
+          window.dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
+        }, 80);
+      } catch (err) {
+        console.error("[EditTagsOverhaul] scene UI refresh failed", err);
+      }
+    }, 50);
+  }
+
   async function persistSelectedTagIds(nextSelectedTagIds) {
     if (!state.currentEntity || state.isSaving) return false;
 
@@ -674,6 +768,9 @@
         Array.from(state.selectedTagIds)
       );
       state.loadedSelectionEntityKey = getCurrentEntityKey(state.currentEntity);
+      if (shouldRefreshSceneUIAfterSave(state.config || {})) {
+        refreshNativeSceneUIAfterSave(state.currentEntity);
+      }
       return true;
     } catch (err) {
       console.error("[EditTagsOverhaul] tag save failed", err);
@@ -1059,10 +1156,9 @@
     }, 1600);
   }
 
-  function revealSearchResult(result) {
+  function revealSearchResult(result, panel = document.getElementById(PANEL_ID)) {
     if (!result) return;
 
-    const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
 
     const groupSection = panel.querySelector(
@@ -1105,6 +1201,7 @@
   }
 
   function renderSearchResults(panel) {
+    if (!panel) return;
     const resultsWrap = panel.querySelector(".edit-tags-overhaul__search-results");
     const emptyEl = panel.querySelector(".edit-tags-overhaul__search-empty");
     if (!resultsWrap || !emptyEl) return;
@@ -1143,6 +1240,8 @@
         img.src = result.image_path;
         img.alt = result.name;
         main.appendChild(img);
+      } else {
+        main.classList.add("edit-tags-overhaul__search-result-main--no-image");
       }
 
       const textWrap = document.createElement("span");
@@ -1165,7 +1264,7 @@
       toggle.className = "edit-tags-overhaul__search-result-toggle";
       toggle.setAttribute("data-eto-search-toggle-id", result.id);
       toggle.title = state.selectedTagIds.has(result.id) ? "Remove tag" : "Add tag";
-      toggle.textContent = state.selectedTagIds.has(result.id) ? "✓" : "+";
+      toggle.textContent = state.selectedTagIds.has(result.id) ? "\u2713" : "+";
       toggle.classList.toggle("is-selected", state.selectedTagIds.has(result.id));
 
       row.appendChild(main);
@@ -1178,6 +1277,9 @@
     const wrap = document.createElement("div");
     wrap.className = "edit-tags-overhaul__search";
 
+    const inputRow = document.createElement("div");
+    inputRow.className = "edit-tags-overhaul__search-input-row";
+
     const input = document.createElement("input");
     input.type = "search";
     input.className = "edit-tags-overhaul__search-input";
@@ -1185,6 +1287,12 @@
     input.autocomplete = "off";
     input.spellcheck = false;
     input.value = state.currentSearchQuery || "";
+
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "edit-tags-overhaul__search-clear";
+    clearBtn.textContent = "x";
+    clearBtn.setAttribute("aria-label", "Clear tag search");
 
     const results = document.createElement("div");
     results.className = "edit-tags-overhaul__search-results";
@@ -1194,9 +1302,14 @@
     empty.textContent = "No matching tags";
     empty.hidden = true;
 
+    const updateClearState = () => {
+      clearBtn.hidden = !input.value;
+    };
+
     input.addEventListener("input", () => {
       state.currentSearchQuery = input.value || "";
-      renderSearchResults(wrap.closest(`#${PANEL_ID}`));
+      updateClearState();
+      renderSearchResults(wrap.closest(".edit-tags-overhaul"));
     });
 
     input.addEventListener("keydown", (event) => {
@@ -1204,7 +1317,8 @@
         if (input.value) {
           input.value = "";
           state.currentSearchQuery = "";
-          renderSearchResults(wrap.closest(`#${PANEL_ID}`));
+          updateClearState();
+          renderSearchResults(wrap.closest(".edit-tags-overhaul"));
         }
         return;
       }
@@ -1218,7 +1332,18 @@
       }
     });
 
-    wrap.appendChild(input);
+    clearBtn.addEventListener("click", () => {
+      input.value = "";
+      state.currentSearchQuery = "";
+      updateClearState();
+      renderSearchResults(wrap.closest(".edit-tags-overhaul"));
+      input.focus();
+    });
+
+    updateClearState();
+    inputRow.appendChild(input);
+    inputRow.appendChild(clearBtn);
+    wrap.appendChild(inputRow);
     wrap.appendChild(results);
     wrap.appendChild(empty);
     return wrap;
@@ -1354,7 +1479,7 @@
   function updateParentToggleState(button, attached) {
     button.classList.toggle("is-selected", attached);
     button.setAttribute("aria-pressed", attached ? "true" : "false");
-    button.textContent = attached ? "✓" : "+";
+    button.textContent = attached ? "\u2713" : "+";
     button.setAttribute("title", attached ? "Remove parent tag" : "Add parent tag");
     button.setAttribute("aria-label", attached ? "Remove parent tag" : "Add parent tag");
   }
@@ -1415,6 +1540,11 @@
       el.setAttribute("aria-pressed", selected ? "true" : "false");
     });
 
+    document.querySelectorAll(".edit-tags-overhaul__fullscreen-selected-count").forEach((el) => {
+      const selectedCount = state.selectedTagIds.size;
+      el.textContent = selectedCount > 0 ? `${selectedCount} selected` : "No tags selected";
+    });
+
     syncClipboardActionState();
   }
 
@@ -1470,6 +1600,17 @@
     btn.className = "edit-tags-overhaul__parent-toggle-btn";
     btn.setAttribute("data-eto-parent-toggle-id", tagId);
     updateParentToggleState(btn, state.selectedTagIds.has(tagId));
+    return btn;
+  }
+
+  function createFullscreenPopoutButton(groupId, groupName) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "edit-tags-overhaul__fullscreen-popout-btn";
+    btn.setAttribute("data-eto-fullscreen-popout-group-id", String(groupId));
+    btn.setAttribute("aria-label", `Pop out ${groupName}`);
+    btn.setAttribute("title", `Pop out ${groupName}`);
+    btn.innerHTML = '<i class="fa-solid fa-outdent"></i>';
     return btn;
   }
 
@@ -1565,7 +1706,7 @@
     });
 
     const defaultExpanded =
-      getConfigBoolean(cfg.defaultExpanded, false) ||
+      getConfigBoolean(cfg.subgroupsDefaultExpanded, getConfigBoolean(cfg.defaultExpanded, false)) ||
       (getConfigBoolean(cfg.autoExpandIfSelected, false) &&
         subgroupHasSelectedTags(subgroup));
 
@@ -1588,6 +1729,10 @@
     const header = document.createElement("div");
     header.className = "edit-tags-overhaul__header";
     header.setAttribute("data-eto-toggle-section", "1");
+
+    if (cfg.__fullscreenMainPanel) {
+      header.appendChild(createFullscreenPopoutButton(group.parent.id, group.parent.name));
+    }
 
     const left = document.createElement("div");
     left.className = "edit-tags-overhaul__header-main";
@@ -1840,6 +1985,676 @@
     return panel;
   }
 
+  function clampNumber(value, min, max) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return min;
+    return Math.min(max, Math.max(min, number));
+  }
+
+  function readFullscreenLayout() {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(FULLSCREEN_LAYOUT_STORAGE_KEY) || "{}");
+      return {
+        x: Number.isFinite(Number(parsed.x)) ? Number(parsed.x) : null,
+        y: Number.isFinite(Number(parsed.y)) ? Number(parsed.y) : null,
+        width: Number.isFinite(Number(parsed.width)) ? Number(parsed.width) : DEFAULT_FULLSCREEN_PANEL_LAYOUT.width,
+        height: Number.isFinite(Number(parsed.height)) ? Number(parsed.height) : DEFAULT_FULLSCREEN_PANEL_LAYOUT.height,
+        scale: Number.isFinite(Number(parsed.scale)) ? Number(parsed.scale) : DEFAULT_FULLSCREEN_PANEL_LAYOUT.scale,
+        minimized: Boolean(parsed.minimized),
+      };
+    } catch (err) {
+      console.error("[EditTagsOverhaul] fullscreen layout read failed", err);
+      return { x: null, y: null, ...DEFAULT_FULLSCREEN_PANEL_LAYOUT };
+    }
+  }
+
+  function writeFullscreenLayout(layout) {
+    try {
+      window.localStorage.setItem(FULLSCREEN_LAYOUT_STORAGE_KEY, JSON.stringify(layout));
+    } catch (err) {
+      console.error("[EditTagsOverhaul] fullscreen layout write failed", err);
+    }
+  }
+
+  function clearFullscreenLayout() {
+    try {
+      window.localStorage.removeItem(FULLSCREEN_LAYOUT_STORAGE_KEY);
+    } catch (err) {
+      console.error("[EditTagsOverhaul] fullscreen layout reset failed", err);
+    }
+  }
+
+  function readFullscreenMiniPanelLayouts() {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(FULLSCREEN_MINI_PANELS_STORAGE_KEY) || "{}");
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch (err) {
+      console.error("[EditTagsOverhaul] fullscreen mini panel layout read failed", err);
+      return {};
+    }
+  }
+
+  function writeFullscreenMiniPanelLayouts(layouts) {
+    try {
+      window.localStorage.setItem(FULLSCREEN_MINI_PANELS_STORAGE_KEY, JSON.stringify(layouts || {}));
+    } catch (err) {
+      console.error("[EditTagsOverhaul] fullscreen mini panel layout write failed", err);
+    }
+  }
+
+  function removeFullscreenMiniPanelLayout(groupId) {
+    const layouts = readFullscreenMiniPanelLayouts();
+    delete layouts[String(groupId)];
+    writeFullscreenMiniPanelLayouts(layouts);
+  }
+
+  function getFullscreenViewport() {
+    const fullscreenElement = document.fullscreenElement;
+    const rect = fullscreenElement?.getBoundingClientRect?.();
+    return {
+      width: Math.max(320, Math.round(rect?.width || window.innerWidth || 1280)),
+      height: Math.max(240, Math.round(rect?.height || window.innerHeight || 720)),
+    };
+  }
+
+  function normalizeFullscreenLayout(layout = readFullscreenLayout()) {
+    const viewport = getFullscreenViewport();
+    const width = clampNumber(layout.width, 300, Math.max(300, viewport.width - 32));
+    const height = clampNumber(layout.height, 240, Math.max(240, viewport.height - 32));
+    const defaultX = Math.max(16, viewport.width - width - 24);
+    const defaultY = Math.max(16, Math.round(viewport.height * 0.12));
+    return {
+      x: clampNumber(layout.x ?? defaultX, 8, Math.max(8, viewport.width - width - 8)),
+      y: clampNumber(layout.y ?? defaultY, 8, Math.max(8, viewport.height - 48)),
+      width,
+      height,
+      scale: clampNumber(layout.scale, FULLSCREEN_SCALE_STEPS[0], FULLSCREEN_SCALE_STEPS[FULLSCREEN_SCALE_STEPS.length - 1]),
+      minimized: Boolean(layout.minimized),
+    };
+  }
+
+  function getFullscreenPanelLayout() {
+    return normalizeFullscreenLayout(readFullscreenLayout());
+  }
+
+  function normalizeFullscreenMiniPanelLayout(rawLayout = {}, index = 0) {
+    const viewport = getFullscreenViewport();
+    const width = clampNumber(
+      rawLayout.width ?? DEFAULT_FULLSCREEN_MINI_PANEL_LAYOUT.width,
+      240,
+      Math.max(240, viewport.width - 32)
+    );
+    const height = clampNumber(
+      rawLayout.height ?? DEFAULT_FULLSCREEN_MINI_PANEL_LAYOUT.height,
+      180,
+      Math.max(180, viewport.height - 32)
+    );
+    const defaultX = Math.max(16, 24 + index * 32);
+    const defaultY = Math.max(16, 96 + index * 34);
+    return {
+      x: clampNumber(rawLayout.x ?? defaultX, 8, Math.max(8, viewport.width - width - 8)),
+      y: clampNumber(rawLayout.y ?? defaultY, 8, Math.max(8, viewport.height - 48)),
+      width,
+      height,
+    };
+  }
+
+  function persistCurrentFullscreenPanelLayout() {
+    const panel = state.fullscreen.panel;
+    if (!panel) return;
+    const current = getFullscreenPanelLayout();
+    const rect = panel.getBoundingClientRect();
+    const minimized = panel.classList.contains("is-minimized");
+    writeFullscreenLayout({
+      ...current,
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width: minimized ? current.width : Math.round(rect.width),
+      height: minimized ? current.height : Math.round(rect.height),
+      minimized,
+    });
+  }
+
+  function persistFullscreenMiniPanelLayout(groupId, panel) {
+    if (!groupId || !panel) return;
+    const layouts = readFullscreenMiniPanelLayouts();
+    const rect = panel.getBoundingClientRect();
+    layouts[String(groupId)] = {
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+    writeFullscreenMiniPanelLayouts(layouts);
+  }
+
+  function applyFullscreenPanelLayout(panel = state.fullscreen.panel) {
+    if (!panel) return;
+    const layout = getFullscreenPanelLayout();
+    panel.style.left = `${layout.x}px`;
+    panel.style.top = `${layout.y}px`;
+    panel.style.width = `${layout.width}px`;
+    panel.style.height = `${layout.height}px`;
+    panel.style.setProperty("--eto-fullscreen-scale", String(layout.scale));
+    panel.classList.toggle("is-minimized", layout.minimized);
+    updateFullscreenMinimizeButton(panel, layout.minimized);
+    syncFullscreenMiniPanelScale();
+  }
+
+  function applyFullscreenSharedHoverSetting(root = state.fullscreen.root, cfg = state.config || {}) {
+    root?.classList.toggle(
+      "edit-tags-overhaul__fullscreen-root--shared-hover",
+      shouldUseFullscreenSharedHover(cfg)
+    );
+  }
+
+  function applyFullscreenMiniPanelLayout(panel, layout) {
+    if (!panel) return;
+    panel.style.left = `${layout.x}px`;
+    panel.style.top = `${layout.y}px`;
+    panel.style.width = `${layout.width}px`;
+    panel.style.height = `${layout.height}px`;
+    panel.style.setProperty("--eto-fullscreen-scale", String(getFullscreenPanelLayout().scale));
+  }
+
+  function syncFullscreenMiniPanelScale() {
+    const scale = String(getFullscreenPanelLayout().scale);
+    state.fullscreen.miniPanels.forEach((panel) => {
+      panel.style.setProperty("--eto-fullscreen-scale", scale);
+    });
+  }
+
+  function updateFullscreenMinimizeButton(panel, minimized) {
+    const button = panel?.querySelector("[data-eto-fullscreen-minimize]");
+    if (!button) return;
+    button.innerHTML = minimized
+      ? '<i class="fa-solid fa-expand"></i>'
+      : '<i class="fa-solid fa-minimize"></i>';
+    button.setAttribute(
+      "aria-label",
+      minimized ? "Expand fullscreen tag panel" : "Minimize fullscreen tag panel"
+    );
+    button.setAttribute("title", minimized ? "Expand" : "Minimize");
+  }
+
+  function changeFullscreenPanelScale(delta) {
+    const layout = getFullscreenPanelLayout();
+    const currentIndex = FULLSCREEN_SCALE_STEPS.reduce((bestIndex, step, index) => {
+      return Math.abs(step - layout.scale) < Math.abs(FULLSCREEN_SCALE_STEPS[bestIndex] - layout.scale)
+        ? index
+        : bestIndex;
+    }, 0);
+    const nextIndex = clampNumber(currentIndex + delta, 0, FULLSCREEN_SCALE_STEPS.length - 1);
+    writeFullscreenLayout({ ...layout, scale: FULLSCREEN_SCALE_STEPS[nextIndex] });
+    applyFullscreenPanelLayout();
+  }
+
+  function setFullscreenPanelMinimized(minimized) {
+    const layout = getFullscreenPanelLayout();
+    writeFullscreenLayout({ ...layout, minimized });
+    applyFullscreenPanelLayout();
+  }
+
+  function resetFullscreenPanelLayout() {
+    clearFullscreenLayout();
+    applyFullscreenPanelLayout();
+  }
+
+  function startFullscreenPanelDrag(event) {
+    const panel = event.target.closest(".edit-tags-overhaul--fullscreen-panel");
+    if (!panel || event.button !== 0 || event.target.closest("button, input, a")) return;
+
+    const rect = panel.getBoundingClientRect();
+    state.fullscreen.dragState = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      width: rect.width,
+      height: rect.height,
+      panel,
+      groupId: panel.getAttribute("data-eto-fullscreen-mini-group-id") || "",
+    };
+
+    panel.setPointerCapture?.(event.pointerId);
+    panel.classList.add("is-dragging");
+    event.preventDefault();
+  }
+
+  function handleFullscreenPanelDrag(event) {
+    const drag = state.fullscreen.dragState;
+    const panel = drag?.panel;
+    if (!drag || !panel || event.pointerId !== drag.pointerId) return;
+
+    const viewport = getFullscreenViewport();
+    const x = clampNumber(event.clientX - drag.offsetX, 8, Math.max(8, viewport.width - drag.width - 8));
+    const y = clampNumber(event.clientY - drag.offsetY, 8, Math.max(8, viewport.height - 48));
+    panel.style.left = `${x}px`;
+    panel.style.top = `${y}px`;
+  }
+
+  function stopFullscreenPanelDrag(event) {
+    const drag = state.fullscreen.dragState;
+    const panel = drag?.panel;
+    if (!drag || !panel || event.pointerId !== drag.pointerId) return;
+
+    panel.releasePointerCapture?.(event.pointerId);
+    panel.classList.remove("is-dragging");
+    state.fullscreen.dragState = null;
+    if (drag.groupId) persistFullscreenMiniPanelLayout(drag.groupId, panel);
+    else persistCurrentFullscreenPanelLayout();
+  }
+
+  function attachFullscreenPanelEventDelegation(panel) {
+    panel.addEventListener("pointerdown", (event) => {
+      if (event.target.closest("[data-eto-fullscreen-drag]")) startFullscreenPanelDrag(event);
+    });
+    panel.addEventListener("pointermove", handleFullscreenPanelDrag);
+    panel.addEventListener("pointerup", stopFullscreenPanelDrag);
+    panel.addEventListener("pointercancel", stopFullscreenPanelDrag);
+
+    panel.addEventListener("click", (event) => {
+      const minimizeBtn = event.target.closest("[data-eto-fullscreen-minimize]");
+      if (minimizeBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        setFullscreenPanelMinimized(!panel.classList.contains("is-minimized"));
+        minimizeBtn.blur?.();
+        return;
+      }
+
+      const scaleBtn = event.target.closest("[data-eto-fullscreen-scale]");
+      if (scaleBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        changeFullscreenPanelScale(Number(scaleBtn.getAttribute("data-eto-fullscreen-scale")) || 0);
+        scaleBtn.blur?.();
+        return;
+      }
+
+      const resetBtn = event.target.closest("[data-eto-fullscreen-reset]");
+      if (resetBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        resetFullscreenPanelLayout();
+        resetBtn.blur?.();
+        return;
+      }
+
+      const popoutBtn = event.target.closest("[data-eto-fullscreen-popout-group-id]");
+      if (popoutBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        openFullscreenMiniPanel(popoutBtn.getAttribute("data-eto-fullscreen-popout-group-id"));
+        popoutBtn.blur?.();
+        return;
+      }
+
+      const miniCloseBtn = event.target.closest("[data-eto-fullscreen-mini-close]");
+      if (miniCloseBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeFullscreenMiniPanel(miniCloseBtn.getAttribute("data-eto-fullscreen-mini-close"), true);
+        miniCloseBtn.blur?.();
+        return;
+      }
+
+      if (panel.classList.contains("is-minimized") && event.target.closest("[data-eto-fullscreen-drag]")) {
+        event.preventDefault();
+        setFullscreenPanelMinimized(false);
+        return;
+      }
+
+      const parentToggleBtn = event.target.closest("[data-eto-parent-toggle-id]");
+      if (parentToggleBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        const tagId = parentToggleBtn.getAttribute("data-eto-parent-toggle-id");
+        if (tagId) onTagToggleClick(tagId);
+        return;
+      }
+
+      const tagBtn = event.target.closest("[data-eto-tag-id]");
+      if (tagBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        const tagId = tagBtn.getAttribute("data-eto-tag-id");
+        if (tagId) onTagToggleClick(tagId);
+        return;
+      }
+
+      const searchToggleBtn = event.target.closest("[data-eto-search-toggle-id]");
+      if (searchToggleBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        const tagId = searchToggleBtn.getAttribute("data-eto-search-toggle-id");
+        if (tagId) onTagToggleClick(tagId);
+        return;
+      }
+
+      const searchJumpBtn = event.target.closest("[data-eto-search-jump-id]");
+      if (searchJumpBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        revealSearchResult(
+          {
+            id: searchJumpBtn.getAttribute("data-eto-search-jump-id"),
+            targetId: searchJumpBtn.getAttribute("data-eto-search-target-id"),
+            targetKind: searchJumpBtn.getAttribute("data-eto-search-target-kind"),
+            groupId: searchJumpBtn.getAttribute("data-eto-search-group-id"),
+            subgroupId: searchJumpBtn.getAttribute("data-eto-search-subgroup-id") || "",
+          },
+          panel
+        );
+        return;
+      }
+
+      const toggleHeader = event.target.closest("[data-eto-toggle-section]");
+      if (toggleHeader) {
+        event.preventDefault();
+        event.stopPropagation();
+        const section = toggleHeader.closest(".edit-tags-overhaul__group, .edit-tags-overhaul__subgroup");
+        if (section) section.classList.toggle("is-open");
+      }
+    });
+  }
+
+  function getFullscreenGroupById(groupId) {
+    return state.fullscreen.groupMap.get(String(groupId)) || null;
+  }
+
+  function createFullscreenMiniPanel(group, cfg, layout) {
+    const groupId = String(group.parent.id);
+    const panel = document.createElement("section");
+    panel.className = "edit-tags-overhaul edit-tags-overhaul--fullscreen-panel edit-tags-overhaul--fullscreen-mini-panel";
+    panel.setAttribute("data-eto-fullscreen-mini-group-id", groupId);
+    applyPanelVariables(panel, cfg);
+    panel.style.setProperty("--eto-fullscreen-idle-opacity", String(getFullscreenIdleOpacity(cfg)));
+
+    const header = document.createElement("div");
+    header.className = "edit-tags-overhaul__fullscreen-header";
+    header.setAttribute("data-eto-fullscreen-drag", "1");
+
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "edit-tags-overhaul__fullscreen-title-wrap";
+
+    const title = document.createElement("div");
+    title.className = "edit-tags-overhaul__fullscreen-title";
+    title.textContent = group.parent.name;
+
+    titleWrap.appendChild(title);
+
+    const controls = document.createElement("div");
+    controls.className = "edit-tags-overhaul__fullscreen-controls";
+    controls.innerHTML = `
+      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-mini-close="${escapeHtml(groupId)}" aria-label="Collapse ${escapeHtml(group.parent.name)} back to main panel" title="Collapse to main panel"><i class="fa-solid fa-minimize"></i></button>
+    `;
+
+    header.appendChild(titleWrap);
+    header.appendChild(controls);
+    panel.appendChild(header);
+
+    const content = document.createElement("div");
+    content.className = "edit-tags-overhaul__fullscreen-content";
+
+    const groupsWrap = document.createElement("div");
+    groupsWrap.className = "edit-tags-overhaul__groups edit-tags-overhaul__fullscreen-groups";
+    groupsWrap.appendChild(createGroupSection(group, {
+      ...cfg,
+      defaultExpanded: true,
+      subgroupsDefaultExpanded: false,
+      autoExpandIfSelected: false,
+      __fullscreenMainPanel: false,
+    }));
+    content.appendChild(groupsWrap);
+    panel.appendChild(content);
+
+    attachFullscreenPanelEventDelegation(panel);
+    applyFullscreenMiniPanelLayout(panel, layout);
+    announceFullscreenPanel(panel);
+    return panel;
+  }
+
+  function announceFullscreenPanel(panel) {
+    panel.classList.add("is-new", "edit-tags-overhaul__search-target-flash");
+    window.setTimeout(() => {
+      panel.classList.remove("is-new", "edit-tags-overhaul__search-target-flash");
+    }, 3000);
+  }
+
+  function openFullscreenMiniPanel(groupId, layoutOverride = null, persist = true) {
+    const normalizedGroupId = String(groupId || "");
+    const group = getFullscreenGroupById(normalizedGroupId);
+    if (!group || !state.fullscreen.root) return null;
+
+    const existingPanel = state.fullscreen.miniPanels.get(normalizedGroupId);
+    if (existingPanel) {
+      announceFullscreenPanel(existingPanel);
+      return existingPanel;
+    }
+
+    const cfg = {
+      ...(state.config || {}),
+      displayMode: "text",
+      defaultExpanded: true,
+      subgroupsDefaultExpanded: false,
+      autoExpandIfSelected: false,
+    };
+    const panelIndex = state.fullscreen.miniPanels.size;
+    const layout = normalizeFullscreenMiniPanelLayout(layoutOverride || {}, panelIndex);
+    const panel = createFullscreenMiniPanel(group, cfg, layout);
+
+    state.fullscreen.root.appendChild(panel);
+    state.fullscreen.miniPanels.set(normalizedGroupId, panel);
+
+    if (window.ResizeObserver) {
+      const observer = new ResizeObserver(() => persistFullscreenMiniPanelLayout(normalizedGroupId, panel));
+      observer.observe(panel);
+      state.fullscreen.miniResizeObservers.set(normalizedGroupId, observer);
+    }
+
+    if (persist) persistFullscreenMiniPanelLayout(normalizedGroupId, panel);
+    syncRenderedSelectionStates();
+    return panel;
+  }
+
+  function closeFullscreenMiniPanel(groupId, forgetLayout = false) {
+    const normalizedGroupId = String(groupId || "");
+    const observer = state.fullscreen.miniResizeObservers.get(normalizedGroupId);
+    observer?.disconnect();
+    state.fullscreen.miniResizeObservers.delete(normalizedGroupId);
+
+    state.fullscreen.miniPanels.get(normalizedGroupId)?.remove();
+    state.fullscreen.miniPanels.delete(normalizedGroupId);
+
+    if (forgetLayout) removeFullscreenMiniPanelLayout(normalizedGroupId);
+  }
+
+  function closeFullscreenMiniPanels() {
+    Array.from(state.fullscreen.miniPanels.keys()).forEach((groupId) => {
+      closeFullscreenMiniPanel(groupId, false);
+    });
+  }
+
+  function restoreFullscreenMiniPanels() {
+    const cfg = state.config || {};
+    if (!shouldAutoOpenFullscreenQuickTagPanel(cfg)) return;
+
+    const layouts = readFullscreenMiniPanelLayouts();
+    Object.entries(layouts).forEach(([groupId, layout], index) => {
+      openFullscreenMiniPanel(groupId, normalizeFullscreenMiniPanelLayout(layout, index), false);
+    });
+  }
+
+  function createFullscreenPanel(groups, cfg) {
+    const panel = document.createElement("section");
+    panel.className = "edit-tags-overhaul edit-tags-overhaul--fullscreen-panel";
+    applyPanelVariables(panel, cfg);
+    panel.style.setProperty("--eto-fullscreen-idle-opacity", String(getFullscreenIdleOpacity(cfg)));
+
+    const header = document.createElement("div");
+    header.className = "edit-tags-overhaul__fullscreen-header";
+    header.setAttribute("data-eto-fullscreen-drag", "1");
+
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "edit-tags-overhaul__fullscreen-title-wrap";
+
+    const title = document.createElement("div");
+    title.className = "edit-tags-overhaul__fullscreen-title";
+    title.textContent = "Quick Tags";
+
+    const selectedCount = document.createElement("div");
+    selectedCount.className = "edit-tags-overhaul__fullscreen-selected-count";
+    selectedCount.textContent = state.selectedTagIds.size > 0 ? `${state.selectedTagIds.size} selected` : "No tags selected";
+
+    titleWrap.appendChild(title);
+    titleWrap.appendChild(selectedCount);
+
+    const controls = document.createElement("div");
+    controls.className = "edit-tags-overhaul__fullscreen-controls";
+    controls.innerHTML = `
+      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-scale="-1" aria-label="Decrease panel scale">A-</button>
+      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-scale="1" aria-label="Increase panel scale">A+</button>
+      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-reset="1" aria-label="Reset fullscreen tag panel layout" title="Reset layout"><i class="fa-solid fa-arrow-rotate-left"></i></button>
+      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-minimize="1" aria-label="Minimize fullscreen tag panel" title="Minimize"><i class="fa-solid fa-minimize"></i></button>
+    `;
+
+    header.appendChild(titleWrap);
+    header.appendChild(controls);
+    panel.appendChild(header);
+
+    const content = document.createElement("div");
+    content.className = "edit-tags-overhaul__fullscreen-content";
+    content.appendChild(createSearchControls());
+
+    const groupsWrap = document.createElement("div");
+    groupsWrap.className = "edit-tags-overhaul__groups edit-tags-overhaul__fullscreen-groups";
+    groups.forEach((group) => {
+      groupsWrap.appendChild(createGroupSection(group, cfg));
+    });
+    content.appendChild(groupsWrap);
+    panel.appendChild(content);
+
+    attachFullscreenPanelEventDelegation(panel);
+    renderSearchResults(panel);
+
+    return panel;
+  }
+
+  function getFullscreenSceneEntity() {
+    if (!document.fullscreenElement) return null;
+    const entity = getEntityFromPath(window.location.pathname);
+    return entity?.type === "scene" ? entity : null;
+  }
+
+  async function buildFullscreenPanel() {
+    if (state.fullscreen.isBuilding || !state.fullscreen.root) return;
+    const entity = getFullscreenSceneEntity();
+    if (!entity) return;
+
+    state.fullscreen.isBuilding = true;
+    try {
+      const entityKey = getCurrentEntityKey(entity);
+      state.currentEntity = entity;
+      const [cfg, allTags] = await Promise.all([loadConfig(), fetchAllTags()]);
+      await ensureSelectedTagIds(entity);
+
+      if (!state.fullscreen.root || !document.fullscreenElement) return;
+
+      const fullscreenCfg = {
+        ...cfg,
+        displayMode: "text",
+        defaultExpanded: getConfigBoolean(cfg.defaultExpanded, false),
+        __fullscreenMainPanel: true,
+      };
+      const groups = buildNestedGroupsPreservingOrder(allTags, fullscreenCfg);
+      state.fullscreen.groups = groups;
+      state.fullscreen.groupMap = new Map(groups.map((group) => [String(group.parent.id), group]));
+      state.searchIndex = buildSearchIndex(allTags, fullscreenCfg);
+      const panel = createFullscreenPanel(groups, fullscreenCfg);
+
+      closeFullscreenMiniPanels();
+      state.fullscreen.panel?.remove();
+      state.fullscreen.panel = panel;
+      state.fullscreen.entityKey = entityKey;
+      state.fullscreen.root.appendChild(panel);
+      applyFullscreenPanelLayout(panel);
+      syncRenderedSelectionStates();
+      restoreFullscreenMiniPanels();
+
+      if (window.ResizeObserver) {
+        state.fullscreen.resizeObserver?.disconnect();
+        state.fullscreen.resizeObserver = new ResizeObserver(() => persistCurrentFullscreenPanelLayout());
+        state.fullscreen.resizeObserver.observe(panel);
+      }
+    } catch (err) {
+      console.error("[EditTagsOverhaul] fullscreen quick tag panel failed", err);
+    } finally {
+      state.fullscreen.isBuilding = false;
+    }
+  }
+
+  function closeFullscreenPanel() {
+    state.fullscreen.resizeObserver?.disconnect();
+    state.fullscreen.resizeObserver = null;
+    closeFullscreenMiniPanels();
+    state.fullscreen.panel?.remove();
+    state.fullscreen.panel = null;
+    state.fullscreen.entityKey = "";
+    state.fullscreen.groups = [];
+    state.fullscreen.groupMap = new Map();
+  }
+
+  function createFullscreenLauncher() {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "edit-tags-overhaul__fullscreen-launcher";
+    button.textContent = "Tags";
+    button.setAttribute("aria-label", "Open fullscreen quick tag panel");
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (state.fullscreen.panel) closeFullscreenPanel();
+      else buildFullscreenPanel();
+    });
+    return button;
+  }
+
+  function cleanupFullscreenOverlay() {
+    closeFullscreenPanel();
+    state.fullscreen.root?.remove();
+    state.fullscreen.root = null;
+    state.fullscreen.launcher = null;
+    state.fullscreen.dragState = null;
+  }
+
+  async function syncFullscreenOverlay() {
+    const fullscreenElement = document.fullscreenElement;
+    const entity = getFullscreenSceneEntity();
+    const cfg = await loadConfig();
+    if (!fullscreenElement || !entity || !isFullscreenQuickTagPanelEnabled(cfg)) {
+      cleanupFullscreenOverlay();
+      return;
+    }
+
+    if (state.fullscreen.root?.parentElement !== fullscreenElement) {
+      cleanupFullscreenOverlay();
+      const root = document.createElement("div");
+      root.className = "edit-tags-overhaul__fullscreen-root";
+      const launcher = createFullscreenLauncher();
+      launcher.classList.add(`edit-tags-overhaul__fullscreen-launcher--${getFullscreenButtonPosition(cfg)}`);
+      root.appendChild(launcher);
+      fullscreenElement.appendChild(root);
+      state.fullscreen.root = root;
+      state.fullscreen.launcher = root.querySelector(".edit-tags-overhaul__fullscreen-launcher");
+      applyFullscreenSharedHoverSetting(root, cfg);
+      if (shouldAutoOpenFullscreenQuickTagPanel(cfg)) {
+        await buildFullscreenPanel();
+      }
+    } else {
+      applyFullscreenSharedHoverSetting(state.fullscreen.root, cfg);
+    }
+  }
+
   async function ensureSelectedTagIds(entity) {
     const entityKey = getCurrentEntityKey(entity);
     if (state.loadedSelectionEntityKey === entityKey) return state.selectedTagIds;
@@ -1954,37 +2769,33 @@
   }
 
   function installHistoryHooks() {
-    const origPushState = history.pushState;
-    const origReplaceState = history.replaceState;
+    const hookState = window[ROUTE_HOOK_STATE_KEY] || {};
+    window[ROUTE_HOOK_STATE_KEY] = hookState;
 
-    history.pushState = function (...args) {
-      const result = origPushState.apply(this, args);
-      setTimeout(() => {
-        handleRouteChange();
-        scheduleRouteInjects();
-      }, 0);
-      return result;
+    if (hookState.installed) return;
+    hookState.installed = true;
+
+    const dispatchRouteEvent = () => {
+      window.dispatchEvent(new Event(ROUTE_EVENT));
     };
 
-    history.replaceState = function (...args) {
-      const result = origReplaceState.apply(this, args);
-      setTimeout(() => {
-        handleRouteChange();
-        scheduleRouteInjects();
-      }, 0);
-      return result;
-    };
-
-    window.addEventListener("popstate", () => {
-      setTimeout(() => {
-        handleRouteChange();
-        scheduleRouteInjects();
-      }, 0);
+    ["pushState", "replaceState"].forEach((method) => {
+      const original = history[method];
+      history[method] = function patchedEditTagsOverhaulHistoryMethod(...args) {
+        const result = original.apply(this, args);
+        setTimeout(dispatchRouteEvent, 0);
+        return result;
+      };
     });
+
+    hookState.popstateListener = () => {
+      setTimeout(dispatchRouteEvent, 0);
+    };
+    window.addEventListener("popstate", hookState.popstateListener);
   }
 
   function installTabClickHook() {
-    document.addEventListener("click", (event) => {
+    state.tabClickListener = (event) => {
       const target = event.target.closest("a, button, [role='tab']");
       if (!target) return;
 
@@ -2002,16 +2813,77 @@
       scheduleDelayedInject(100);
       scheduleDelayedInject(400);
       scheduleDelayedInject(900);
+    };
+
+    document.addEventListener("click", state.tabClickListener);
+  }
+
+  function handleRouteEvent() {
+    handleRouteChange();
+    scheduleRouteInjects();
+    syncFullscreenOverlay().catch((err) => {
+      console.error("[EditTagsOverhaul] fullscreen overlay sync failed", err);
     });
   }
 
+  function cleanup() {
+    state.scheduledRouteToken += 1;
+    state.injectToken += 1;
+    hideHoverPreview();
+    cleanupPanel();
+    cleanupFullscreenOverlay();
+    removeHideOriginalStyle();
+
+    if (state.routeEventListener) {
+      window.removeEventListener(ROUTE_EVENT, state.routeEventListener);
+      state.routeEventListener = null;
+    }
+    if (state.tabClickListener) {
+      document.removeEventListener("click", state.tabClickListener);
+      state.tabClickListener = null;
+    }
+    if (state.scrollListener) {
+      window.removeEventListener("scroll", state.scrollListener, true);
+      state.scrollListener = null;
+    }
+    if (state.resizeListener) {
+      window.removeEventListener("resize", state.resizeListener);
+      state.resizeListener = null;
+    }
+    if (state.fullscreenChangeListener) {
+      document.removeEventListener("fullscreenchange", state.fullscreenChangeListener);
+      state.fullscreenChangeListener = null;
+    }
+
+    if (window[CLEANUP_KEY] === cleanup) window[CLEANUP_KEY] = null;
+  }
+
   function init() {
+    if (typeof window[CLEANUP_KEY] === "function") {
+      window[CLEANUP_KEY]();
+    }
+    window[CLEANUP_KEY] = cleanup;
+
     installHistoryHooks();
+    state.routeEventListener = handleRouteEvent;
+    window.addEventListener(ROUTE_EVENT, state.routeEventListener);
+
     installTabClickHook();
-    window.addEventListener("scroll", hideHoverPreview, true);
-    window.addEventListener("resize", hideHoverPreview);
+    state.scrollListener = hideHoverPreview;
+    state.resizeListener = hideHoverPreview;
+    state.fullscreenChangeListener = () => {
+      syncFullscreenOverlay().catch((err) => {
+        console.error("[EditTagsOverhaul] fullscreen overlay sync failed", err);
+      });
+    };
+    window.addEventListener("scroll", state.scrollListener, true);
+    window.addEventListener("resize", state.resizeListener);
+    document.addEventListener("fullscreenchange", state.fullscreenChangeListener);
     handleRouteChange();
     scheduleRouteInjects();
+    syncFullscreenOverlay().catch((err) => {
+      console.error("[EditTagsOverhaul] fullscreen overlay sync failed", err);
+    });
   }
 
   if (document.readyState === "loading") {
