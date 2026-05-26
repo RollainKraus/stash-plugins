@@ -317,10 +317,6 @@
   outline: none;
 }
 
-.edit-tags-overhaul__fullscreen-popout-btn i {
-  pointer-events: none;
-}
-
 .edit-tags-overhaul__parent-toggle-btn {
   border: 1px solid rgba(255, 255, 255, 0.25);
   background: transparent;
@@ -691,10 +687,6 @@
 .edit-tags-overhaul__fullscreen-control:focus-visible {
   background: rgba(255, 255, 255, 0.12);
   outline: none;
-}
-
-.edit-tags-overhaul__fullscreen-control i {
-  pointer-events: none;
 }
 
 .edit-tags-overhaul__fullscreen-content {
