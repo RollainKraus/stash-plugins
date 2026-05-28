@@ -1252,6 +1252,41 @@
     }, isError ? 2800 : 1600);
   }
 
+  async function copyTextToClipboard(text) {
+    const value = String(text || "");
+    if (!value) return false;
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+
+    const input = document.createElement("textarea");
+    input.value = value;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.left = "-9999px";
+    input.style.top = "0";
+    document.body.appendChild(input);
+    input.select();
+    try {
+      return document.execCommand("copy");
+    } finally {
+      input.remove();
+    }
+  }
+
+  async function copyStashIdToClipboard(id, label = "Stash ID") {
+    const value = String(id || "").trim();
+    if (!value) return showQuickAccessToast(`No ${label} to copy.`, true);
+    try {
+      await copyTextToClipboard(value);
+      showQuickAccessToast(`Copied ${label}: ${value}`);
+    } catch (err) {
+      console.error("[StashQuickActionsPanel] copy Stash ID failed", err);
+      showQuickAccessToast(`Could not copy ${label}.`, true);
+    }
+  }
+
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
   }
@@ -1597,6 +1632,11 @@
           }
           <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-action="tags">Edit tags</button>
           ${
+            imageCount === 1
+              ? `<button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-action="copy-stash-id">Copy Stash ID</button>`
+              : ""
+          }
+          ${
             itemType === "performer"
               ? `<button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-action="performer-image" ${
                   imageCount === 1 ? "" : "disabled"
@@ -1639,6 +1679,8 @@
         openStudioEditor(itemType, normalizedImageIds);
       } else if (action === "tags") {
         openTagEditor(itemType, normalizedImageIds);
+      } else if (action === "copy-stash-id") {
+        copyStashIdToClipboard(normalizedImageIds[0], `${getItemTitleLabel(itemType)} ID`);
       } else if (action === "performer-image") {
         openPerformerImageEditor(normalizedImageIds[0]);
       } else if (action === "pin-performer-quick-access") {
@@ -1843,6 +1885,7 @@
             <div class="stash-quick-actions-panel__menu-meta">Tag quick manage</div>
           </div>
           <div class="stash-quick-actions-panel__side-summary">${escapeHtml(tagName)}</div>
+          <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-tag-action="copy-id">Copy Stash ID</button>
           <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-tag-action="rename">Rename tag</button>
           <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-tag-action="image">Set tag image</button>
           <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-tag-action="reparent">Reparent tag</button>
@@ -1865,7 +1908,8 @@
       event.stopPropagation();
       const action = button.getAttribute("data-sqap-tag-action") || "";
       closeContextMenu();
-      if (action === "rename") openTagRenameEditor(tagId, tagName);
+      if (action === "copy-id") copyStashIdToClipboard(tagId, "Tag ID");
+      else if (action === "rename") openTagRenameEditor(tagId, tagName);
       else if (action === "image") openTagImageEditor(tagId);
       else if (action === "reparent") openTagParentEditor(tagId);
       else if (action === "unparent") unparentTagFromContext(tagId);
@@ -1902,6 +1946,7 @@
             <div class="stash-quick-actions-panel__menu-meta">Studio quick manage</div>
           </div>
           <div class="stash-quick-actions-panel__side-summary">${escapeHtml(studioName)}</div>
+          <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-studio-action="copy-id">Copy Stash ID</button>
           <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-studio-action="rename">Rename studio</button>
           <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-studio-action="url">Edit URL</button>
           <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-studio-action="image">Set studio image</button>
@@ -1925,7 +1970,8 @@
       event.stopPropagation();
       const action = button.getAttribute("data-sqap-studio-action") || "";
       closeContextMenu();
-      if (action === "rename") openStudioRenameEditor(studioId, studioName);
+      if (action === "copy-id") copyStashIdToClipboard(studioId, "Studio ID");
+      else if (action === "rename") openStudioRenameEditor(studioId, studioName);
       else if (action === "url") openStudioUrlEditor(studioId);
       else if (action === "image") openStudioImageEditor(studioId);
       else if (action === "reparent") openStudioParentEditor(studioId);
