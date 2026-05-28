@@ -338,15 +338,42 @@
 }
 
 .edit-tags-overhaul__tag-control--text {
+  align-items: stretch;
   gap: 0;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  overflow: hidden;
+}
+
+.edit-tags-overhaul__tag-control--text:has(.edit-tags-overhaul__tag.is-selected) {
+  border-color: var(--eto-selected-border-color);
 }
 
 .edit-tags-overhaul__tag-control--text .edit-tags-overhaul__tag--text {
-  border-radius: 0 999px 999px 0;
+  border: 0;
+  border-radius: 999px 0 0 999px;
   background: transparent;
-  padding-left: 0.3rem;
+  padding: 0.12rem 0.58rem 0.12rem 0.72rem;
+}
+
+.edit-tags-overhaul__tag-control--text .edit-tags-overhaul__timeline-tag-btn {
+  align-self: stretch;
+  aspect-ratio: 1 / 1;
+  min-width: 1.74rem;
+  border: 0;
+  border-radius: 999px;
+  margin: 0.12rem 0.14rem 0.12rem 0.02rem;
+  padding: 0;
+  background-color: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 0.08rem 0.24rem rgba(0, 0, 0, 0.24);
+}
+
+.edit-tags-overhaul__tag-control--text .edit-tags-overhaul__timeline-tag-btn:hover,
+.edit-tags-overhaul__tag-control--text .edit-tags-overhaul__timeline-tag-btn:focus-visible {
+  background-color: rgba(255, 255, 255, 0.22);
 }
 
 .edit-tags-overhaul__tag-control--image,
@@ -374,7 +401,7 @@
 .edit-tags-overhaul__timeline-tag-btn {
   min-width: 1.65rem;
   border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 999px 0 0 999px;
+  border-radius: 999px;
   background-color: rgba(255, 255, 255, 0.05);
   background-image: none;
   color: #fff;
