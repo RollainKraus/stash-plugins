@@ -5,13 +5,20 @@
   const PANEL_ID = "kmv-edit-tags-overhaul";
   const STYLE_HIDE_ID = "kmv-edit-tags-overhaul-hide-original";
   const HOVER_PREVIEW_ID = "edit-tags-overhaul-hover-preview";
+  const TIMELINE_OVERLAY_ID = "edit-tags-overhaul-timeline-overlay";
   const TAG_CLIPBOARD_STORAGE_KEY = "EditTagsOverhaul.tagClipboard";
+  const TIMELINE_MARKERS_STORAGE_KEY = "EditTagsOverhaul.timelineMarkers";
+  const TIMELINE_TAG_COLORS_STORAGE_KEY = "EditTagsOverhaul.timelineTagColors";
+  const TIMELINE_PALETTE_LAYOUT_STORAGE_KEY = "EditTagsOverhaul.timelinePaletteLayout";
+  const QUICK_TAG_OVERLAY_OPEN_STORAGE_KEY = "EditTagsOverhaul.quickTagOverlayOpen";
   const FULLSCREEN_LAYOUT_STORAGE_KEY = "EditTagsOverhaul.fullscreenQuickTagLayout";
   const FULLSCREEN_MINI_PANELS_STORAGE_KEY = "EditTagsOverhaul.fullscreenMiniPanels";
   const ROUTE_EVENT = "edit-tags-overhaul:navigation";
   const ROUTE_HOOK_STATE_KEY = "__editTagsOverhaulRouteHooks";
   const CLEANUP_KEY = "__editTagsOverhaulCleanup";
   const ROUTE_RETRY_DELAYS = [0, 200, 600, 1200, 2000, 3500];
+  const TIMELINE_MARKER_GAP_SECONDS = 0.1;
+  const TIMELINE_MARKER_MIN_WIDTH_PX = 56;
   const FULLSCREEN_SCALE_STEPS = [0.75, 0.85, 1, 1.15, 1.3];
   const DEFAULT_FULLSCREEN_PANEL_LAYOUT = {
     width: 420,
@@ -126,6 +133,21 @@
     scrollListener: null,
     resizeListener: null,
     fullscreenChangeListener: null,
+    timelineVideo: null,
+    timelineVideoListener: null,
+    timelineDurationRetry: null,
+    timelineDragState: null,
+    timelineResizeState: null,
+    timelineTimeBadge: null,
+    timelineSuppressClick: false,
+    timelineRetryCount: 0,
+    timelinePaletteOpen: false,
+    timelinePaletteColorEditMode: false,
+    timelinePaletteLayout: null,
+    timelinePaletteDragState: null,
+    timelinePairHoverTimer: null,
+    timelinePairPointer: { x: -1, y: -1 },
+    timelineSceneDurationCache: new Map(),
     fullscreen: {
       root: null,
       launcher: null,
@@ -218,6 +240,299 @@
     }
   }
 
+  function readTimelineMarkerStore() {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(TIMELINE_MARKERS_STORAGE_KEY) || "{}");
+      return {
+        version: 1,
+        scenes: parsed?.scenes && typeof parsed.scenes === "object" ? parsed.scenes : {},
+      };
+    } catch (err) {
+      console.error("[EditTagsOverhaul] timeline marker read failed", err);
+      return { version: 1, scenes: {} };
+    }
+  }
+
+  function writeTimelineMarkerStore(store) {
+    try {
+      window.localStorage.setItem(
+        TIMELINE_MARKERS_STORAGE_KEY,
+        JSON.stringify({ version: 1, scenes: store?.scenes || {} })
+      );
+    } catch (err) {
+      console.error("[EditTagsOverhaul] timeline marker write failed", err);
+    }
+  }
+
+  function normalizeTimelineTagColors(rawColors) {
+    const colors = {};
+    if (!rawColors || typeof rawColors !== "object" || Array.isArray(rawColors)) return colors;
+
+    Object.entries(rawColors).forEach(([tagId, color]) => {
+      const normalizedTagId = String(tagId || "").trim();
+      const normalizedColor = normalizeCustomFieldValue(color);
+      if (!normalizedTagId || !isCssColorLike(normalizedColor)) return;
+      colors[normalizedTagId] = normalizedColor;
+    });
+    return colors;
+  }
+
+  function readTimelineTagColors() {
+    try {
+      return normalizeTimelineTagColors(JSON.parse(window.localStorage.getItem(TIMELINE_TAG_COLORS_STORAGE_KEY) || "{}"));
+    } catch (err) {
+      console.error("[EditTagsOverhaul] timeline tag colors read failed", err);
+      return {};
+    }
+  }
+
+  function writeTimelineTagColors(colors) {
+    try {
+      window.localStorage.setItem(TIMELINE_TAG_COLORS_STORAGE_KEY, JSON.stringify(normalizeTimelineTagColors(colors)));
+    } catch (err) {
+      console.error("[EditTagsOverhaul] timeline tag colors write failed", err);
+    }
+  }
+
+  function setTimelineTagColor(tagId, color) {
+    const normalizedTagId = String(tagId || "").trim();
+    if (!normalizedTagId) return false;
+
+    const colors = readTimelineTagColors();
+    const normalizedColor = normalizeCustomFieldValue(color);
+    if (isCssColorLike(normalizedColor)) colors[normalizedTagId] = normalizedColor;
+    else delete colors[normalizedTagId];
+    writeTimelineTagColors(colors);
+    requestTimelineOverlaySync();
+    syncRenderedSelectionStates();
+    return true;
+  }
+
+  function promptTimelineTagColor(tagId) {
+    const normalizedTagId = String(tagId || "").trim();
+    const tagRecord = getTagRecordById(normalizedTagId);
+    if (!normalizedTagId || !tagRecord) return;
+
+    const input = document.createElement("input");
+    input.type = "color";
+    input.value = getTimelineMarkerRawColor(normalizedTagId) || "#ffffff";
+    input.style.position = "fixed";
+    input.style.left = "-1000px";
+    input.style.top = "-1000px";
+    input.addEventListener("change", () => {
+      setTimelineTagColor(normalizedTagId, input.value);
+      input.remove();
+    }, { once: true });
+    document.body.appendChild(input);
+    input.click();
+    window.setTimeout(() => input.remove(), 60000);
+  }
+
+  function readTimelinePaletteLayout() {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(TIMELINE_PALETTE_LAYOUT_STORAGE_KEY) || "{}");
+      if (!parsed || typeof parsed !== "object") return null;
+      if (!["left", "top", "width", "height"].every((key) => Number.isFinite(Number(parsed[key])))) return null;
+      return {
+        left: Number.isFinite(Number(parsed.left)) ? Number(parsed.left) : null,
+        top: Number.isFinite(Number(parsed.top)) ? Number(parsed.top) : null,
+        width: Number.isFinite(Number(parsed.width)) ? Number(parsed.width) : null,
+        height: Number.isFinite(Number(parsed.height)) ? Number(parsed.height) : null,
+      };
+    } catch (err) {
+      console.error("[EditTagsOverhaul] timeline palette layout read failed", err);
+      return null;
+    }
+  }
+
+  function writeTimelinePaletteLayout(layout) {
+    try {
+      window.localStorage.setItem(TIMELINE_PALETTE_LAYOUT_STORAGE_KEY, JSON.stringify(layout || {}));
+    } catch (err) {
+      console.error("[EditTagsOverhaul] timeline palette layout write failed", err);
+    }
+  }
+
+  function clearTimelinePaletteLayout() {
+    try {
+      window.localStorage.removeItem(TIMELINE_PALETTE_LAYOUT_STORAGE_KEY);
+    } catch (err) {
+      console.error("[EditTagsOverhaul] timeline palette layout reset failed", err);
+    }
+    state.timelinePaletteLayout = null;
+    state.timelinePaletteDragState = null;
+  }
+
+  function normalizeTimelineMarkerStore(rawStore) {
+    const rawScenes = rawStore?.scenes && typeof rawStore.scenes === "object" ? rawStore.scenes : {};
+    const scenes = {};
+
+    Object.entries(rawScenes).forEach(([sceneId, scene]) => {
+      const normalizedSceneId = String(scene?.sceneId || sceneId);
+      const markers = Array.isArray(scene?.markers)
+        ? scene.markers
+          .filter((marker) => marker && marker.tagId !== undefined && Number.isFinite(Number(marker.seconds)))
+          .map((marker) => ({
+            ...marker,
+            id: String(marker.id || `${marker.tagId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+            tagId: String(marker.tagId),
+            tagName: String(marker.tagName || "Tag"),
+            seconds: Math.max(0, Number(marker.seconds) || 0),
+            endSeconds: Number.isFinite(Number(marker.endSeconds)) ? Math.max(0, Number(marker.endSeconds)) : null,
+          }))
+        : [];
+      if (!markers.length) return;
+      scenes[normalizedSceneId] = {
+        sceneId: normalizedSceneId,
+        updatedAt: String(scene?.updatedAt || new Date().toISOString()),
+        markers,
+      };
+    });
+
+    return { version: 1, scenes };
+  }
+
+  function getTimelineMarkerStoreStats(store = readTimelineMarkerStore()) {
+    const scenes = store?.scenes && typeof store.scenes === "object" ? store.scenes : {};
+    const sceneCount = Object.keys(scenes).length;
+    const markerCount = Object.values(scenes).reduce((total, scene) => {
+      return total + (Array.isArray(scene?.markers) ? scene.markers.length : 0);
+    }, 0);
+    return { sceneCount, markerCount };
+  }
+
+  function exportTimelineMarkers() {
+    const store = normalizeTimelineMarkerStore(readTimelineMarkerStore());
+    const timelineTagColors = readTimelineTagColors();
+    const stats = getTimelineMarkerStoreStats(store);
+    const payload = {
+      plugin: PLUGIN_ID,
+      type: "timelineMarkers",
+      exportedAt: new Date().toISOString(),
+      version: 1,
+      sceneCount: stats.sceneCount,
+      markerCount: stats.markerCount,
+      timelineTagColorCount: Object.keys(timelineTagColors).length,
+      timelineTagColors,
+      scenes: store.scenes,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    link.href = URL.createObjectURL(blob);
+    link.download = `edit-tags-overhaul-timeline-markers-${stamp}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  }
+
+  function mergeTimelineMarkerStores(existingStore, importedStore) {
+    const merged = normalizeTimelineMarkerStore(existingStore);
+    const imported = normalizeTimelineMarkerStore(importedStore);
+
+    Object.entries(imported.scenes).forEach(([sceneId, scene]) => {
+      const existingMarkers = Array.isArray(merged.scenes[sceneId]?.markers)
+        ? merged.scenes[sceneId].markers
+        : [];
+      const markerKeys = new Set(existingMarkers.map((marker) => {
+        return [marker.tagId, Number(marker.seconds || 0).toFixed(3), Number(marker.endSeconds || 0).toFixed(3)].join("|");
+      }));
+      const nextMarkers = [...existingMarkers];
+      scene.markers.forEach((marker) => {
+        const key = [marker.tagId, Number(marker.seconds || 0).toFixed(3), Number(marker.endSeconds || 0).toFixed(3)].join("|");
+        if (markerKeys.has(key)) return;
+        markerKeys.add(key);
+        nextMarkers.push(marker);
+      });
+      nextMarkers.sort((a, b) => Number(a.seconds || 0) - Number(b.seconds || 0));
+      merged.scenes[sceneId] = {
+        sceneId,
+        updatedAt: new Date().toISOString(),
+        markers: nextMarkers,
+      };
+    });
+
+    return merged;
+  }
+
+  function mergeTimelineTagColors(existingColors, importedColors) {
+    return {
+      ...normalizeTimelineTagColors(existingColors),
+      ...normalizeTimelineTagColors(importedColors),
+    };
+  }
+
+  async function importTimelineMarkersFromFile(file) {
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const imported = normalizeTimelineMarkerStore(parsed);
+      const importedColors = normalizeTimelineTagColors(parsed?.timelineTagColors);
+      const stats = getTimelineMarkerStoreStats(imported);
+      const colorCount = Object.keys(importedColors).length;
+      if (!stats.markerCount && !colorCount) {
+        window.alert?.("No timeline markers or tag colors found in this file.");
+        return;
+      }
+
+      const replace = window.confirm?.(
+        `Import ${stats.markerCount} timeline markers across ${stats.sceneCount} scenes and ${colorCount} tag colors?\n\nOK = replace all local timeline markers and colors.\nCancel = merge with existing local markers and colors.`
+      );
+      const nextStore = replace
+        ? imported
+        : mergeTimelineMarkerStores(readTimelineMarkerStore(), imported);
+      const nextColors = replace
+        ? importedColors
+        : mergeTimelineTagColors(readTimelineTagColors(), importedColors);
+      writeTimelineMarkerStore(nextStore);
+      writeTimelineTagColors(nextColors);
+      requestTimelineOverlaySync();
+      const nextStats = getTimelineMarkerStoreStats(nextStore);
+      window.alert?.(`Timeline markers imported. ${nextStats.markerCount} markers across ${nextStats.sceneCount} scenes and ${Object.keys(nextColors).length} tag colors are now stored locally.`);
+    } catch (err) {
+      console.error("[EditTagsOverhaul] timeline marker import failed", err);
+      window.alert?.("Timeline marker import failed. Make sure the selected file is a valid Edit Tags Overhaul timeline marker export.");
+    }
+  }
+
+  function promptImportTimelineMarkers() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json,.json";
+    input.style.display = "none";
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      input.remove();
+      importTimelineMarkersFromFile(file);
+    }, { once: true });
+    document.body.appendChild(input);
+    input.click();
+  }
+
+  function getSceneTimelineMarkers(sceneId) {
+    const scene = readTimelineMarkerStore().scenes?.[String(sceneId)];
+    return Array.isArray(scene?.markers) ? scene.markers : [];
+  }
+
+  function writeSceneTimelineMarkers(sceneId, markers) {
+    const store = readTimelineMarkerStore();
+    const normalizedSceneId = String(sceneId);
+    const cleanedMarkers = Array.isArray(markers) ? markers : [];
+
+    if (!cleanedMarkers.length) {
+      delete store.scenes[normalizedSceneId];
+    } else {
+      store.scenes[normalizedSceneId] = {
+        sceneId: normalizedSceneId,
+        updatedAt: new Date().toISOString(),
+        markers: cleanedMarkers,
+      };
+    }
+
+    writeTimelineMarkerStore(store);
+  }
+
   function getSortedClipboardTags(tagIds) {
     const tags = Array.from(tagIds)
       .map((tagId) => {
@@ -287,15 +602,15 @@
   }
 
   function isFullscreenQuickTagPanelEnabled(cfg) {
-    return getConfigBoolean(cfg?.enableFullscreenQuickTagPanel, true);
+    return getConfigBoolean(cfg?.enableQuickTagPanelOverlay, true);
   }
 
   function shouldAutoOpenFullscreenQuickTagPanel(cfg) {
-    return getConfigBoolean(cfg?.autoOpenFullscreenQuickTagPanel, false);
+    return getConfigBoolean(cfg?.autoOpenQuickTagPanelOverlay, false);
   }
 
   function getFullscreenButtonPosition(cfg) {
-    const normalized = String(cfg?.fullscreenQuickTagButtonPosition || "bottomright")
+    const normalized = String(cfg?.quickTagPanelButtonPosition ?? "bottomright")
       .trim()
       .toLowerCase()
       .replace(/[\s_-]+/g, "");
@@ -305,7 +620,7 @@
   }
 
   function getFullscreenIdleOpacity(cfg) {
-    const parsed = Number(cfg?.fullscreenQuickTagIdleOpacity);
+    const parsed = Number(cfg?.quickTagPanelIdleOpacity);
     if (!Number.isFinite(parsed) || parsed <= 0) return 0.1;
     return Math.min(1, Math.max(0.02, parsed));
   }
@@ -315,7 +630,11 @@
   }
 
   function shouldUseFullscreenSharedHover(cfg) {
-    return getConfigBoolean(cfg?.fullscreenQuickTagSharedHover, false);
+    return getConfigBoolean(cfg?.quickTagPanelSharedHover, false);
+  }
+
+  function isTagTimelineOverlayEnabled(cfg) {
+    return getConfigBoolean(cfg?.enableTagTimelineOverlay, false);
   }
 
   function getDisplayMode(cfg) {
@@ -642,6 +961,151 @@
     return state.tagMap.get(String(tagId)) || null;
   }
 
+  function getCustomFieldValue(customFields, key) {
+    if (typeof customFields === "string") {
+      const trimmed = customFields.trim();
+      if (!trimmed) return "";
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+          return getCustomFieldValue(JSON.parse(trimmed), key);
+        } catch (error) {
+          return "";
+        }
+      }
+      return "";
+    }
+
+    if (Array.isArray(customFields)) {
+      const targetKey = String(key).toLowerCase();
+      for (const entry of customFields) {
+        if (Array.isArray(entry)) {
+          if (String(entry[0] ?? "").toLowerCase() === targetKey) return entry[1] ?? "";
+          continue;
+        }
+        if (!entry || typeof entry !== "object") continue;
+        const fieldNames = [
+          entry.id ??
+          "",
+          entry.key,
+          entry.name,
+          entry.field_name,
+          entry.fieldName,
+          typeof entry.field === "string" ? entry.field : "",
+          entry.field?.key,
+          entry.field?.id,
+          entry.field?.name,
+          typeof entry.customField === "string" ? entry.customField : "",
+          entry.customField?.key,
+          entry.customField?.id,
+          entry.customField?.name,
+        ].filter((name) => name !== undefined && name !== null && String(name).trim() !== "");
+        if (fieldNames.some((fieldName) => String(fieldName).toLowerCase() === targetKey)) {
+          return entry.value ?? entry.values ?? entry.text ?? entry.data ?? "";
+        }
+        if (Object.prototype.hasOwnProperty.call(entry, key)) return entry[key];
+      }
+      return "";
+    }
+
+    if (!customFields || typeof customFields !== "object") return "";
+    const direct = customFields[key];
+    if (direct !== undefined && direct !== null) return direct;
+    const matchedKey = Object.keys(customFields).find(
+      (fieldKey) => String(fieldKey).toLowerCase() === String(key).toLowerCase()
+    );
+    if (matchedKey) return customFields[matchedKey];
+
+    for (const value of Object.values(customFields)) {
+      if (!value || typeof value !== "object") continue;
+      const nestedValue = getCustomFieldValue(value, key);
+      if (nestedValue !== "") return nestedValue;
+    }
+    return "";
+  }
+
+  function hasCustomField(customFields, key) {
+    if (typeof customFields === "string") {
+      const trimmed = customFields.trim();
+      if (!trimmed) return false;
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+          return hasCustomField(JSON.parse(trimmed), key);
+        } catch (error) {
+          return false;
+        }
+      }
+      return false;
+    }
+
+    const targetKey = String(key).toLowerCase();
+    if (Array.isArray(customFields)) {
+      return customFields.some((entry) => {
+        if (Array.isArray(entry)) return String(entry[0] ?? "").toLowerCase() === targetKey;
+        if (!entry || typeof entry !== "object") return false;
+        const fieldNames = [
+          entry.id ?? "",
+          entry.key,
+          entry.name,
+          entry.field_name,
+          entry.fieldName,
+          typeof entry.field === "string" ? entry.field : "",
+          entry.field?.key,
+          entry.field?.id,
+          entry.field?.name,
+          typeof entry.customField === "string" ? entry.customField : "",
+          entry.customField?.key,
+          entry.customField?.id,
+          entry.customField?.name,
+        ].filter((name) => name !== undefined && name !== null && String(name).trim() !== "");
+        return (
+          fieldNames.some((fieldName) => String(fieldName).toLowerCase() === targetKey) ||
+          Object.prototype.hasOwnProperty.call(entry, key)
+        );
+      });
+    }
+
+    if (!customFields || typeof customFields !== "object") return false;
+    if (Object.prototype.hasOwnProperty.call(customFields, key)) return true;
+    if (Object.keys(customFields).some((fieldKey) => String(fieldKey).toLowerCase() === targetKey)) return true;
+    return Object.values(customFields).some((value) => value && typeof value === "object" && hasCustomField(value, key));
+  }
+
+  function normalizeCustomFieldValue(value) {
+    if (Array.isArray(value)) {
+      return value.map(normalizeCustomFieldValue).find(Boolean) || "";
+    }
+    if (value && typeof value === "object") {
+      return normalizeCustomFieldValue(
+        value.value ??
+        value.values ??
+        value.text ??
+        value.name ??
+        value.label ??
+        ""
+      );
+    }
+    const normalized = String(value ?? "").trim();
+    const quoted = normalized.match(/^['"](.+)['"]$/);
+    return quoted ? quoted[1].trim() : normalized;
+  }
+
+  function isTimelineTagRecord(tagRecord) {
+    return hasCustomField(tagRecord?.custom_fields, "eto_timeline_tag");
+  }
+
+  function shouldShowTimelineMarkerControl(tagRecord, cfg) {
+    return (
+      isTagTimelineOverlayEnabled(cfg) &&
+      !!getCurrentSceneEntity() &&
+      isTimelineTagRecord(tagRecord)
+    );
+  }
+
+  function getTimelineTagColor(tagRecord) {
+    const tagId = String(tagRecord?.id || "").trim();
+    return tagId ? readTimelineTagColors()[tagId] || "" : "";
+  }
+
   async function ensureHoverTagRecord(tagId) {
     let record = getTagRecordById(tagId);
     if (!record) {
@@ -663,6 +1127,180 @@
     const tagId = String(button.getAttribute("data-eto-tag-id") || "");
     if (!tagId) return null;
     return { anchor: button, tagId };
+  }
+
+  function getCurrentSceneEntity() {
+    const entity = getEntityFromPath(window.location.pathname);
+    return entity?.type === "scene" ? entity : null;
+  }
+
+  function getScenePlayerRoot() {
+    return document.querySelector(".scene-player, .scene-video, .video-js, [class*='ScenePlayer']");
+  }
+
+  function getActiveSceneVideo() {
+    const fullscreenVideo = document.fullscreenElement?.querySelector?.("video");
+    if (fullscreenVideo) return fullscreenVideo;
+
+    const sceneRoot = getScenePlayerRoot();
+    return sceneRoot?.querySelector?.("video") || document.querySelector("video");
+  }
+
+  function shouldShowSceneOverlaysOutsideFullscreen(cfg) {
+    return isFullscreenQuickTagPanelEnabled(cfg);
+  }
+
+  function formatTimelineTime(seconds) {
+    const safeSeconds = Math.max(0, Math.floor(Number(seconds) || 0));
+    const hours = Math.floor(safeSeconds / 3600);
+    const minutes = Math.floor((safeSeconds % 3600) / 60);
+    const secs = safeSeconds % 60;
+    if (hours > 0) {
+      return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+    }
+    return `${minutes}:${String(secs).padStart(2, "0")}`;
+  }
+
+  function buildTimelineGridItems(duration) {
+    const safeDuration = Math.max(1, Number(duration) || 1);
+    const targetSections = 6;
+    const niceSteps = [30, 60, 120, 300, 600, 900, 1800, 3600];
+    const rawStep = safeDuration / targetSections;
+    const step = niceSteps.find((candidate) => candidate >= rawStep) || niceSteps[niceSteps.length - 1];
+    const items = [];
+
+    for (let seconds = step; seconds < safeDuration; seconds += step) {
+      const left = Math.max(0, Math.min(100, (seconds / safeDuration) * 100));
+      items.push({ seconds, left });
+      if (items.length >= 10) break;
+    }
+
+    return items;
+  }
+
+  function cloneTimelinePaletteItem(item) {
+    if (!item) return null;
+    if (item.type === "leaf") {
+      const record = getTagRecordById(item.id);
+      if (!isTimelineTagRecord(record || item)) return null;
+      return { ...item };
+    }
+
+    if (item.type === "subgroup") {
+      const subgroupRecord = getTagRecordById(item.id);
+      const children = Array.isArray(item.children)
+        ? item.children.map(cloneTimelinePaletteItem).filter(Boolean)
+        : [];
+      if (!children.length && !isTimelineTagRecord(subgroupRecord || item)) return null;
+      return { ...item, children };
+    }
+
+    return null;
+  }
+
+  function buildTimelinePaletteGroups() {
+    const cfg = {
+      ...(state.config || {}),
+      displayMode: "text",
+      defaultExpanded: false,
+      __fullscreenMainPanel: true,
+    };
+    const sourceTags = state.allTags || Array.from(state.tagMap.values());
+    const groups = buildNestedGroupsPreservingOrder(sourceTags, cfg);
+    return groups
+      .map((group) => {
+        const parentRecord = getTagRecordById(group.parent.id);
+        const items = Array.isArray(group.items)
+          ? group.items.map(cloneTimelinePaletteItem).filter(Boolean)
+          : [];
+        if (!items.length && !isTimelineTagRecord(parentRecord || group.parent)) return null;
+        return { ...group, items };
+      })
+      .filter(Boolean);
+  }
+
+  function clampTimelineSeconds(seconds, duration) {
+    const safeDuration = Math.max(0, Number(duration) || 0);
+    return clampNumber(Number(seconds) || 0, 0, safeDuration);
+  }
+
+  function getTimelineVideoDuration(video, markers = [], sceneDuration = 0) {
+    const stashDuration = Number(sceneDuration);
+    if (Number.isFinite(stashDuration) && stashDuration > 0) return stashDuration;
+
+    const directDuration = Number(video?.duration);
+    if (Number.isFinite(directDuration) && directDuration > 0) return directDuration;
+
+    const seekable = video?.seekable;
+    if (seekable?.length) {
+      const seekableEnd = Number(seekable.end(seekable.length - 1));
+      if (Number.isFinite(seekableEnd) && seekableEnd > 0) return seekableEnd;
+    }
+
+    return Math.max(1, ...markers.map((marker) => Number(marker.seconds || 0) + 60));
+  }
+
+  async function fetchSceneTimelineDuration(sceneId) {
+    const normalizedSceneId = String(sceneId || "");
+    if (!normalizedSceneId) return 0;
+    if (state.timelineSceneDurationCache.has(normalizedSceneId)) {
+      return state.timelineSceneDurationCache.get(normalizedSceneId) || 0;
+    }
+
+    try {
+      const data = await gql(`
+        query FindSceneTimelineDuration($id: ID!) {
+          findScene(id: $id) {
+            id
+            files {
+              duration
+            }
+          }
+        }
+      `, { id: normalizedSceneId });
+      const durations = Array.isArray(data?.findScene?.files)
+        ? data.findScene.files.map((file) => Number(file?.duration)).filter((duration) => Number.isFinite(duration) && duration > 0)
+        : [];
+      const duration = durations.length ? Math.max(...durations) : 0;
+      state.timelineSceneDurationCache.set(normalizedSceneId, duration);
+      return duration;
+    } catch (err) {
+      console.error("[EditTagsOverhaul] scene timeline duration lookup failed", err);
+      state.timelineSceneDurationCache.set(normalizedSceneId, 0);
+      return 0;
+    }
+  }
+
+  function getTimelineOverlayDuration(overlay, video, markers = []) {
+    const overlayDuration = Number(overlay?.getAttribute?.("data-eto-timeline-duration"));
+    if (Number.isFinite(overlayDuration) && overlayDuration > 0) return overlayDuration;
+    return getTimelineVideoDuration(video, markers);
+  }
+
+  function isTimelineVideoDurationReady(video) {
+    const directDuration = Number(video?.duration);
+    if (Number.isFinite(directDuration) && directDuration > 0) return true;
+    const seekable = video?.seekable;
+    if (!seekable?.length) return false;
+    const seekableEnd = Number(seekable.end(seekable.length - 1));
+    return Number.isFinite(seekableEnd) && seekableEnd > 0;
+  }
+
+  function requestTimelineOverlaySync() {
+    syncTimelineOverlay().catch((err) => {
+      console.error("[EditTagsOverhaul] timeline overlay sync failed", err);
+    });
+  }
+
+  function scheduleTimelineOverlayRetry() {
+    const delay = ROUTE_RETRY_DELAYS[Math.min(state.timelineRetryCount, ROUTE_RETRY_DELAYS.length - 1)] || 250;
+    if (state.timelineRetryCount >= ROUTE_RETRY_DELAYS.length) return;
+    state.timelineRetryCount += 1;
+    if (state.timelineDurationRetry) window.clearTimeout(state.timelineDurationRetry);
+    state.timelineDurationRetry = window.setTimeout(() => {
+      state.timelineDurationRetry = null;
+      requestTimelineOverlaySync();
+    }, Math.max(200, delay));
   }
 
   function handlePanelHoverIn(event) {
@@ -805,6 +1443,7 @@
         name: tag.name,
         sort_name: tag.sort_name || tag.name || "",
         image_path: tag.image_path || "",
+        custom_fields: tag.custom_fields || {},
         parents: (tag.parents || []).map((p) => ({
           id: String(p.id),
           name: p.name,
@@ -842,6 +1481,7 @@
         name: tagRecord.name,
         sort_name: tagRecord.sort_name || tagRecord.name || "",
         image_path: tagRecord.image_path || "",
+        custom_fields: tagRecord.custom_fields || {},
       };
     }
 
@@ -1546,6 +2186,7 @@
     });
 
     syncClipboardActionState();
+    requestTimelineOverlaySync();
   }
 
   async function onTagToggleClick(tagId) {
@@ -1557,6 +2198,99 @@
     else nextSelectedTagIds.add(tagId);
 
     await persistSelectedTagIds(nextSelectedTagIds);
+  }
+
+  async function addTimelineMarkerForTag(tagId) {
+    const entity = getCurrentSceneEntity();
+    const video = getActiveSceneVideo();
+    const tagRecord = getTagRecordById(tagId);
+    if (!entity || !tagRecord || !isTimelineTagRecord(tagRecord)) return;
+
+    const seconds = video ? Number(video.currentTime) : 0;
+    if (!Number.isFinite(seconds)) return;
+
+    if (!state.selectedTagIds.has(String(tagId))) {
+      const nextSelectedTagIds = new Set(state.selectedTagIds);
+      nextSelectedTagIds.add(String(tagId));
+      const saved = await persistSelectedTagIds(nextSelectedTagIds);
+      if (!saved) return;
+    }
+
+    const markers = getSceneTimelineMarkers(entity.id);
+    const sceneDuration = await fetchSceneTimelineDuration(entity.id);
+    const duration = getTimelineVideoDuration(video, markers, sceneDuration);
+    const minSpan = getTimelineMarkerMinSpanSeconds(duration, getTimelineTrackForTag(tagId));
+    const placedSeconds = findAvailableTimelineStart(markers, {
+      tagId,
+      desiredStart: Math.max(0, seconds),
+      duration,
+      length: minSpan,
+      minSpan,
+      biasRight: true,
+    });
+    markers.push({
+      id: `${tagId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      tagId: String(tagId),
+      tagName: String(tagRecord.name || "Tag"),
+      seconds: placedSeconds,
+      createdAt: new Date().toISOString(),
+    });
+    markers.sort((a, b) => Number(a.seconds || 0) - Number(b.seconds || 0));
+    writeSceneTimelineMarkers(entity.id, markers);
+    requestTimelineOverlaySync();
+  }
+
+  function deleteTimelineMarker(sceneId, markerId) {
+    const markers = getSceneTimelineMarkers(sceneId).filter((marker) => marker.id !== markerId);
+    writeSceneTimelineMarkers(sceneId, markers);
+    requestTimelineOverlaySync();
+  }
+
+  function updateTimelineMarker(sceneId, markerId, patch, options = {}) {
+    const markers = getSceneTimelineMarkers(sceneId);
+    const marker = markers.find((item) => String(item.id) === String(markerId));
+    if (!marker) return;
+
+    const duration = Math.max(1, Number(options.duration) || getTimelineVideoDuration(getActiveSceneVideo(), markers));
+    const minSpan = getTimelineMarkerMinSpanSeconds(duration, options.track || getTimelineTrackForTag(marker.tagId));
+    const sameTagMarkers = markers.filter((item) => String(item.tagId) === String(marker.tagId) && String(item.id) !== String(markerId));
+    const nextMarker = { ...marker, ...patch, updatedAt: new Date().toISOString() };
+    const start = clampTimelineSeconds(Number(nextMarker.seconds || 0), duration);
+
+    if (options.mode === "range") {
+      const nextBoundary = sameTagMarkers
+        .map((item) => getTimelineMarkerStart(item))
+        .filter((itemStart) => itemStart > start)
+        .sort((a, b) => a - b)[0];
+      const maxEnd = Number.isFinite(nextBoundary)
+        ? Math.max(start, nextBoundary - TIMELINE_MARKER_GAP_SECONDS)
+        : duration;
+      const rawEnd = Number(nextMarker.endSeconds);
+      const end = Number.isFinite(rawEnd)
+        ? clampNumber(rawEnd, start + 0.1, maxEnd)
+        : null;
+      nextMarker.seconds = start;
+      nextMarker.endSeconds = end && end > start + 0.05 ? end : null;
+    } else {
+      const rawEnd = Number(nextMarker.endSeconds);
+      const hasRange = Number.isFinite(rawEnd) && rawEnd > start + 0.05;
+      const length = hasRange ? Math.max(minSpan, rawEnd - start) : minSpan;
+      const placedStart = findAvailableTimelineStart(markers, {
+        markerId,
+        tagId: marker.tagId,
+        desiredStart: start,
+        duration,
+        length,
+        minSpan,
+      });
+      nextMarker.seconds = placedStart;
+      nextMarker.endSeconds = hasRange ? Math.min(duration, placedStart + (rawEnd - start)) : null;
+    }
+
+    const nextMarkers = markers.map((item) => String(item.id) === String(markerId) ? nextMarker : item);
+    nextMarkers.sort((a, b) => Number(a.seconds || 0) - Number(b.seconds || 0));
+    writeSceneTimelineMarkers(sceneId, nextMarkers);
+    requestTimelineOverlaySync();
   }
 
   function handleCopyTagsClick(panel) {
@@ -1612,6 +2346,38 @@
     btn.setAttribute("title", `Pop out ${groupName}`);
     btn.textContent = "\u21E4";
     return btn;
+  }
+
+  function createTimelineMarkerButton(tagId, tagName) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "edit-tags-overhaul__timeline-tag-btn";
+    const colorStyle = getTimelineColorStyle(tagId);
+    if (colorStyle) btn.setAttribute("style", colorStyle);
+    btn.setAttribute("data-eto-timeline-tag-id", String(tagId));
+    btn.setAttribute("aria-label", `Add timeline marker for ${tagName}`);
+    btn.setAttribute("title", `Add timeline marker for ${tagName} at current time`);
+    btn.innerHTML = '<span class="edit-tags-overhaul__timeline-tag-icon" aria-hidden="true">\u25F7</span>';
+    return btn;
+  }
+
+  function createTagControl(child, cfg) {
+    const tagButton = createTagButton(child, cfg);
+    const timelineTagRecord = getTagRecordById(child.id) || child;
+    const showTimelineButton = shouldShowTimelineMarkerControl(timelineTagRecord, cfg);
+
+    if (!showTimelineButton) return tagButton;
+
+    const mode = getDisplayMode(cfg);
+    const hasImage = !!child.image_path;
+    const wrap = document.createElement("span");
+    wrap.className = "edit-tags-overhaul__tag-control";
+    if (mode === "image" && hasImage) wrap.classList.add("edit-tags-overhaul__tag-control--image");
+    else if (mode === "imageAndText" && hasImage) wrap.classList.add("edit-tags-overhaul__tag-control--image-and-text");
+    else wrap.classList.add("edit-tags-overhaul__tag-control--text");
+    wrap.appendChild(tagButton);
+    wrap.appendChild(createTimelineMarkerButton(child.id, child.name));
+    return wrap;
   }
 
   function createTagButton(child, cfg) {
@@ -1693,6 +2459,11 @@
 
     const actions = document.createElement("div");
     actions.className = "edit-tags-overhaul__header-actions";
+    if (
+      shouldShowTimelineMarkerControl(getTagRecordById(subgroup.id), cfg)
+    ) {
+      actions.appendChild(createTimelineMarkerButton(subgroup.id, subgroup.name));
+    }
     actions.appendChild(createParentToggleButton(subgroup.id));
 
     header.appendChild(left);
@@ -1702,7 +2473,7 @@
     body.className = "edit-tags-overhaul__subgroup-body";
 
     subgroup.children.forEach((child) => {
-      body.appendChild(createTagButton(child, cfg));
+      body.appendChild(createTagControl(child, cfg));
     });
 
     const defaultExpanded =
@@ -1768,6 +2539,11 @@
     actions.className = "edit-tags-overhaul__header-actions";
 
     if (group.parent.id !== "__ungrouped__") {
+      if (
+        shouldShowTimelineMarkerControl(getTagRecordById(group.parent.id), cfg)
+      ) {
+        actions.appendChild(createTimelineMarkerButton(group.parent.id, group.parent.name));
+      }
       actions.appendChild(createParentToggleButton(group.parent.id));
     }
 
@@ -1778,7 +2554,7 @@
     body.className = "edit-tags-overhaul__body";
 
     group.items.forEach((item) => {
-      if (item.type === "leaf") body.appendChild(createTagButton(item, cfg));
+      if (item.type === "leaf") body.appendChild(createTagControl(item, cfg));
       else if (item.type === "subgroup") body.appendChild(createSubgroupSection(item, cfg));
     });
 
@@ -1831,6 +2607,15 @@
           pasteActionBtn.getAttribute("data-eto-paste-action"),
           panel
         );
+        return;
+      }
+
+      const timelineTagBtn = event.target.closest("[data-eto-timeline-tag-id]");
+      if (timelineTagBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        addTimelineMarkerForTag(timelineTagBtn.getAttribute("data-eto-timeline-tag-id"));
+        timelineTagBtn.blur?.();
         return;
       }
 
@@ -2003,7 +2788,7 @@
         minimized: Boolean(parsed.minimized),
       };
     } catch (err) {
-      console.error("[EditTagsOverhaul] fullscreen layout read failed", err);
+      console.error("[EditTagsOverhaul] quick tag panel layout read failed", err);
       return { x: null, y: null, ...DEFAULT_FULLSCREEN_PANEL_LAYOUT };
     }
   }
@@ -2012,7 +2797,7 @@
     try {
       window.localStorage.setItem(FULLSCREEN_LAYOUT_STORAGE_KEY, JSON.stringify(layout));
     } catch (err) {
-      console.error("[EditTagsOverhaul] fullscreen layout write failed", err);
+      console.error("[EditTagsOverhaul] quick tag panel layout write failed", err);
     }
   }
 
@@ -2020,7 +2805,26 @@
     try {
       window.localStorage.removeItem(FULLSCREEN_LAYOUT_STORAGE_KEY);
     } catch (err) {
-      console.error("[EditTagsOverhaul] fullscreen layout reset failed", err);
+      console.error("[EditTagsOverhaul] quick tag panel layout reset failed", err);
+    }
+  }
+
+  function readQuickTagOverlayOpenState() {
+    try {
+      const value = window.localStorage.getItem(QUICK_TAG_OVERLAY_OPEN_STORAGE_KEY);
+      if (value === "true") return true;
+      if (value === "false") return false;
+    } catch (err) {
+      console.error("[EditTagsOverhaul] quick tag panel open state read failed", err);
+    }
+    return null;
+  }
+
+  function writeQuickTagOverlayOpenState(open) {
+    try {
+      window.localStorage.setItem(QUICK_TAG_OVERLAY_OPEN_STORAGE_KEY, open ? "true" : "false");
+    } catch (err) {
+      console.error("[EditTagsOverhaul] quick tag panel open state write failed", err);
     }
   }
 
@@ -2029,7 +2833,7 @@
       const parsed = JSON.parse(window.localStorage.getItem(FULLSCREEN_MINI_PANELS_STORAGE_KEY) || "{}");
       return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
     } catch (err) {
-      console.error("[EditTagsOverhaul] fullscreen mini panel layout read failed", err);
+      console.error("[EditTagsOverhaul] quick tag mini panel layout read failed", err);
       return {};
     }
   }
@@ -2038,7 +2842,7 @@
     try {
       window.localStorage.setItem(FULLSCREEN_MINI_PANELS_STORAGE_KEY, JSON.stringify(layouts || {}));
     } catch (err) {
-      console.error("[EditTagsOverhaul] fullscreen mini panel layout write failed", err);
+      console.error("[EditTagsOverhaul] quick tag mini panel layout write failed", err);
     }
   }
 
@@ -2089,11 +2893,14 @@
       180,
       Math.max(180, viewport.height - 32)
     );
-    const defaultX = Math.max(16, 24 + index * 32);
-    const defaultY = Math.max(16, 96 + index * 34);
+    const hasSavedPosition =
+      Number.isFinite(Number(rawLayout.x)) &&
+      Number.isFinite(Number(rawLayout.y));
+    const defaultX = Math.max(16, Math.round((viewport.width - width) / 2) + index * 28);
+    const defaultY = Math.max(16, Math.round((viewport.height - height) / 2) + index * 24);
     return {
-      x: clampNumber(rawLayout.x ?? defaultX, 8, Math.max(8, viewport.width - width - 8)),
-      y: clampNumber(rawLayout.y ?? defaultY, 8, Math.max(8, viewport.height - 48)),
+      x: clampNumber(hasSavedPosition ? rawLayout.x : defaultX, 8, Math.max(8, viewport.width - width - 8)),
+      y: clampNumber(hasSavedPosition ? rawLayout.y : defaultY, 8, Math.max(8, viewport.height - 48)),
       width,
       height,
     };
@@ -2142,10 +2949,98 @@
   }
 
   function applyFullscreenSharedHoverSetting(root = state.fullscreen.root, cfg = state.config || {}) {
-    root?.classList.toggle(
-      "edit-tags-overhaul__fullscreen-root--shared-hover",
-      shouldUseFullscreenSharedHover(cfg)
+    const enabled = shouldUseFullscreenSharedHover(cfg);
+    root?.classList.toggle("edit-tags-overhaul__fullscreen-root--shared-hover", enabled);
+    if (!enabled) document.body.classList.remove("edit-tags-overhaul-shared-hover-active");
+  }
+
+  function refreshSharedHoverBodyClass() {
+    const enabled = shouldUseFullscreenSharedHover(state.config || {});
+    const active = enabled && Boolean(
+      document.querySelector(".edit-tags-overhaul--fullscreen-panel:hover, .edit-tags-overhaul--fullscreen-panel.is-dragging, .edit-tags-overhaul-timeline-overlay:hover, .edit-tags-overhaul-timeline-overlay.is-resizing")
     );
+    document.body.classList.toggle("edit-tags-overhaul-shared-hover-active", active);
+  }
+
+  function scheduleSharedHoverRefresh() {
+    window.setTimeout(refreshSharedHoverBodyClass, 20);
+  }
+
+  function attachSharedHoverListeners(target) {
+    if (!target || target.__editTagsOverhaulSharedHoverAttached) return;
+    target.__editTagsOverhaulSharedHoverAttached = true;
+    target.addEventListener("pointerenter", refreshSharedHoverBodyClass);
+    target.addEventListener("pointerleave", scheduleSharedHoverRefresh);
+  }
+
+  function isTimelinePairElement(target) {
+    return Boolean(
+      target?.closest?.(".edit-tags-overhaul-timeline-overlay, .edit-tags-overhaul--timeline-palette-panel")
+    );
+  }
+
+  function isTimelinePairPointerInside() {
+    if (
+      document.querySelector(
+        ".edit-tags-overhaul-timeline-overlay.is-resizing, .edit-tags-overhaul--timeline-palette-panel.is-dragging"
+      )
+    ) {
+      return true;
+    }
+
+    const { x, y } = state.timelinePairPointer || {};
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) return false;
+    if (isTimelinePairElement(document.elementFromPoint(x, y))) return true;
+
+    return Array.from(
+      document.querySelectorAll(".edit-tags-overhaul-timeline-overlay, .edit-tags-overhaul--timeline-palette-panel")
+    ).some((element) => {
+      const rect = element.getBoundingClientRect();
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    });
+  }
+
+  function setTimelinePairHoverActive(active) {
+    document.body.classList.toggle("edit-tags-overhaul-timeline-hover-active", active);
+  }
+
+  function refreshTimelinePairHoverBodyClass() {
+    setTimelinePairHoverActive(isTimelinePairPointerInside());
+  }
+
+  function scheduleTimelinePairHoverRefresh(delay = 160) {
+    if (state.timelinePairHoverTimer) window.clearTimeout(state.timelinePairHoverTimer);
+    state.timelinePairHoverTimer = window.setTimeout(() => {
+      state.timelinePairHoverTimer = null;
+      refreshTimelinePairHoverBodyClass();
+    }, delay);
+  }
+
+  function handleTimelinePairPointerEnter(event) {
+    state.timelinePairPointer = { x: event.clientX, y: event.clientY };
+    if (state.timelinePairHoverTimer) {
+      window.clearTimeout(state.timelinePairHoverTimer);
+      state.timelinePairHoverTimer = null;
+    }
+    setTimelinePairHoverActive(true);
+  }
+
+  function handleTimelinePairPointerMove(event) {
+    state.timelinePairPointer = { x: event.clientX, y: event.clientY };
+    setTimelinePairHoverActive(true);
+  }
+
+  function handleTimelinePairPointerLeave(event) {
+    state.timelinePairPointer = { x: event.clientX, y: event.clientY };
+    scheduleTimelinePairHoverRefresh();
+  }
+
+  function attachTimelinePairHoverListeners(target) {
+    if (!target || target.__editTagsOverhaulTimelineHoverAttached) return;
+    target.__editTagsOverhaulTimelineHoverAttached = true;
+    target.addEventListener("pointerenter", handleTimelinePairPointerEnter);
+    target.addEventListener("pointermove", handleTimelinePairPointerMove);
+    target.addEventListener("pointerleave", handleTimelinePairPointerLeave);
   }
 
   function applyFullscreenMiniPanelLayout(panel, layout) {
@@ -2170,7 +3065,7 @@
     button.textContent = minimized ? "\u25A1" : "\u2212";
     button.setAttribute(
       "aria-label",
-      minimized ? "Expand fullscreen tag panel" : "Minimize fullscreen tag panel"
+      minimized ? "Expand quick tag panel overlay" : "Minimize quick tag panel overlay"
     );
     button.setAttribute("title", minimized ? "Expand" : "Minimize");
   }
@@ -2195,7 +3090,9 @@
 
   function resetFullscreenPanelLayout() {
     clearFullscreenLayout();
+    clearTimelinePaletteLayout();
     applyFullscreenPanelLayout();
+    requestTimelineOverlaySync();
   }
 
   function startFullscreenPanelDrag(event) {
@@ -2275,6 +3172,30 @@
         event.stopPropagation();
         resetFullscreenPanelLayout();
         resetBtn.blur?.();
+        return;
+      }
+
+      const paletteColorModeBtn = event.target.closest("[data-eto-timeline-palette-color-mode]");
+      if (paletteColorModeBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        state.timelinePaletteColorEditMode = !state.timelinePaletteColorEditMode;
+        requestTimelineOverlaySync();
+        paletteColorModeBtn.blur?.();
+        return;
+      }
+
+      const timelineTagBtn = event.target.closest("[data-eto-timeline-tag-id]");
+      if (timelineTagBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        const tagId = timelineTagBtn.getAttribute("data-eto-timeline-tag-id");
+        if (state.timelinePaletteColorEditMode && timelineTagBtn.closest("[data-eto-timeline-palette]")) {
+          promptTimelineTagColor(tagId);
+        } else {
+          addTimelineMarkerForTag(tagId);
+        }
+        timelineTagBtn.blur?.();
         return;
       }
 
@@ -2473,6 +3394,868 @@
     });
   }
 
+  function applyTimelinePalettePanelLayout(panel) {
+    const layout = state.timelinePaletteLayout || readTimelinePaletteLayout();
+    const width = Math.round(clampNumber(layout?.width ?? 384, 240, Math.max(240, window.innerWidth - 24)));
+    const height = Math.round(clampNumber(layout?.height ?? Math.min(window.innerHeight * 0.48, 384), 180, Math.max(180, window.innerHeight - 24)));
+    const defaultLeft = Math.round((window.innerWidth - width) / 2);
+    const defaultTop = Math.round((window.innerHeight - height) / 2);
+    const left = clampNumber(layout ? Number(layout.left) || 0 : defaultLeft, 8, Math.max(8, window.innerWidth - width - 8));
+    const top = clampNumber(layout ? Number(layout.top) || 0 : defaultTop, 8, Math.max(8, window.innerHeight - height - 8));
+
+    if (layout) state.timelinePaletteLayout = layout;
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+    panel.style.bottom = "auto";
+    panel.style.width = `${width}px`;
+    panel.style.height = `${height}px`;
+  }
+
+  function createTimelineTagPalettePanel() {
+    const cfg = {
+      ...(state.config || {}),
+      displayMode: "text",
+      defaultExpanded: true,
+      subgroupsDefaultExpanded: false,
+      autoExpandIfSelected: false,
+      __fullscreenMainPanel: false,
+    };
+    const groups = buildTimelinePaletteGroups();
+    const panel = document.createElement("section");
+    panel.className = "edit-tags-overhaul edit-tags-overhaul--fullscreen-panel edit-tags-overhaul--fullscreen-mini-panel edit-tags-overhaul--timeline-palette-panel";
+    panel.setAttribute("data-eto-timeline-palette", "1");
+    applyPanelVariables(panel, cfg);
+    panel.style.setProperty("--eto-fullscreen-idle-opacity", String(getFullscreenIdleOpacity(state.config || {})));
+
+    const header = document.createElement("div");
+    header.className = "edit-tags-overhaul__fullscreen-header";
+    header.setAttribute("data-eto-timeline-palette-drag", "1");
+
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "edit-tags-overhaul__fullscreen-title-wrap";
+
+    const title = document.createElement("div");
+    title.className = "edit-tags-overhaul__fullscreen-title";
+    title.textContent = "Timeline Tags";
+    titleWrap.appendChild(title);
+
+    const controls = document.createElement("div");
+    controls.className = "edit-tags-overhaul__fullscreen-controls";
+
+    const colors = document.createElement("button");
+    colors.type = "button";
+    colors.className = `edit-tags-overhaul__fullscreen-control${state.timelinePaletteColorEditMode ? " is-active" : ""}`;
+    colors.setAttribute("data-eto-timeline-palette-color-mode", "1");
+    colors.setAttribute("aria-pressed", state.timelinePaletteColorEditMode ? "true" : "false");
+    colors.setAttribute("aria-label", "Toggle timeline tag color editing");
+    colors.setAttribute("title", state.timelinePaletteColorEditMode ? "Color editing is on" : "Edit timeline tag colors");
+    colors.textContent = state.timelinePaletteColorEditMode ? "Editing Tag Colors..." : "Edit Tag Colors";
+    colors.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      state.timelinePaletteColorEditMode = !state.timelinePaletteColorEditMode;
+      requestTimelineOverlaySync();
+    });
+    controls.appendChild(colors);
+
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "edit-tags-overhaul__fullscreen-control";
+    close.setAttribute("data-eto-timeline-palette-close", "1");
+    close.setAttribute("aria-label", "Close timeline tag palette");
+    close.setAttribute("title", "Close timeline tag palette");
+    close.textContent = "\u2212";
+    close.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      closeTimelineTagPalettePanel();
+    });
+    controls.appendChild(close);
+
+    header.appendChild(titleWrap);
+    header.appendChild(controls);
+    panel.appendChild(header);
+
+    const content = document.createElement("div");
+    content.className = "edit-tags-overhaul__fullscreen-content";
+
+    const groupsWrap = document.createElement("div");
+    groupsWrap.className = "edit-tags-overhaul__groups edit-tags-overhaul__fullscreen-groups";
+
+    if (groups.length) {
+      groups.forEach((group) => groupsWrap.appendChild(createGroupSection(group, cfg)));
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "edit-tags-overhaul__timeline-palette-empty";
+      empty.textContent = "No timeline tags found";
+      groupsWrap.appendChild(empty);
+    }
+
+    content.appendChild(groupsWrap);
+    panel.appendChild(content);
+    attachFullscreenPanelEventDelegation(panel);
+    return panel;
+  }
+
+  function mountTimelineTagPalettePanel(overlay) {
+    if (!overlay) return null;
+    document.querySelectorAll("[data-eto-timeline-palette]").forEach((existing) => existing.remove());
+    const panel = createTimelineTagPalettePanel();
+    const paletteRoot = document.fullscreenElement instanceof HTMLElement ? document.fullscreenElement : document.body;
+    paletteRoot.appendChild(panel);
+    attachSharedHoverListeners(panel);
+    attachTimelinePairHoverListeners(panel);
+    applyTimelinePalettePanelLayout(panel);
+    panel.addEventListener("pointerdown", (event) => {
+      if (event.target.closest("button, input, a, textarea, select")) return;
+      if (event.target.closest("[data-eto-timeline-palette-drag]")) startTimelinePaletteDrag(event);
+    });
+    panel.addEventListener("pointermove", updateTimelinePaletteDrag);
+    panel.addEventListener("pointerup", (event) => {
+      stopTimelinePaletteDrag(event);
+      persistTimelinePaletteLayout();
+    });
+    panel.addEventListener("pointercancel", (event) => {
+      stopTimelinePaletteDrag(event);
+      persistTimelinePaletteLayout();
+    });
+    panel.addEventListener("click", (event) => {
+      const closeBtn = event.target.closest("[data-eto-timeline-palette-close]");
+      if (!closeBtn) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      closeTimelineTagPalettePanel();
+    });
+    return panel;
+  }
+
+  function closeTimelineTagPalettePanel() {
+    state.timelinePaletteOpen = false;
+    document.querySelectorAll("[data-eto-timeline-palette]").forEach((palette) => palette.remove());
+    scheduleTimelinePairHoverRefresh(0);
+    requestTimelineOverlaySync();
+    releaseTimelineFocus();
+  }
+
+  function removeTimelineOverlay() {
+    document.getElementById(TIMELINE_OVERLAY_ID)?.remove();
+    document.querySelectorAll("[data-eto-timeline-palette]").forEach((palette) => palette.remove());
+    document.body.classList.remove("edit-tags-overhaul-timeline-hover-active");
+    if (state.timelinePairHoverTimer) window.clearTimeout(state.timelinePairHoverTimer);
+    state.timelinePairHoverTimer = null;
+    state.timelinePairPointer = { x: -1, y: -1 };
+    state.timelineTimeBadge?.remove();
+    state.timelineTimeBadge = null;
+    state.timelineDragState = null;
+    state.timelineResizeState = null;
+    state.timelinePaletteDragState = null;
+    if (state.timelineVideo && state.timelineVideoListener) {
+      removeTimelineVideoListeners(state.timelineVideo, state.timelineVideoListener);
+    }
+    if (state.timelineDurationRetry) window.clearTimeout(state.timelineDurationRetry);
+    state.timelineDurationRetry = null;
+    state.timelineVideo = null;
+    state.timelineVideoListener = null;
+  }
+
+  function addTimelineVideoListeners(video, listener) {
+    if (!video || !listener) return;
+    ["loadedmetadata", "loadeddata", "durationchange", "canplay", "play"].forEach((eventName) => {
+      video.addEventListener(eventName, listener);
+    });
+  }
+
+  function removeTimelineVideoListeners(video, listener) {
+    if (!video || !listener) return;
+    ["loadedmetadata", "loadeddata", "durationchange", "canplay", "play"].forEach((eventName) => {
+      video.removeEventListener(eventName, listener);
+    });
+  }
+
+  function getTimelineMarkerStart(marker) {
+    return Math.max(0, Number(marker?.seconds || 0));
+  }
+
+  function getTimelineMarkerEnd(marker, minSpan) {
+    const start = getTimelineMarkerStart(marker);
+    const endSeconds = Number(marker?.endSeconds);
+    return Number.isFinite(endSeconds) && endSeconds > start
+      ? Math.max(start, endSeconds)
+      : start + minSpan;
+  }
+
+  function getTimelineMarkerMinSpanSeconds(duration, track = null) {
+    const safeDuration = Math.max(1, Number(duration) || 1);
+    const trackWidth = Number(track?.getBoundingClientRect?.().width || 0);
+    if (trackWidth > 0) {
+      return clampNumber((TIMELINE_MARKER_MIN_WIDTH_PX / trackWidth) * safeDuration, 0.25, safeDuration);
+    }
+    return Math.min(Math.max(0.75, safeDuration * 0.004), 6);
+  }
+
+  function getTimelineTrackForTag(tagId) {
+    const overlay = document.getElementById(TIMELINE_OVERLAY_ID);
+    if (!overlay) return null;
+    return Array.from(overlay.querySelectorAll("[data-eto-timeline-track-tag-id]"))
+      .find((track) => String(track.getAttribute("data-eto-timeline-track-tag-id")) === String(tagId)) || null;
+  }
+
+  function findAvailableTimelineStart(markers, options) {
+    const tagId = String(options?.tagId || "");
+    const markerId = options?.markerId ? String(options.markerId) : "";
+    const duration = Math.max(1, Number(options?.duration) || 1);
+    const length = clampNumber(options?.length, 0.1, duration);
+    const desiredStart = clampNumber(options?.desiredStart, 0, Math.max(0, duration - length));
+    const minSpan = Math.max(0.1, Number(options?.minSpan) || length);
+    const biasRight = Boolean(options?.biasRight);
+    const intervals = markers
+      .filter((marker) => String(marker?.tagId || "") === tagId && (!markerId || String(marker?.id) !== markerId))
+      .map((marker) => ({
+        start: getTimelineMarkerStart(marker),
+        end: getTimelineMarkerEnd(marker, minSpan),
+      }))
+      .sort((a, b) => a.start - b.start);
+
+    const gaps = [];
+    let cursor = 0;
+    intervals.forEach((interval) => {
+      const gapEnd = Math.max(0, interval.start - TIMELINE_MARKER_GAP_SECONDS);
+      if (gapEnd - cursor >= length) gaps.push({ start: cursor, end: gapEnd });
+      cursor = Math.max(cursor, interval.end + TIMELINE_MARKER_GAP_SECONDS);
+    });
+    if (duration - cursor >= length) gaps.push({ start: cursor, end: duration });
+    if (!gaps.length) return desiredStart;
+
+    if (biasRight) {
+      const rightGap = gaps.find((gap) => gap.end - length >= desiredStart);
+      if (rightGap) return clampNumber(desiredStart, rightGap.start, rightGap.end - length);
+    }
+
+    return gaps
+      .map((gap) => {
+        const start = clampNumber(desiredStart, gap.start, gap.end - length);
+        return { start, distance: Math.abs(start - desiredStart) };
+      })
+      .sort((a, b) => a.distance - b.distance)[0].start;
+  }
+
+  function getTimelineOverlayMount(video) {
+    const fullscreenElement = document.fullscreenElement;
+    if (video && fullscreenElement?.contains(video)) return { mount: fullscreenElement, fixed: false };
+
+    const mount =
+      video?.closest?.(".scene-player, .scene-video, .video-js, [class*='ScenePlayer']") ||
+      getScenePlayerRoot() ||
+      video?.parentElement ||
+      document.body;
+    return { mount, fixed: mount === document.body };
+  }
+
+  function isCssColorLike(value) {
+    const color = normalizeCustomFieldValue(value);
+    if (!color) return false;
+    if (window.CSS?.supports?.("color", color)) return true;
+    return /^(#(?:[0-9a-f]{3,8})|rgb\(|rgba\(|hsl\(|hsla\()/i.test(color);
+  }
+
+  function softenTimelineColor(value) {
+    const color = normalizeCustomFieldValue(value);
+    if (!isCssColorLike(color)) return "";
+
+    const hex = color.match(/^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+    if (hex) {
+      const raw = hex[1];
+      const expanded = raw.length <= 4
+        ? raw.split("").map((char) => char + char).join("")
+        : raw;
+      const r = parseInt(expanded.slice(0, 2), 16);
+      const g = parseInt(expanded.slice(2, 4), 16);
+      const b = parseInt(expanded.slice(4, 6), 16);
+      const sourceAlpha = expanded.length >= 8 ? parseInt(expanded.slice(6, 8), 16) / 255 : 1;
+      const alpha = Math.min(0.5, Math.max(0, sourceAlpha));
+      return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
+    }
+
+    const rgb = color.match(/^rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*([0-9.]+))?\s*\)$/i);
+    if (rgb) {
+      const alpha = Math.min(0.5, Math.max(0, Number(rgb[4] ?? 1) || 0.5));
+      return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha.toFixed(3)})`;
+    }
+
+    const mixedColor = `color-mix(in srgb, ${color} 50%, transparent)`;
+    return window.CSS?.supports?.("color", mixedColor) ? mixedColor : color;
+  }
+
+  function getTimelineMarkerColor(tagId, marker = null) {
+    const customColor = normalizeCustomFieldValue(getTimelineTagColor(getTagRecordById(tagId)));
+    if (isCssColorLike(customColor)) return softenTimelineColor(customColor);
+    return "";
+  }
+
+  function getTimelineMarkerRawColor(tagId) {
+    const color = normalizeCustomFieldValue(getTimelineTagColor(getTagRecordById(tagId)));
+    return isCssColorLike(color) ? color : "";
+  }
+
+  function getTimelineColorStyle(tagId, marker = null) {
+    const color = getTimelineMarkerColor(tagId, marker);
+    const rawColor = getTimelineMarkerRawColor(tagId);
+    return [
+      color ? `--eto-timeline-marker-color: ${color}` : "",
+      rawColor ? `--eto-timeline-marker-icon-color: ${rawColor}` : "",
+    ].filter(Boolean).join("; ");
+  }
+
+  function ensureTimelineTimeBadge() {
+    if (state.timelineTimeBadge) return state.timelineTimeBadge;
+    const badge = document.createElement("div");
+    badge.className = "edit-tags-overhaul-timeline-overlay__time-badge";
+    badge.setAttribute("aria-hidden", "true");
+    document.body.appendChild(badge);
+    state.timelineTimeBadge = badge;
+    return badge;
+  }
+
+  function updateTimelineTimeBadge(seconds, clientX, clientY) {
+    const badge = ensureTimelineTimeBadge();
+    badge.textContent = formatTimelineTime(seconds);
+    badge.style.left = `${Math.round(clientX)}px`;
+    badge.style.top = `${Math.round(clientY - 28)}px`;
+    badge.classList.add("is-visible");
+  }
+
+  function hideTimelineTimeBadge() {
+    state.timelineTimeBadge?.classList.remove("is-visible");
+  }
+
+  function releaseTimelineFocus() {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.closest(`#${TIMELINE_OVERLAY_ID}`)) {
+      active.blur();
+    }
+  }
+
+  function seekTimelineMarker(markerBtn) {
+    const video = getActiveSceneVideo();
+    const seconds = Number(markerBtn?.getAttribute?.("data-eto-timeline-seconds"));
+    if (video && Number.isFinite(seconds)) {
+      video.currentTime = Math.max(0, seconds);
+      const playPromise = video.paused ? null : video.play?.();
+      if (playPromise?.catch) playPromise.catch(() => {});
+    }
+    releaseTimelineFocus();
+  }
+
+  function getTimelineSecondsFromPointer(track, clientX, duration) {
+    const rect = track.getBoundingClientRect();
+    const ratio = rect.width > 0 ? clampNumber((clientX - rect.left) / rect.width, 0, 1) : 0;
+    return clampTimelineSeconds(ratio * duration, duration);
+  }
+
+  function startTimelineResize(event, overlay) {
+    if (event.button !== 0) return;
+    state.timelineResizeState = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: overlay.getBoundingClientRect().height,
+      overlay,
+    };
+    overlay.setPointerCapture?.(event.pointerId);
+    overlay.classList.add("is-resizing");
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function updateTimelineResize(event) {
+    const resize = state.timelineResizeState;
+    if (!resize || event.pointerId !== resize.pointerId) return;
+    const nextHeight = clampNumber(resize.startHeight + (event.clientY - resize.startY), 54, Math.max(120, window.innerHeight * 0.42));
+    resize.overlay.style.height = `${Math.round(nextHeight)}px`;
+    event.preventDefault();
+  }
+
+  function stopTimelineResize(event) {
+    const resize = state.timelineResizeState;
+    if (!resize || event.pointerId !== resize.pointerId) return;
+    resize.overlay.releasePointerCapture?.(event.pointerId);
+    resize.overlay.classList.remove("is-resizing");
+    state.timelineResizeState = null;
+    releaseTimelineFocus();
+  }
+
+  function persistTimelinePaletteLayout() {
+    const palette = document.querySelector("[data-eto-timeline-palette]");
+    if (!palette) return;
+
+    const paletteRect = palette.getBoundingClientRect();
+    state.timelinePaletteLayout = {
+      left: Math.round(paletteRect.left),
+      top: Math.round(paletteRect.top),
+      width: Math.round(paletteRect.width),
+      height: Math.round(paletteRect.height),
+    };
+    writeTimelinePaletteLayout(state.timelinePaletteLayout);
+  }
+
+  function startTimelinePaletteDrag(event) {
+    if (event.button !== 0) return;
+    if (event.target.closest("button, input, a, textarea, select")) return;
+
+    const palette = event.target.closest("[data-eto-timeline-palette]");
+    if (!palette) return;
+
+    const paletteRect = palette.getBoundingClientRect();
+    state.timelinePaletteDragState = {
+      pointerId: event.pointerId,
+      palette,
+      offsetX: event.clientX - paletteRect.left,
+      offsetY: event.clientY - paletteRect.top,
+      width: paletteRect.width,
+      height: paletteRect.height,
+      minLeft: 8,
+      maxLeft: Math.max(8, window.innerWidth - paletteRect.width - 8),
+      minTop: 8,
+      maxTop: Math.max(8, window.innerHeight - paletteRect.height - 8),
+    };
+
+    palette.setPointerCapture?.(event.pointerId);
+    palette.classList.add("is-dragging");
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function updateTimelinePaletteDrag(event) {
+    const drag = state.timelinePaletteDragState;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+
+    const left = clampNumber(event.clientX - drag.offsetX, drag.minLeft, drag.maxLeft);
+    const top = clampNumber(event.clientY - drag.offsetY, drag.minTop, drag.maxTop);
+
+    drag.palette.style.left = `${Math.round(left)}px`;
+    drag.palette.style.top = `${Math.round(top)}px`;
+    drag.palette.style.bottom = "auto";
+    state.timelinePaletteLayout = {
+      left: Math.round(left),
+      top: Math.round(top),
+      width: Math.round(drag.palette.getBoundingClientRect().width || drag.width),
+      height: Math.round(drag.palette.getBoundingClientRect().height || drag.height),
+    };
+    writeTimelinePaletteLayout(state.timelinePaletteLayout);
+    event.preventDefault();
+  }
+
+  function stopTimelinePaletteDrag(event) {
+    const drag = state.timelinePaletteDragState;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+
+    drag.palette.releasePointerCapture?.(event.pointerId);
+    drag.palette.classList.remove("is-dragging");
+    persistTimelinePaletteLayout();
+    state.timelinePaletteDragState = null;
+    releaseTimelineFocus();
+  }
+
+  function startTimelineMarkerDrag(event, overlay) {
+    const handle = event.target.closest("[data-eto-timeline-marker-range-handle]");
+    const marker = event.target.closest("[data-eto-timeline-marker-id]");
+    if (event.button !== 0 || !marker) return;
+
+    const track = marker.closest(".edit-tags-overhaul-timeline-overlay__track");
+    const sceneId = marker.getAttribute("data-eto-timeline-scene-id");
+    const markerId = marker.getAttribute("data-eto-timeline-marker-id");
+    const duration = getTimelineOverlayDuration(overlay, getActiveSceneVideo(), getSceneTimelineMarkers(sceneId));
+    const startSeconds = Number(marker.getAttribute("data-eto-timeline-seconds")) || 0;
+    const endSeconds = Number(marker.getAttribute("data-eto-timeline-end-seconds"));
+    const hasEnd = Number.isFinite(endSeconds) && endSeconds > startSeconds;
+    const pointerSeconds = getTimelineSecondsFromPointer(track, event.clientX, duration);
+    const pointerOffsetSeconds = handle ? 0 : pointerSeconds - startSeconds;
+
+    state.timelineDragState = {
+      pointerId: event.pointerId,
+      mode: handle ? "range" : "move",
+      sceneId,
+      markerId,
+      marker,
+      track,
+      duration,
+      startSeconds,
+      endSeconds: hasEnd ? endSeconds : null,
+      rangeDuration: hasEnd ? endSeconds - startSeconds : 0,
+      pointerOffsetSeconds,
+      moved: false,
+      pointerStartX: event.clientX,
+      pointerStartY: event.clientY,
+      shiftKey: event.shiftKey,
+    };
+
+    marker.setPointerCapture?.(event.pointerId);
+    marker.classList.add("is-dragging");
+    if (handle) marker.classList.add("edit-tags-overhaul-timeline-overlay__marker--range");
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function updateTimelineMarkerDrag(event) {
+    const drag = state.timelineDragState;
+    if (!drag || event.pointerId !== drag.pointerId || !drag.track) return;
+
+    const pointerSeconds = getTimelineSecondsFromPointer(drag.track, event.clientX, drag.duration);
+    const movedPixels = Math.hypot(event.clientX - drag.pointerStartX, event.clientY - drag.pointerStartY);
+    if (movedPixels < 4 && !drag.moved) return;
+    drag.moved = true;
+
+    if (drag.mode === "range") {
+      const endSeconds = Math.max(drag.startSeconds + 0.1, pointerSeconds);
+      const left = Math.max(0, Math.min(100, (drag.startSeconds / drag.duration) * 100));
+      const width = Math.max(0.6, Math.min(100 - left, ((endSeconds - drag.startSeconds) / drag.duration) * 100));
+      drag.marker.style.left = `${left}%`;
+      drag.marker.style.width = `max(3.4rem, ${width}%)`;
+      drag.marker.setAttribute("data-eto-timeline-end-seconds", String(endSeconds));
+      updateTimelineTimeBadge(endSeconds, event.clientX, event.clientY);
+      return;
+    }
+
+    let nextStart = pointerSeconds - drag.pointerOffsetSeconds;
+    let nextEnd = null;
+    if (drag.endSeconds !== null) {
+      const maxStart = Math.max(0, drag.duration - drag.rangeDuration);
+      nextStart = clampNumber(nextStart, 0, maxStart);
+      nextEnd = nextStart + drag.rangeDuration;
+    } else {
+      nextStart = clampTimelineSeconds(nextStart, drag.duration);
+    }
+    const left = Math.max(0, Math.min(100, (nextStart / drag.duration) * 100));
+    drag.marker.style.left = `${left}%`;
+    drag.marker.setAttribute("data-eto-timeline-seconds", String(nextStart));
+    if (nextEnd !== null) drag.marker.setAttribute("data-eto-timeline-end-seconds", String(nextEnd));
+    updateTimelineTimeBadge(nextStart, event.clientX, event.clientY);
+  }
+
+  function stopTimelineMarkerDrag(event) {
+    const drag = state.timelineDragState;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+
+    drag.marker.releasePointerCapture?.(event.pointerId);
+    drag.marker.classList.remove("is-dragging");
+    hideTimelineTimeBadge();
+
+    if (drag.moved) {
+      state.timelineSuppressClick = true;
+      const seconds = clampTimelineSeconds(Number(drag.marker.getAttribute("data-eto-timeline-seconds")), drag.duration);
+      const rawEnd = Number(drag.marker.getAttribute("data-eto-timeline-end-seconds"));
+      const patch = { seconds };
+      if (Number.isFinite(rawEnd) && rawEnd > seconds + 0.05) {
+        patch.endSeconds = clampTimelineSeconds(rawEnd, drag.duration);
+      } else {
+        patch.endSeconds = null;
+      }
+      updateTimelineMarker(drag.sceneId, drag.markerId, patch, {
+        mode: drag.mode,
+        duration: drag.duration,
+        track: drag.track,
+      });
+    } else if (!drag.shiftKey && drag.mode === "move") {
+      state.timelineSuppressClick = true;
+      seekTimelineMarker(drag.marker);
+    }
+
+    state.timelineDragState = null;
+    releaseTimelineFocus();
+  }
+
+  function ensureTimelineOverlay(mountInfo) {
+    let overlay = document.getElementById(TIMELINE_OVERLAY_ID);
+    if (overlay && overlay.parentElement !== mountInfo.mount) {
+      overlay.remove();
+      overlay = null;
+    }
+
+    if (!overlay) {
+      overlay = document.createElement("section");
+      overlay.id = TIMELINE_OVERLAY_ID;
+      overlay.className = "edit-tags-overhaul-timeline-overlay";
+      overlay.addEventListener("pointerdown", (event) => {
+        const resizeHandle = event.target.closest("[data-eto-timeline-resize-handle]");
+        if (resizeHandle) {
+          startTimelineResize(event, overlay);
+          return;
+        }
+        if (event.target.closest("[data-eto-timeline-export], [data-eto-timeline-import]")) {
+          event.stopPropagation();
+          return;
+        }
+        if (event.target.closest("[data-eto-timeline-palette-close], [data-eto-timeline-palette-color-mode]")) {
+          event.stopPropagation();
+          return;
+        }
+        if (event.target.closest("[data-eto-timeline-palette-drag]")) {
+          startTimelinePaletteDrag(event);
+          return;
+        }
+        if (event.target.closest("[data-eto-timeline-palette-toggle], [data-eto-timeline-palette]")) {
+          event.stopPropagation();
+          return;
+        }
+        const markerBtn = event.target.closest("[data-eto-timeline-marker-id]");
+        if (markerBtn) {
+          startTimelineMarkerDrag(event, overlay);
+        }
+      });
+      overlay.addEventListener("pointermove", (event) => {
+        updateTimelineResize(event);
+        updateTimelinePaletteDrag(event);
+        updateTimelineMarkerDrag(event);
+      });
+      overlay.addEventListener("pointerup", (event) => {
+        stopTimelineResize(event);
+        stopTimelinePaletteDrag(event);
+        persistTimelinePaletteLayout();
+        stopTimelineMarkerDrag(event);
+      });
+      overlay.addEventListener("pointercancel", (event) => {
+        stopTimelineResize(event);
+        stopTimelinePaletteDrag(event);
+        persistTimelinePaletteLayout();
+        stopTimelineMarkerDrag(event);
+      });
+      overlay.addEventListener("click", (event) => {
+        if (state.timelineSuppressClick) {
+          state.timelineSuppressClick = false;
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+
+        const markerBtn = event.target.closest("[data-eto-timeline-marker-id]");
+        const exportBtn = event.target.closest("[data-eto-timeline-export]");
+        const importBtn = event.target.closest("[data-eto-timeline-import]");
+        const paletteToggle = event.target.closest("[data-eto-timeline-palette-toggle]");
+        const paletteClose = event.target.closest("[data-eto-timeline-palette-close]");
+        if (!markerBtn && !exportBtn && !importBtn && !paletteToggle && !paletteClose) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (paletteToggle) {
+          state.timelinePaletteOpen = !state.timelinePaletteOpen;
+          requestTimelineOverlaySync();
+          releaseTimelineFocus();
+          return;
+        }
+
+        if (paletteClose) {
+          closeTimelineTagPalettePanel();
+          return;
+        }
+
+        if (exportBtn) {
+          exportTimelineMarkers();
+          releaseTimelineFocus();
+          return;
+        }
+
+        if (importBtn) {
+          promptImportTimelineMarkers();
+          releaseTimelineFocus();
+          return;
+        }
+
+        const sceneId = markerBtn.getAttribute("data-eto-timeline-scene-id");
+        const markerId = markerBtn.getAttribute("data-eto-timeline-marker-id");
+        if (event.shiftKey) {
+          deleteTimelineMarker(sceneId, markerId);
+          releaseTimelineFocus();
+          return;
+        }
+
+        seekTimelineMarker(markerBtn);
+      });
+      overlay.addEventListener("contextmenu", (event) => {
+        const markerBtn = event.target.closest("[data-eto-timeline-marker-id]");
+        if (!markerBtn) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        deleteTimelineMarker(
+          markerBtn.getAttribute("data-eto-timeline-scene-id"),
+          markerBtn.getAttribute("data-eto-timeline-marker-id")
+        );
+        releaseTimelineFocus();
+      });
+      mountInfo.mount.appendChild(overlay);
+    }
+
+    overlay.classList.toggle("edit-tags-overhaul-timeline-overlay--fixed", mountInfo.fixed);
+    overlay.style.setProperty("--eto-fullscreen-idle-opacity", String(getFullscreenIdleOpacity(state.config || {})));
+    attachSharedHoverListeners(overlay);
+    attachTimelinePairHoverListeners(overlay);
+    if (!mountInfo.fixed && mountInfo.mount instanceof HTMLElement) {
+      const position = window.getComputedStyle(mountInfo.mount).position;
+      if (position === "static") {
+        mountInfo.mount.style.position = "relative";
+      }
+    }
+
+    return overlay;
+  }
+
+  function renderTimelineOverlay(overlay, entity, markers, video, sceneDuration = 0) {
+    const duration = Math.max(1, getTimelineVideoDuration(video, markers, sceneDuration));
+    const gridItems = buildTimelineGridItems(duration);
+    const gridHtml = gridItems
+      .map((item) => `
+        <span
+          class="edit-tags-overhaul-timeline-overlay__grid-line"
+          style="left: ${item.left}%"
+          aria-hidden="true"
+          title="${formatTimelineTime(item.seconds)}"
+        ></span>
+      `)
+      .join("");
+    const gridAxisHtml = gridItems
+      .map((item) => `
+        <span
+          class="edit-tags-overhaul-timeline-overlay__grid-label"
+          style="left: ${item.left}%"
+        >${formatTimelineTime(item.seconds)}</span>
+      `)
+      .join("");
+    const groupedMarkers = new Map();
+
+    markers.forEach((marker) => {
+      const tagId = String(marker.tagId || "");
+      if (!tagId) return;
+      if (!groupedMarkers.has(tagId)) groupedMarkers.set(tagId, []);
+      groupedMarkers.get(tagId).push(marker);
+    });
+
+    const rows = Array.from(groupedMarkers.entries())
+      .map(([tagId, rowMarkers]) => {
+        const tagRecord = getTagRecordById(tagId);
+        const tagName = tagRecord?.name || rowMarkers[0]?.tagName || "Tag";
+        return { tagId, tagName, markers: rowMarkers.sort((a, b) => Number(a.seconds || 0) - Number(b.seconds || 0)) };
+      })
+      .sort((a, b) => a.tagName.localeCompare(b.tagName, undefined, { sensitivity: "base" }));
+
+    overlay.setAttribute("data-eto-timeline-duration", String(duration));
+
+    overlay.innerHTML = `
+      <div class="edit-tags-overhaul-timeline-overlay__header">
+        <button
+          type="button"
+          class="edit-tags-overhaul-timeline-overlay__title-btn${state.timelinePaletteOpen ? " is-open" : ""}"
+          data-eto-timeline-palette-toggle="1"
+          aria-expanded="${state.timelinePaletteOpen ? "true" : "false"}"
+          title="Show timeline tag palette"
+        >Timeline Tags</button>
+        <span>Click seeks. Shift/right-click removes. ${formatTimelineTime(duration)}</span>
+        <span class="edit-tags-overhaul-timeline-overlay__header-actions">
+          <button type="button" class="edit-tags-overhaul-timeline-overlay__header-btn" data-eto-timeline-export="1" aria-label="Export all timeline markers" title="Export all timeline markers">Export</button>
+          <button type="button" class="edit-tags-overhaul-timeline-overlay__header-btn" data-eto-timeline-import="1" aria-label="Import timeline markers" title="Import timeline markers">Import</button>
+        </span>
+      </div>
+      <div class="edit-tags-overhaul-timeline-overlay__grid-axis" aria-hidden="true">
+        ${gridAxisHtml}
+      </div>
+      <div class="edit-tags-overhaul-timeline-overlay__rows">
+        ${rows.length
+          ? rows
+          .map((row) => {
+            return `
+              <div class="edit-tags-overhaul-timeline-overlay__row">
+                <span class="edit-tags-overhaul-timeline-overlay__label">${escapeHtml(row.tagName)}</span>
+                <div class="edit-tags-overhaul-timeline-overlay__track" data-eto-timeline-track-tag-id="${escapeHtml(row.tagId)}">
+                  ${gridHtml}
+                  ${row.markers
+                    .map((marker) => {
+                      const seconds = Math.max(0, Number(marker.seconds || 0));
+                      const endSeconds = Math.max(seconds, Number(marker.endSeconds || 0));
+                      const hasRange = Number.isFinite(endSeconds) && endSeconds > seconds + 0.05;
+                      const left = Math.max(0, Math.min(100, (seconds / duration) * 100));
+                      const rangeWidth = hasRange ? Math.max(0.6, Math.min(100 - left, ((endSeconds - seconds) / duration) * 100)) : 0;
+                      const markerStyle = [
+                        `left: ${left}%`,
+                        getTimelineColorStyle(row.tagId, marker),
+                        hasRange ? `width: max(3.4rem, ${rangeWidth}%)` : "",
+                      ].filter(Boolean).join("; ");
+                      const rawColor = getTimelineMarkerRawColor(row.tagId);
+                      return `
+                        <button
+                          type="button"
+                          class="edit-tags-overhaul-timeline-overlay__marker${hasRange ? " edit-tags-overhaul-timeline-overlay__marker--range" : ""}"
+                          style="${markerStyle}"
+                          title="${escapeHtml(row.tagName)} / ${formatTimelineTime(seconds)}${hasRange ? ` - ${formatTimelineTime(endSeconds)}` : ""}${rawColor ? ` / ${escapeHtml(rawColor)}` : ""}"
+                          data-eto-timeline-scene-id="${escapeHtml(entity.id)}"
+                          data-eto-timeline-marker-id="${escapeHtml(marker.id)}"
+                          data-eto-timeline-seconds="${seconds}"
+                          ${hasRange ? `data-eto-timeline-end-seconds="${endSeconds}"` : ""}
+                        ><span>${escapeHtml(row.tagName)}</span><span class="edit-tags-overhaul-timeline-overlay__range-handle" data-eto-timeline-marker-range-handle="1" title="Drag to set duration"></span></button>
+                      `;
+                    })
+                    .join("")}
+                </div>
+              </div>
+            `;
+          })
+          .join("")
+          : '<div class="edit-tags-overhaul-timeline-overlay__empty">No timeline markers yet</div>'}
+      </div>
+      <button type="button" class="edit-tags-overhaul-timeline-overlay__resize-handle" data-eto-timeline-resize-handle="1" aria-label="Resize timeline panel" title="Resize timeline panel"></button>
+    `;
+    if (state.timelinePaletteOpen) mountTimelineTagPalettePanel(overlay);
+    else document.querySelectorAll("[data-eto-timeline-palette]").forEach((palette) => palette.remove());
+  }
+
+  async function syncTimelineOverlay() {
+    const cfg = state.config || (await loadConfig());
+    const entity = getCurrentSceneEntity();
+    if (
+      !isTagTimelineOverlayEnabled(cfg) ||
+      !entity ||
+      !state.fullscreen.panel ||
+      (!document.fullscreenElement && !shouldShowSceneOverlaysOutsideFullscreen(cfg))
+    ) {
+      state.timelineRetryCount = 0;
+      removeTimelineOverlay();
+      return;
+    }
+
+    const markers = getSceneTimelineMarkers(entity.id);
+    const video = getActiveSceneVideo();
+
+    await fetchAllTags();
+    state.timelineRetryCount = 0;
+    const mountInfo = getTimelineOverlayMount(video);
+    const overlay = ensureTimelineOverlay(mountInfo);
+    const sceneDuration = await fetchSceneTimelineDuration(entity.id);
+    renderTimelineOverlay(overlay, entity, markers, video, sceneDuration);
+
+    if (state.timelineVideo !== video) {
+      if (state.timelineVideo && state.timelineVideoListener) {
+        removeTimelineVideoListeners(state.timelineVideo, state.timelineVideoListener);
+      }
+      state.timelineVideo = video;
+      state.timelineVideoListener = video ? () => syncTimelineOverlay() : null;
+      if (video && state.timelineVideoListener) {
+        addTimelineVideoListeners(video, state.timelineVideoListener);
+      }
+    }
+
+    if (!video) {
+      if (state.timelineDurationRetry) window.clearTimeout(state.timelineDurationRetry);
+      state.timelineDurationRetry = window.setTimeout(() => {
+        state.timelineDurationRetry = null;
+        requestTimelineOverlaySync();
+      }, 750);
+    } else if (isTimelineVideoDurationReady(video) && state.timelineDurationRetry) {
+      window.clearTimeout(state.timelineDurationRetry);
+      state.timelineDurationRetry = null;
+    }
+  }
+
   function restoreFullscreenMiniPanels() {
     const cfg = state.config || {};
     if (!shouldAutoOpenFullscreenQuickTagPanel(cfg)) return;
@@ -2512,8 +4295,8 @@
     controls.innerHTML = `
       <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-scale="-1" aria-label="Decrease panel scale">A-</button>
       <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-scale="1" aria-label="Increase panel scale">A+</button>
-      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-reset="1" aria-label="Reset fullscreen tag panel layout" title="Reset layout">↺</button>
-      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-minimize="1" aria-label="Minimize fullscreen tag panel" title="Minimize">−</button>
+      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-reset="1" aria-label="Reset quick tag panel overlay layout" title="Reset layout">↺</button>
+      <button type="button" class="edit-tags-overhaul__fullscreen-control" data-eto-fullscreen-minimize="1" aria-label="Minimize quick tag panel overlay" title="Minimize">−</button>
     `;
 
     header.appendChild(titleWrap);
@@ -2539,9 +4322,17 @@
   }
 
   function getFullscreenSceneEntity() {
-    if (!document.fullscreenElement) return null;
     const entity = getEntityFromPath(window.location.pathname);
     return entity?.type === "scene" ? entity : null;
+  }
+
+  function getQuickTagOverlayMount(cfg) {
+    const entity = getFullscreenSceneEntity();
+    if (!entity) return null;
+
+    const fullscreenElement = document.fullscreenElement;
+    if (fullscreenElement) return { mount: fullscreenElement, entity, fullscreen: true };
+    return { mount: document.body, entity, fullscreen: false };
   }
 
   async function buildFullscreenPanel() {
@@ -2556,7 +4347,7 @@
       const [cfg, allTags] = await Promise.all([loadConfig(), fetchAllTags()]);
       await ensureSelectedTagIds(entity);
 
-      if (!state.fullscreen.root || !document.fullscreenElement) return;
+      if (!state.fullscreen.root) return;
 
       const fullscreenCfg = {
         ...cfg,
@@ -2576,8 +4367,10 @@
       state.fullscreen.entityKey = entityKey;
       state.fullscreen.root.appendChild(panel);
       applyFullscreenPanelLayout(panel);
+      attachSharedHoverListeners(panel);
       syncRenderedSelectionStates();
-      restoreFullscreenMiniPanels();
+      if (shouldAutoOpenFullscreenQuickTagPanel(cfg)) restoreFullscreenMiniPanels();
+      requestTimelineOverlaySync();
 
       if (window.ResizeObserver) {
         state.fullscreen.resizeObserver?.disconnect();
@@ -2585,13 +4378,16 @@
         state.fullscreen.resizeObserver.observe(panel);
       }
     } catch (err) {
-      console.error("[EditTagsOverhaul] fullscreen quick tag panel failed", err);
+      console.error("[EditTagsOverhaul] quick tag panel overlay failed", err);
     } finally {
       state.fullscreen.isBuilding = false;
     }
   }
 
-  function closeFullscreenPanel() {
+  function closeFullscreenPanel(persistOpenState = false) {
+    if (persistOpenState && shouldAutoOpenFullscreenQuickTagPanel(state.config || {})) {
+      writeQuickTagOverlayOpenState(false);
+    }
     state.fullscreen.resizeObserver?.disconnect();
     state.fullscreen.resizeObserver = null;
     closeFullscreenMiniPanels();
@@ -2600,6 +4396,7 @@
     state.fullscreen.entityKey = "";
     state.fullscreen.groups = [];
     state.fullscreen.groupMap = new Map();
+    requestTimelineOverlaySync();
   }
 
   function createFullscreenLauncher() {
@@ -2607,12 +4404,18 @@
     button.type = "button";
     button.className = "edit-tags-overhaul__fullscreen-launcher";
     button.textContent = "Tags";
-    button.setAttribute("aria-label", "Open fullscreen quick tag panel");
+    button.setAttribute("aria-label", "Open quick tag panel overlay");
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (state.fullscreen.panel) closeFullscreenPanel();
-      else buildFullscreenPanel();
+      if (state.fullscreen.panel) {
+        closeFullscreenPanel(true);
+      } else {
+        if (shouldAutoOpenFullscreenQuickTagPanel(state.config || {})) {
+          writeQuickTagOverlayOpenState(true);
+        }
+        buildFullscreenPanel().finally(() => requestTimelineOverlaySync());
+      }
     });
     return button;
   }
@@ -2626,30 +4429,39 @@
   }
 
   async function syncFullscreenOverlay() {
-    const fullscreenElement = document.fullscreenElement;
-    const entity = getFullscreenSceneEntity();
     const cfg = await loadConfig();
-    if (!fullscreenElement || !entity || !isFullscreenQuickTagPanelEnabled(cfg)) {
+    const mountInfo = getQuickTagOverlayMount(cfg);
+    if (!mountInfo || !isFullscreenQuickTagPanelEnabled(cfg)) {
       cleanupFullscreenOverlay();
       return;
     }
 
-    if (state.fullscreen.root?.parentElement !== fullscreenElement) {
+    if (state.fullscreen.root?.parentElement !== mountInfo.mount) {
       cleanupFullscreenOverlay();
       const root = document.createElement("div");
       root.className = "edit-tags-overhaul__fullscreen-root";
       const launcher = createFullscreenLauncher();
       launcher.classList.add(`edit-tags-overhaul__fullscreen-launcher--${getFullscreenButtonPosition(cfg)}`);
       root.appendChild(launcher);
-      fullscreenElement.appendChild(root);
+      mountInfo.mount.appendChild(root);
       state.fullscreen.root = root;
       state.fullscreen.launcher = root.querySelector(".edit-tags-overhaul__fullscreen-launcher");
       applyFullscreenSharedHoverSetting(root, cfg);
-      if (shouldAutoOpenFullscreenQuickTagPanel(cfg)) {
+      attachSharedHoverListeners(root);
+      if (shouldAutoOpenFullscreenQuickTagPanel(cfg) && readQuickTagOverlayOpenState() !== false) {
         await buildFullscreenPanel();
+        requestTimelineOverlaySync();
       }
     } else {
       applyFullscreenSharedHoverSetting(state.fullscreen.root, cfg);
+      const entityKey = getCurrentEntityKey(mountInfo.entity);
+      if (state.fullscreen.panel && state.fullscreen.entityKey && state.fullscreen.entityKey !== entityKey) {
+        closeFullscreenPanel();
+      }
+      if (shouldAutoOpenFullscreenQuickTagPanel(cfg) && readQuickTagOverlayOpenState() !== false && !state.fullscreen.panel) {
+        await buildFullscreenPanel();
+        requestTimelineOverlaySync();
+      }
     }
   }
 
@@ -2746,6 +4558,8 @@
     if (!isSupportedEntityPage()) {
       cleanupPanel();
       removeHideOriginalStyle();
+      removeTimelineOverlay();
+      state.timelineRetryCount = 0;
       state.currentEntity = null;
       state.selectedTagIds = new Set();
       state.loadedSelectionEntityKey = null;
@@ -2762,6 +4576,7 @@
       state.selectedTagIds = new Set();
     }
 
+    state.timelineRetryCount = 0;
     cleanupPanel();
     return true;
   }
@@ -2819,8 +4634,9 @@
   function handleRouteEvent() {
     handleRouteChange();
     scheduleRouteInjects();
+    requestTimelineOverlaySync();
     syncFullscreenOverlay().catch((err) => {
-      console.error("[EditTagsOverhaul] fullscreen overlay sync failed", err);
+      console.error("[EditTagsOverhaul] quick tag panel overlay sync failed", err);
     });
   }
 
@@ -2830,6 +4646,7 @@
     hideHoverPreview();
     cleanupPanel();
     cleanupFullscreenOverlay();
+    removeTimelineOverlay();
     removeHideOriginalStyle();
 
     if (state.routeEventListener) {
@@ -2871,16 +4688,18 @@
     state.resizeListener = hideHoverPreview;
     state.fullscreenChangeListener = () => {
       syncFullscreenOverlay().catch((err) => {
-        console.error("[EditTagsOverhaul] fullscreen overlay sync failed", err);
+        console.error("[EditTagsOverhaul] quick tag panel overlay sync failed", err);
       });
+      requestTimelineOverlaySync();
     };
     window.addEventListener("scroll", state.scrollListener, true);
     window.addEventListener("resize", state.resizeListener);
     document.addEventListener("fullscreenchange", state.fullscreenChangeListener);
     handleRouteChange();
     scheduleRouteInjects();
+    requestTimelineOverlaySync();
     syncFullscreenOverlay().catch((err) => {
-      console.error("[EditTagsOverhaul] fullscreen overlay sync failed", err);
+      console.error("[EditTagsOverhaul] quick tag panel overlay sync failed", err);
     });
   }
 
