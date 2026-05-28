@@ -8,6 +8,9 @@
   const QUICK_TOAST_ID = "stash-quick-actions-panel-quick-toast";
   const SELECTION_BUTTON_ID = "stash-quick-actions-panel-selection-button";
   const RECENT_QUICK_ACTIONS_KEY = "StashQuickActionsPanel.recentQuickActions.v1";
+  const PINNED_QUICK_ACCESS_PERFORMERS_KEY = "StashQuickActionsPanel.pinnedQuickAccessPerformers.v1";
+  const PINNED_QUICK_ACCESS_TAGS_KEY = "StashQuickActionsPanel.pinnedQuickAccessTags.v1";
+  const PINNED_QUICK_ACCESS_STUDIOS_KEY = "StashQuickActionsPanel.pinnedQuickAccessStudios.v1";
   const METADATA_CLIPBOARD_KEY = "StashQuickActionsPanel.metadataClipboard.v1";
   const PREVIOUS_ACTION_KEY = "StashQuickActionsPanel.previousAction.v1";
   const MENU_SECTION_STATE_KEY = "StashQuickActionsPanel.menuSectionState.v1";
@@ -18,6 +21,10 @@
   const RATING_DISPLAY_PERCENT = "percent";
   const RATING_DISPLAY_TEN_POINT = "tenpoint";
   const RATING_DISPLAY_FIVE_STAR = "fivestar";
+  const STUDIO_URL_SCHEMA_NONE = "none";
+  const STUDIO_URL_SCHEMA_URL = "url";
+  const STUDIO_URL_SCHEMA_URLS_OBJECT = "urlsObject";
+  const STUDIO_URL_SCHEMA_URLS_STRING = "urlsString";
   const SUPPLEMENTAL_IMAGE_KEYS = [
     "ctm_supplemental_image_1",
     "ctm_supplemental_image_2",
@@ -60,6 +67,7 @@
     routeToken: 0,
     quickSearchTokens: new Map(),
     selectionButtonRefreshTimer: 0,
+    studioUrlSchemaPromise: null,
   };
 
   function gql(query, variables = {}) {
@@ -273,6 +281,173 @@
     );
   }
 
+  function normalizePinnedQuickAccessPerformer(record) {
+    if (!record) return null;
+    if (typeof record === "string") {
+      const name = record.trim();
+      return name ? { id: "", name, image_path: "" } : null;
+    }
+    const id = String(record.id || "").trim();
+    const name = String(record.name || record.title || "").trim();
+    if (!id && !name) return null;
+    return {
+      id,
+      name: name || `Performer ${id}`,
+      sort_name: String(record.sort_name || record.name || record.title || "").trim(),
+      image_path: String(record.image_path || record.url || "").trim(),
+    };
+  }
+
+  function loadPinnedQuickAccessPerformers() {
+    try {
+      const raw = localStorage.getItem(PINNED_QUICK_ACCESS_PERFORMERS_KEY);
+      if (raw !== null) {
+        const parsed = JSON.parse(raw || "[]");
+        return Array.isArray(parsed)
+          ? parsed.map(normalizePinnedQuickAccessPerformer).filter(Boolean)
+          : [];
+      }
+    } catch (err) {
+      console.warn("[StashQuickActionsPanel] could not load pinned quick performers", err);
+    }
+
+    return [];
+  }
+
+  function savePinnedQuickAccessPerformerRecords(records) {
+    const seen = new Set();
+    const normalized = [];
+    (records || []).map(normalizePinnedQuickAccessPerformer).filter(Boolean).forEach((record) => {
+      const key = record.id ? `id:${record.id}` : `name:${normalizeSearchText(record.name)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      normalized.push(record);
+    });
+    localStorage.setItem(PINNED_QUICK_ACCESS_PERFORMERS_KEY, JSON.stringify(normalized));
+    return normalized;
+  }
+
+  function isPerformerPinnedToQuickAccess(performerId, performerName = "") {
+    const id = String(performerId || "").trim();
+    const name = normalizeSearchText(performerName);
+    return loadPinnedQuickAccessPerformers().some((record) => {
+      if (id && record.id === id) return true;
+      return name && normalizeSearchText(record.name) === name;
+    });
+  }
+
+  function normalizePinnedQuickAccessTag(record) {
+    if (!record) return null;
+    if (typeof record === "string") {
+      const name = record.trim();
+      return name ? { id: "", name } : null;
+    }
+    const id = String(record.id || "").trim();
+    const name = String(record.name || "").trim();
+    if (!id && !name) return null;
+    return {
+      id,
+      name: name || `Tag ${id}`,
+      sort_name: String(record.sort_name || record.name || "").trim(),
+      image_path: String(record.image_path || "").trim(),
+    };
+  }
+
+  function loadPinnedQuickAccessTags() {
+    try {
+      const raw = localStorage.getItem(PINNED_QUICK_ACCESS_TAGS_KEY);
+      if (raw !== null) {
+        const parsed = JSON.parse(raw || "[]");
+        return Array.isArray(parsed)
+          ? parsed.map(normalizePinnedQuickAccessTag).filter(Boolean)
+          : [];
+      }
+    } catch (err) {
+      console.warn("[StashQuickActionsPanel] could not load pinned quick tags", err);
+    }
+
+    return [];
+  }
+
+  function savePinnedQuickAccessTagRecords(records) {
+    const seen = new Set();
+    const normalized = [];
+    (records || []).map(normalizePinnedQuickAccessTag).filter(Boolean).forEach((record) => {
+      const key = record.id ? `id:${record.id}` : `name:${normalizeSearchText(record.name)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      normalized.push(record);
+    });
+    localStorage.setItem(PINNED_QUICK_ACCESS_TAGS_KEY, JSON.stringify(normalized));
+    return normalized;
+  }
+
+  function isTagPinnedToQuickAccess(tagId, tagName = "") {
+    const id = String(tagId || "").trim();
+    const name = normalizeSearchText(tagName);
+    return loadPinnedQuickAccessTags().some((record) => {
+      if (id && record.id === id) return true;
+      return name && normalizeSearchText(record.name) === name;
+    });
+  }
+
+  function normalizePinnedQuickAccessStudio(record) {
+    const studio = normalizeStudio(record);
+    if (studio) return studio;
+    if (typeof record === "string") {
+      const name = record.trim();
+      return name ? { id: "", name, sort_name: name, image_path: "", url: "" } : null;
+    }
+    const id = String(record?.id || "").trim();
+    const name = String(record?.name || "").trim();
+    if (!id && !name) return null;
+    return {
+      id,
+      name: name || `Studio ${id}`,
+      sort_name: String(record?.sort_name || record?.name || "").trim(),
+      image_path: String(record?.image_path || "").trim(),
+      url: String(record?.url || "").trim(),
+    };
+  }
+
+  function loadPinnedQuickAccessStudios() {
+    try {
+      const raw = localStorage.getItem(PINNED_QUICK_ACCESS_STUDIOS_KEY);
+      if (raw !== null) {
+        const parsed = JSON.parse(raw || "[]");
+        return Array.isArray(parsed)
+          ? parsed.map(normalizePinnedQuickAccessStudio).filter(Boolean)
+          : [];
+      }
+    } catch (err) {
+      console.warn("[StashQuickActionsPanel] could not load pinned quick studios", err);
+    }
+
+    return [];
+  }
+
+  function savePinnedQuickAccessStudioRecords(records) {
+    const seen = new Set();
+    const normalized = [];
+    (records || []).map(normalizePinnedQuickAccessStudio).filter(Boolean).forEach((record) => {
+      const key = record.id ? `id:${record.id}` : `name:${normalizeSearchText(record.name)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      normalized.push(record);
+    });
+    localStorage.setItem(PINNED_QUICK_ACCESS_STUDIOS_KEY, JSON.stringify(normalized));
+    return normalized;
+  }
+
+  function isStudioPinnedToQuickAccess(studioId, studioName = "") {
+    const id = String(studioId || "").trim();
+    const name = normalizeSearchText(studioName);
+    return loadPinnedQuickAccessStudios().some((record) => {
+      if (id && record.id === id) return true;
+      return name && normalizeSearchText(record.name) === name;
+    });
+  }
+
   function normalizeMenuSectionKey(value) {
     return normalizeOptionValue(value);
   }
@@ -363,18 +538,18 @@
     });
   }
 
-  function getQuickAccessItems(itemType, cfg = state.config) {
+  function getQuickAccessItems(itemType) {
     const items = [];
     if (itemType !== "performer") {
-      parseQuickAccessList(cfg?.quickAccessPerformers).forEach((name) => {
-        items.push({ kind: "performer", name, label: `+ Performer: ${name}` });
+      loadPinnedQuickAccessPerformers().forEach(({ id, name, image_path }) => {
+        items.push({ kind: "performer", id: id || "", name, image_path: image_path || "", label: `+ Performer: ${name}` });
       });
-      parseQuickAccessList(cfg?.quickAccessStudios).forEach((name) => {
-        items.push({ kind: "studio", name, label: `Set Studio: ${name}` });
+      loadPinnedQuickAccessStudios().forEach(({ id, name, image_path }) => {
+        items.push({ kind: "studio", id: id || "", name, image_path: image_path || "", label: `Set Studio: ${name}` });
       });
     }
-    parseQuickAccessList(cfg?.quickAccessTags).forEach((name) => {
-      items.push({ kind: "tag", name, label: `+ Tag: ${name}` });
+    loadPinnedQuickAccessTags().forEach(({ id, name, image_path }) => {
+      items.push({ kind: "tag", id: id || "", name, image_path: image_path || "", label: `+ Tag: ${name}` });
     });
     return items;
   }
@@ -459,6 +634,16 @@
       localStorage.removeItem(PREVIOUS_ACTION_KEY);
     } catch (err) {
       console.warn("[StashQuickActionsPanel] saved quick action data clear failed", err);
+    }
+  }
+
+  function clearPinnedQuickAccessData() {
+    try {
+      localStorage.removeItem(PINNED_QUICK_ACCESS_PERFORMERS_KEY);
+      localStorage.removeItem(PINNED_QUICK_ACCESS_TAGS_KEY);
+      localStorage.removeItem(PINNED_QUICK_ACCESS_STUDIOS_KEY);
+    } catch (err) {
+      console.warn("[StashQuickActionsPanel] pinned quick access clear failed", err);
     }
   }
 
@@ -739,6 +924,120 @@
     const card = target.closest(".performer-card");
     if (!(card instanceof HTMLElement)) return null;
     return getPerformerIdFromCard(card) ? card : null;
+  }
+
+  function getTagIdFromHref(href) {
+    const value = String(href || "");
+    const match = value.match(/\/tags\/(\d+)/);
+    return match ? match[1] : "";
+  }
+
+  function getStudioIdFromHref(href) {
+    const value = String(href || "");
+    const match = value.match(/\/studios\/(\d+)/);
+    return match ? match[1] : "";
+  }
+
+  function getPerformerIdFromHref(href) {
+    const value = String(href || "");
+    const match = value.match(/\/performers\/(\d+)/);
+    return match ? match[1] : "";
+  }
+
+  function getTagContextFromEventTarget(target) {
+    if (!(target instanceof Element)) return null;
+    const link = target.closest('a[href*="/tags/"]');
+    if (link instanceof HTMLAnchorElement) {
+      const id = getTagIdFromHref(link.getAttribute("href") || link.href);
+      if (id) {
+        return {
+          tagId: id,
+          label: link.textContent?.trim() || `Tag ${id}`,
+          element: link,
+        };
+      }
+    }
+
+    const tagCard = target.closest(".tag-card, [data-tag-id], [data-tag-id-value]");
+    if (tagCard instanceof HTMLElement) {
+      const id =
+        tagCard.getAttribute("data-tag-id") ||
+        tagCard.getAttribute("data-tag-id-value") ||
+        getTagIdFromHref(tagCard.querySelector('a[href*="/tags/"]')?.getAttribute("href") || "");
+      if (id) {
+        return {
+          tagId: id,
+          label: tagCard.textContent?.trim() || `Tag ${id}`,
+          element: tagCard,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  function getStudioContextFromEventTarget(target) {
+    if (!(target instanceof Element)) return null;
+    const link = target.closest('a[href*="/studios/"]');
+    if (link instanceof HTMLAnchorElement) {
+      const id = getStudioIdFromHref(link.getAttribute("href") || link.href);
+      if (id) {
+        return {
+          studioId: id,
+          label: link.textContent?.trim() || `Studio ${id}`,
+          element: link,
+        };
+      }
+    }
+
+    const studioCard = target.closest(".studio-card, [data-studio-id], [data-studio-id-value]");
+    if (studioCard instanceof HTMLElement) {
+      const id =
+        studioCard.getAttribute("data-studio-id") ||
+        studioCard.getAttribute("data-studio-id-value") ||
+        getStudioIdFromHref(studioCard.querySelector('a[href*="/studios/"]')?.getAttribute("href") || "");
+      if (id) {
+        return {
+          studioId: id,
+          label: studioCard.textContent?.trim() || `Studio ${id}`,
+          element: studioCard,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  function getPerformerContextFromEventTarget(target) {
+    if (!(target instanceof Element)) return null;
+    const link = target.closest('a[href*="/performers/"]');
+    if (link instanceof HTMLAnchorElement) {
+      const id = getPerformerIdFromHref(link.getAttribute("href") || link.href);
+      if (id) {
+        return {
+          performerId: id,
+          label: link.textContent?.trim() || `Performer ${id}`,
+          element: link,
+        };
+      }
+    }
+
+    const performerCard = target.closest(".performer-card, [data-performer-id], [data-performer-id-value]");
+    if (performerCard instanceof HTMLElement) {
+      const id =
+        performerCard.getAttribute("data-performer-id") ||
+        performerCard.getAttribute("data-performer-id-value") ||
+        getPerformerIdFromHref(performerCard.querySelector('a[href*="/performers/"]')?.getAttribute("href") || "");
+      if (id) {
+        return {
+          performerId: id,
+          label: performerCard.textContent?.trim() || `Performer ${id}`,
+          element: performerCard,
+        };
+      }
+    }
+
+    return null;
   }
 
   function getContextCardFromEventTarget(target) {
@@ -1069,6 +1368,8 @@
     const showInlineCustomFields = itemType === "performer";
     const showMetadataPanel = showStudioTools || itemType === "performer";
     const showRatingTool = showStudioTools || itemType === "performer";
+    const singlePerformerId = itemType === "performer" && imageCount === 1 ? normalizedImageIds[0] : "";
+    const performerIsPinned = singlePerformerId && isPerformerPinnedToQuickAccess(singlePerformerId);
     const menu = document.createElement("div");
     menu.id = MENU_ID;
     menu.className = "stash-quick-actions-panel__menu";
@@ -1186,7 +1487,7 @@
           ${quickAccessItems
             .map(
               (item) => `
-                <button type="button" class="stash-quick-actions-panel__menu-item stash-quick-actions-panel__menu-item--quick" data-sqap-action="quick-access" data-sqap-quick-kind="${escapeHtml(item.kind)}" data-sqap-quick-name="${escapeHtml(item.name)}">${escapeHtml(item.label)}</button>
+                <button type="button" class="stash-quick-actions-panel__menu-item stash-quick-actions-panel__menu-item--quick" data-sqap-action="quick-access" data-sqap-quick-kind="${escapeHtml(item.kind)}" data-sqap-quick-id="${escapeHtml(item.id || "")}" data-sqap-quick-name="${escapeHtml(item.name)}" data-sqap-quick-image="${escapeHtml(item.image_path || "")}">${escapeHtml(item.label)}</button>
               `
             )
             .join("")}
@@ -1259,6 +1560,7 @@
       "Saved data",
       `
         <button type="button" class="stash-quick-actions-panel__menu-item stash-quick-actions-panel__menu-item--quick" data-sqap-action="clear-saved-data">Clear recent / last / clipboard</button>
+        <button type="button" class="stash-quick-actions-panel__subtle-button" data-sqap-action="clear-pinned-quick-access">Clear pinned quick access</button>
       `
     );
     const customFieldsPanelHtml = showInlineCustomFields
@@ -1301,6 +1603,11 @@
                 }>Change image</button>`
               : ""
           }
+          ${
+            singlePerformerId
+              ? `<button type="button" class="stash-quick-actions-panel__menu-item stash-quick-actions-panel__menu-item--quick ${performerIsPinned ? "stash-quick-actions-panel__menu-item--danger" : ""}" data-sqap-performer-pin-toggle data-sqap-action="${performerIsPinned ? "unpin-performer-quick-access" : "pin-performer-quick-access"}">${performerIsPinned ? "Remove from Quick Access Performers" : "Pin to Quick Access Performers"}</button>`
+              : ""
+          }
           ${searchPanelHtml}
           ${metadataPanelHtml}
           ${metadataTransferPanelHtml}
@@ -1320,6 +1627,7 @@
       const quickKind = button.getAttribute("data-sqap-quick-kind") || "";
       const quickName = button.getAttribute("data-sqap-quick-name") || "";
       const quickId = button.getAttribute("data-sqap-quick-id") || "";
+      const quickImage = button.getAttribute("data-sqap-quick-image") || "";
       const metadataKind = button.getAttribute("data-sqap-metadata-kind") || "";
       const removeMode = !!clickEvent.shiftKey || menu.dataset.sqapRemoveMode === "1";
       if (["performers", "studio", "tags", "performer-image"].includes(action)) closeContextMenu();
@@ -1333,8 +1641,25 @@
         openTagEditor(itemType, normalizedImageIds);
       } else if (action === "performer-image") {
         openPerformerImageEditor(normalizedImageIds[0]);
+      } else if (action === "pin-performer-quick-access") {
+        pinPerformerToQuickAccess(normalizedImageIds[0]).then(() =>
+          hydratePerformerQuickAccessButton(menu, normalizedImageIds[0])
+        );
+      } else if (action === "unpin-performer-quick-access") {
+        unpinPerformerFromQuickAccessById(normalizedImageIds[0]).then(() =>
+          hydratePerformerQuickAccessButton(menu, normalizedImageIds[0])
+        );
       } else if (action === "quick-access") {
-        applyQuickAccessItem(itemType, normalizedImageIds, quickKind, quickName, { remove: removeMode });
+        if (quickId) {
+          applyResolvedQuickItem(itemType, normalizedImageIds, quickKind, {
+            id: quickId,
+            name: quickName,
+            sort_name: quickName,
+            image_path: quickImage,
+          }, { remove: removeMode });
+        } else {
+          applyQuickAccessItem(itemType, normalizedImageIds, quickKind, quickName, { remove: removeMode });
+        }
       } else if (action === "quick-preset") {
         const presetIndex = Number(button.getAttribute("data-sqap-preset-index"));
         applyQuickAccessPreset(itemType, normalizedImageIds, quickAccessPresets[presetIndex]);
@@ -1369,6 +1694,11 @@
       } else if (action === "clear-saved-data") {
         clearSavedQuickActionData();
         showQuickAccessToast("Cleared recent actions, last action, and clipboard.");
+        closeContextMenu();
+      } else if (action === "clear-pinned-quick-access") {
+        if (!window.confirm("Clear all pinned Quick Access tags, performers, and studios?")) return;
+        clearPinnedQuickAccessData();
+        showQuickAccessToast("Cleared pinned quick access.");
         closeContextMenu();
       }
     });
@@ -1489,11 +1819,140 @@
     menu.focus({ preventScroll: true });
     if (showMetadataPanel) hydrateTitleInput(menu, itemType, normalizedImageIds[0]);
     if (showInlineCustomFields) hydrateInlineCustomFieldsPanel(menu, normalizedImageIds, x, y);
+    if (singlePerformerId) hydratePerformerQuickAccessButton(menu, singlePerformerId);
+    return menu;
+  }
+
+  function openTagContextMenuAt(x, y, tagContext) {
+    closeContextMenu();
+    closeModal();
+
+    const tagId = String(tagContext?.tagId || "").trim();
+    if (!tagId) return null;
+    const tagName = String(tagContext?.label || `Tag ${tagId}`).trim();
+    const isPinned = isTagPinnedToQuickAccess(tagId, tagName);
+    const menu = document.createElement("div");
+    menu.id = MENU_ID;
+    menu.className = "stash-quick-actions-panel__menu stash-quick-actions-panel__menu--tag";
+    menu.setAttribute("role", "menu");
+    menu.dataset.sqapItemType = "tag";
+    menu.innerHTML = `
+      <div class="stash-quick-actions-panel__menu-layout">
+        <div class="stash-quick-actions-panel__menu-main">
+          <div class="stash-quick-actions-panel__menu-toolbar">
+            <div class="stash-quick-actions-panel__menu-meta">Tag quick manage</div>
+          </div>
+          <div class="stash-quick-actions-panel__side-summary">${escapeHtml(tagName)}</div>
+          <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-tag-action="rename">Rename tag</button>
+          <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-tag-action="image">Set tag image</button>
+          <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-tag-action="reparent">Reparent tag</button>
+          <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-tag-action="unparent">Unparent tag</button>
+          <button type="button" class="stash-quick-actions-panel__menu-item stash-quick-actions-panel__menu-item--quick ${isPinned ? "stash-quick-actions-panel__menu-item--danger" : ""}" data-sqap-pin-toggle data-sqap-tag-action="${isPinned ? "unpin" : "pin"}">${isPinned ? "Remove from Quick Access Tags" : "Pin to Quick Access Tags"}</button>
+          <details class="stash-quick-actions-panel__collapsible-section stash-quick-actions-panel__menu-section--tag-fields" open>
+            <summary class="stash-quick-actions-panel__menu-section-title">Custom fields</summary>
+            <div data-sqap-inline-tag-custom-fields>
+              <div class="stash-quick-actions-panel__quick-search-empty">Loading custom fields...</div>
+            </div>
+          </details>
+        </div>
+      </div>
+    `;
+
+    menu.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-sqap-tag-action]");
+      if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const action = button.getAttribute("data-sqap-tag-action") || "";
+      closeContextMenu();
+      if (action === "rename") openTagRenameEditor(tagId, tagName);
+      else if (action === "image") openTagImageEditor(tagId);
+      else if (action === "reparent") openTagParentEditor(tagId);
+      else if (action === "unparent") unparentTagFromContext(tagId);
+      else if (action === "pin") pinTagToQuickAccess(tagId, tagName);
+      else if (action === "unpin") unpinTagFromQuickAccessById(tagId, tagName);
+    });
+
+    document.body.appendChild(menu);
+    menu.tabIndex = -1;
+    positionFloatingElement(menu, x, y);
+    menu.focus({ preventScroll: true });
+    hydrateTagMenuLabel(menu, tagId);
+    hydrateInlineTagCustomFieldsPanel(menu, tagId, x, y);
+    return menu;
+  }
+
+  function openStudioContextMenuAt(x, y, studioContext) {
+    closeContextMenu();
+    closeModal();
+
+    const studioId = String(studioContext?.studioId || "").trim();
+    if (!studioId) return null;
+    const studioName = String(studioContext?.label || `Studio ${studioId}`).trim();
+    const isPinned = isStudioPinnedToQuickAccess(studioId, studioName);
+    const menu = document.createElement("div");
+    menu.id = MENU_ID;
+    menu.className = "stash-quick-actions-panel__menu stash-quick-actions-panel__menu--studio";
+    menu.setAttribute("role", "menu");
+    menu.dataset.sqapItemType = "studio";
+    menu.innerHTML = `
+      <div class="stash-quick-actions-panel__menu-layout">
+        <div class="stash-quick-actions-panel__menu-main">
+          <div class="stash-quick-actions-panel__menu-toolbar">
+            <div class="stash-quick-actions-panel__menu-meta">Studio quick manage</div>
+          </div>
+          <div class="stash-quick-actions-panel__side-summary">${escapeHtml(studioName)}</div>
+          <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-studio-action="rename">Rename studio</button>
+          <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-studio-action="url">Edit URL</button>
+          <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-studio-action="image">Set studio image</button>
+          <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-studio-action="reparent">Reparent studio</button>
+          <button type="button" class="stash-quick-actions-panel__menu-item" data-sqap-studio-action="unparent">Unparent studio</button>
+          <button type="button" class="stash-quick-actions-panel__menu-item stash-quick-actions-panel__menu-item--quick ${isPinned ? "stash-quick-actions-panel__menu-item--danger" : ""}" data-sqap-studio-pin-toggle data-sqap-studio-action="${isPinned ? "unpin" : "pin"}">${isPinned ? "Remove from Quick Access Studios" : "Pin to Quick Access Studios"}</button>
+          <details class="stash-quick-actions-panel__collapsible-section stash-quick-actions-panel__menu-section--studio-fields" open>
+            <summary class="stash-quick-actions-panel__menu-section-title">Custom fields</summary>
+            <div data-sqap-inline-studio-custom-fields>
+              <div class="stash-quick-actions-panel__quick-search-empty">Loading custom fields...</div>
+            </div>
+          </details>
+        </div>
+      </div>
+    `;
+
+    menu.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-sqap-studio-action]");
+      if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const action = button.getAttribute("data-sqap-studio-action") || "";
+      closeContextMenu();
+      if (action === "rename") openStudioRenameEditor(studioId, studioName);
+      else if (action === "url") openStudioUrlEditor(studioId);
+      else if (action === "image") openStudioImageEditor(studioId);
+      else if (action === "reparent") openStudioParentEditor(studioId);
+      else if (action === "unparent") unparentStudioFromContext(studioId);
+      else if (action === "pin") pinStudioToQuickAccess(studioId, studioName);
+      else if (action === "unpin") unpinStudioFromQuickAccessById(studioId, studioName);
+    });
+
+    document.body.appendChild(menu);
+    menu.tabIndex = -1;
+    positionFloatingElement(menu, x, y);
+    menu.focus({ preventScroll: true });
+    hydrateStudioMenuLabel(menu, studioId);
+    hydrateInlineStudioCustomFieldsPanel(menu, studioId, x, y);
     return menu;
   }
 
   function openContextMenu(event, itemType, imageIds) {
     return openContextMenuAt(event.clientX, event.clientY, itemType, imageIds);
+  }
+
+  function openTagContextMenu(event, tagContext) {
+    return openTagContextMenuAt(event.clientX, event.clientY, tagContext);
+  }
+
+  function openStudioContextMenu(event, studioContext) {
+    return openStudioContextMenuAt(event.clientX, event.clientY, studioContext);
   }
 
   async function hydrateTitleInput(menu, itemType, itemId) {
@@ -1713,7 +2172,11 @@
     const normalized = {
       id: String(studio.id || "").trim(),
       name: String(studio.name || "").trim(),
+      sort_name: String(studio.sort_name || studio.name || "").trim(),
       image_path: String(studio.image_path || "").trim(),
+      url: String(studio.url || "").trim(),
+      custom_fields: studio.custom_fields || {},
+      parent_studio: studio.parent_studio ? normalizeStudio(studio.parent_studio) : null,
     };
     return normalized.id && normalized.name ? normalized : null;
   }
@@ -1934,6 +2397,23 @@
       url: String(performer.image_path || ""),
       mediaType: "performer",
     };
+  }
+
+  async function fetchPerformerById(performerId) {
+    const data = await gql(
+      `
+        query StashQuickActionsPanelPerformerById($id: ID!) {
+          findPerformer(id: $id) {
+            id
+            name
+            image_path
+          }
+        }
+      `,
+      { id: performerId }
+    );
+
+    return normalizePinnedQuickAccessPerformer(data?.findPerformer);
   }
 
   async function fetchPerformerCustomFields(performerId) {
@@ -2307,6 +2787,287 @@
     return data?.performerUpdate || null;
   }
 
+  async function updateTagMetadata(tagId, patch) {
+    const data = await gql(
+      `
+        mutation StashQuickActionsPanelUpdateTag($input: TagUpdateInput!) {
+          tagUpdate(input: $input) {
+            id
+            name
+            sort_name
+            description
+            image_path
+            custom_fields
+            parents {
+              id
+              name
+              sort_name
+            }
+            children {
+              id
+            }
+          }
+        }
+      `,
+      { input: { id: String(tagId), ...patch } }
+    );
+
+    return data?.tagUpdate || null;
+  }
+
+  async function updateTagImage(tagId, imageValue) {
+    return updateTagMetadata(tagId, { image: String(imageValue || "") });
+  }
+
+  async function updateTagCustomFields(tagId, fields) {
+    return updateTagMetadata(tagId, { custom_fields: { full: fields || {} } });
+  }
+
+  async function updateTagParents(tagId, parentIds) {
+    return updateTagMetadata(tagId, {
+      parent_ids: Array.from(new Set((parentIds || []).map(String).filter(Boolean))),
+    });
+  }
+
+  async function fetchStudioById(studioId) {
+    const data = await gql(
+      `
+        query StashQuickActionsPanelStudioById($id: ID!) {
+          findStudio(id: $id) {
+            id
+            name
+            image_path
+            parent_studio {
+              id
+              name
+              image_path
+            }
+          }
+        }
+      `,
+      { id: String(studioId) }
+    );
+
+    return normalizeStudio(data?.findStudio);
+  }
+
+  async function updateStudioMetadata(studioId, patch) {
+    const data = await gql(
+      `
+        mutation StashQuickActionsPanelUpdateStudio($input: StudioUpdateInput!) {
+          studioUpdate(input: $input) {
+            id
+            name
+            image_path
+            parent_studio {
+              id
+              name
+              image_path
+            }
+          }
+        }
+      `,
+      { input: { id: String(studioId), ...patch } }
+    );
+
+    return normalizeStudio(data?.studioUpdate);
+  }
+
+  async function updateStudioImage(studioId, imageValue) {
+    return updateStudioMetadata(studioId, { image: String(imageValue || "") });
+  }
+
+  async function fetchStudioCustomFields(studioId) {
+    try {
+      const data = await gql(
+        `
+          query StashQuickActionsPanelStudioCustomFields($id: ID!) {
+            findStudio(id: $id) {
+              id
+              custom_fields
+            }
+          }
+        `,
+        { id: String(studioId) }
+      );
+      return { supported: true, fields: data?.findStudio?.custom_fields || {} };
+    } catch (err) {
+      const message = String(err?.message || "");
+      if (message.includes("custom_fields")) {
+        return { supported: false, fields: {} };
+      }
+      throw err;
+    }
+  }
+
+  async function updateStudioCustomFields(studioId, fields) {
+    return updateStudioMetadata(studioId, { custom_fields: { full: fields || {} } });
+  }
+
+  async function updateStudioParent(studioId, parentId) {
+    return updateStudioMetadata(studioId, { parent_id: String(parentId || "") || null });
+  }
+
+  function getFirstStudioUrl(studio) {
+    const direct = String(studio?.url || "").trim();
+    if (direct) return direct;
+    const urls = Array.isArray(studio?.urls) ? studio.urls : [];
+    const first = urls
+      .map((entry) => (typeof entry === "string" ? entry : entry?.url))
+      .map((entry) => String(entry || "").trim())
+      .find(Boolean);
+    return first || "";
+  }
+
+  function unwrapGraphqlType(type) {
+    let current = type || null;
+    while (current?.ofType) current = current.ofType;
+    return current || type || null;
+  }
+
+  function getGraphqlField(type, name) {
+    return (type?.fields || []).find((field) => field?.name === name) || null;
+  }
+
+  function getGraphqlInputField(type, name) {
+    return (type?.inputFields || []).find((field) => field?.name === name) || null;
+  }
+
+  function detectStudioUrlSchema(schema) {
+    const studioType = schema?.studioType || null;
+    const updateInput = schema?.updateInput || null;
+    const urlField = getGraphqlField(studioType, "url");
+    const urlsField = getGraphqlField(studioType, "urls");
+    const urlInput = getGraphqlInputField(updateInput, "url");
+    const urlsInput = getGraphqlInputField(updateInput, "urls");
+
+    if (urlField && urlInput) return STUDIO_URL_SCHEMA_URL;
+    if (!urlsField || !urlsInput) return STUDIO_URL_SCHEMA_NONE;
+
+    const urlsBase = unwrapGraphqlType(urlsField.type);
+    if (urlsBase?.kind === "OBJECT") return STUDIO_URL_SCHEMA_URLS_OBJECT;
+    return STUDIO_URL_SCHEMA_URLS_STRING;
+  }
+
+  async function getStudioUrlSchema() {
+    if (state.studioUrlSchemaPromise) return state.studioUrlSchemaPromise;
+    state.studioUrlSchemaPromise = gql(
+      `
+        query StashQuickActionsPanelStudioUrlSchema {
+          studioType: __type(name: "Studio") {
+            fields {
+              name
+              type {
+                kind
+                name
+                ofType {
+                  kind
+                  name
+                  ofType {
+                    kind
+                    name
+                    ofType {
+                      kind
+                      name
+                    }
+                  }
+                }
+              }
+            }
+          }
+          updateInput: __type(name: "StudioUpdateInput") {
+            inputFields {
+              name
+              type {
+                kind
+                name
+                ofType {
+                  kind
+                  name
+                  ofType {
+                    kind
+                    name
+                    ofType {
+                      kind
+                      name
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `
+    )
+      .then((schema) => detectStudioUrlSchema(schema))
+      .catch((err) => {
+        console.warn("[StashQuickActionsPanel] studio URL schema lookup failed", err);
+        return STUDIO_URL_SCHEMA_NONE;
+      });
+    return state.studioUrlSchemaPromise;
+  }
+
+  function getStudioUrlQueryForSchema(schema) {
+    if (schema === STUDIO_URL_SCHEMA_URL) {
+      return `
+        query StashQuickActionsPanelStudioUrl($id: ID!) {
+          findStudio(id: $id) {
+            id
+            url
+          }
+        }
+      `;
+    }
+    if (schema === STUDIO_URL_SCHEMA_URLS_OBJECT) {
+      return `
+        query StashQuickActionsPanelStudioUrls($id: ID!) {
+          findStudio(id: $id) {
+            id
+            urls {
+              url
+            }
+          }
+        }
+      `;
+    }
+    if (schema === STUDIO_URL_SCHEMA_URLS_STRING) {
+      return `
+        query StashQuickActionsPanelStudioUrlStrings($id: ID!) {
+          findStudio(id: $id) {
+            id
+            urls
+          }
+        }
+      `;
+    }
+    return "";
+  }
+
+  async function fetchStudioUrl(studioId) {
+    const schema = await getStudioUrlSchema();
+    const query = getStudioUrlQueryForSchema(schema);
+    if (!query) return "";
+    const data = await gql(query, { id: String(studioId) });
+    return getFirstStudioUrl(data?.findStudio);
+  }
+
+  async function updateStudioUrl(studioId, urlValue) {
+    const value = String(urlValue || "").trim();
+    const schema = await getStudioUrlSchema();
+    if (schema === STUDIO_URL_SCHEMA_URL) {
+      return updateStudioMetadata(studioId, { url: value });
+    }
+    if (schema === STUDIO_URL_SCHEMA_URLS_OBJECT) {
+      return updateStudioMetadata(studioId, {
+        urls: { values: value ? [value] : [], mode: "SET" },
+      });
+    }
+    if (schema === STUDIO_URL_SCHEMA_URLS_STRING) {
+      return updateStudioMetadata(studioId, { urls: value ? [value] : [] });
+    }
+    throw new Error("Studio URL editing is not exposed by this Stash GraphQL schema.");
+  }
+
   async function updatePerformerMetadata(performerId, patch) {
     const data = await gql(
       `
@@ -2502,6 +3263,42 @@
     );
 
     return state.allTags;
+  }
+
+  function normalizeTagRecord(tag) {
+    if (!tag?.id) return null;
+    return {
+      ...tag,
+      id: String(tag.id),
+      name: String(tag.name || ""),
+      sort_name: String(tag.sort_name || tag.name || ""),
+      description: String(tag.description || ""),
+      image_path: String(tag.image_path || ""),
+      custom_fields: tag.custom_fields || {},
+      children: tag.children || [],
+      parents: tag.parents || [],
+    };
+  }
+
+  function upsertTagCache(tag) {
+    const normalized = normalizeTagRecord(tag);
+    if (!normalized) return null;
+    state.tagMap.set(normalized.id, normalized);
+    if (Array.isArray(state.allTags)) {
+      const index = state.allTags.findIndex((item) => String(item.id) === normalized.id);
+      if (index >= 0) state.allTags[index] = normalized;
+      else state.allTags.push(normalized);
+      sortItemsBySortNameThenName(state.allTags);
+    }
+    state.searchIndex = null;
+    return normalized;
+  }
+
+  async function getTagById(tagId) {
+    const id = String(tagId || "").trim();
+    if (!id) return null;
+    await fetchAllTags();
+    return state.tagMap.get(id) || null;
   }
 
   function normalizeSearchText(value) {
@@ -5245,8 +6042,963 @@
   }
 
   function setPerformerImageSaveEnabled(panel, enabled) {
-    const save = panel.querySelector("[data-sqap-save-performer-image]");
-    if (save instanceof HTMLButtonElement) save.disabled = !enabled;
+    panel
+      .querySelectorAll("[data-sqap-save-performer-image], [data-sqap-save-tag-image], [data-sqap-save-studio-image]")
+      .forEach((save) => {
+        if (save instanceof HTMLButtonElement) save.disabled = !enabled;
+      });
+  }
+
+  async function hydrateTagMenuLabel(menu, tagId) {
+    try {
+      const tag = await getTagById(tagId);
+      if (!tag || !document.body.contains(menu)) return;
+      const summary = menu.querySelector(".stash-quick-actions-panel__side-summary");
+      if (summary) summary.textContent = tag.name;
+      updateTagPinButton(menu, tag);
+    } catch (err) {
+      console.warn("[StashQuickActionsPanel] tag menu hydrate failed", err);
+    }
+  }
+
+  function updateTagPinButton(menu, tag) {
+    const button = menu.querySelector("[data-sqap-pin-toggle]");
+    if (!(button instanceof HTMLButtonElement)) return;
+    const pinned = isTagPinnedToQuickAccess(tag?.id, tag?.name);
+    button.setAttribute("data-sqap-tag-action", pinned ? "unpin" : "pin");
+    button.textContent = pinned ? "Remove from Quick Access Tags" : "Pin to Quick Access Tags";
+    button.classList.toggle("stash-quick-actions-panel__menu-item--danger", pinned);
+  }
+
+  function setTagCacheFromUpdate(tag) {
+    const normalized = upsertTagCache(tag);
+    if (normalized) {
+      state.allTags = null;
+      state.tagMap = new Map();
+      state.searchIndex = null;
+    }
+    return normalized;
+  }
+
+  function getPinnedQuickAccessTags() {
+    return loadPinnedQuickAccessTags();
+  }
+
+  async function pinTagToQuickAccess(tagId, fallbackName) {
+    try {
+      const tag = await getTagById(tagId);
+      const name = String(tag?.name || fallbackName || "").trim();
+      if (!name) throw new Error("Could not resolve tag name.");
+      const records = getPinnedQuickAccessTags().filter((record) => {
+        if (tag?.id && record.id === String(tag.id)) return false;
+        return normalizeSearchText(record.name) !== normalizeSearchText(name);
+      });
+      records.push({
+        id: String(tag?.id || tagId || ""),
+        name,
+        sort_name: String(tag?.sort_name || name),
+        image_path: String(tag?.image_path || ""),
+      });
+      savePinnedQuickAccessTagRecords(records);
+      showQuickAccessToast("Pinned tag to Quick Access Tags.");
+    } catch (err) {
+      console.error("[StashQuickActionsPanel] pin tag failed", err);
+      showQuickAccessToast(err.message || "Could not pin tag.", true);
+    }
+  }
+
+  async function unpinTagFromQuickAccessById(tagId, fallbackName) {
+    try {
+      const tag = await getTagById(tagId);
+      const id = String(tag?.id || tagId || "").trim();
+      const name = normalizeSearchText(tag?.name || fallbackName);
+      const tags = getPinnedQuickAccessTags().filter((item) => {
+        if (id && item.id === id) return false;
+        return !name || normalizeSearchText(item.name) !== name;
+      });
+      savePinnedQuickAccessTagRecords(tags);
+      showQuickAccessToast("Removed tag from Quick Access Tags.");
+    } catch (err) {
+      console.error("[StashQuickActionsPanel] unpin tag failed", err);
+      showQuickAccessToast(err.message || "Could not unpin tag.", true);
+    }
+  }
+
+  async function openTagRenameEditor(tagId, fallbackName) {
+    const tag = await getTagById(tagId);
+    const originalName = String(tag?.name || fallbackName || "").trim();
+    const modal = createModalShell("Rename tag", originalName || `Tag ${tagId}`);
+    state.currentItemType = "tag";
+    state.currentImageId = String(tagId);
+    state.currentImageIds = [String(tagId)];
+    state.currentMode = "tag-rename";
+    const body = modal.querySelector(".stash-quick-actions-panel__dialog-body");
+    body.innerHTML = `
+      <section class="stash-quick-actions-panel__custom-field-panel">
+        <label class="stash-quick-actions-panel__metadata-row stash-quick-actions-panel__metadata-row--title">
+          <span>Name</span>
+          <input type="text" value="${escapeHtml(originalName)}" data-sqap-tag-name autocomplete="off" spellcheck="false">
+          <button type="button" class="stash-quick-actions-panel__metadata-save" data-sqap-save-tag-name>Save</button>
+        </label>
+        <div class="stash-quick-actions-panel__custom-field-status"></div>
+      </section>
+    `;
+    body.addEventListener("click", async (event) => {
+      const save = event.target.closest("[data-sqap-save-tag-name]");
+      if (!save || state.isSaving) return;
+      event.preventDefault();
+      const input = body.querySelector("[data-sqap-tag-name]");
+      const nextName = input instanceof HTMLInputElement ? input.value.trim() : "";
+      const status = body.querySelector(".stash-quick-actions-panel__custom-field-status");
+      if (!nextName) {
+        if (status) {
+          status.textContent = "Name is required.";
+          status.classList.add("is-error");
+        }
+        return;
+      }
+      state.isSaving = true;
+      document.body.classList.add("stash-quick-actions-panel--saving");
+      try {
+        const updated = await updateTagMetadata(tagId, { name: nextName });
+        setTagCacheFromUpdate(updated);
+        const quickTags = getPinnedQuickAccessTags();
+        const oldKey = normalizeSearchText(originalName);
+        if (quickTags.some((record) => record.id === String(tagId) || normalizeSearchText(record.name) === oldKey)) {
+          savePinnedQuickAccessTagRecords(
+            quickTags.map((record) =>
+              record.id === String(tagId) || normalizeSearchText(record.name) === oldKey
+                ? { ...record, id: String(tagId), name: nextName, sort_name: nextName }
+                : record
+            )
+          );
+        }
+        showQuickAccessToast("Renamed tag.");
+        closeModal();
+      } catch (err) {
+        console.error("[StashQuickActionsPanel] tag rename failed", err);
+        if (status) {
+          status.textContent = err.message || "Could not rename tag.";
+          status.classList.add("is-error");
+        }
+      } finally {
+        state.isSaving = false;
+        document.body.classList.remove("stash-quick-actions-panel--saving");
+      }
+    });
+    body.querySelector("[data-sqap-tag-name]")?.focus();
+  }
+
+  async function saveTagImageFromPanel(panel) {
+    const tagId = state.currentImageIds[0];
+    if (!tagId || state.isSaving) return;
+    const imageValue = String(panel.__sqapTagImageValue || "").trim();
+    if (!imageValue) {
+      setPerformerImageStatus(panel, "Choose an image file or paste an image URL first.", true);
+      return;
+    }
+
+    state.isSaving = true;
+    document.body.classList.add("stash-quick-actions-panel--saving");
+    setPerformerImageSaveEnabled(panel, false);
+    setPerformerImageStatus(panel, "Saving image...");
+    try {
+      const tag = await updateTagImage(tagId, imageValue);
+      setTagCacheFromUpdate(tag);
+      setPerformerImagePreview(panel, cacheBustUrl(String(tag?.image_path || imageValue || "")));
+      setPerformerImageStatus(panel, "Saved tag image.");
+      showQuickAccessToast("Updated tag image.");
+    } catch (err) {
+      console.error("[StashQuickActionsPanel] tag image update failed", err);
+      setPerformerImageStatus(panel, err.message || "Could not update tag image.", true);
+    } finally {
+      state.isSaving = false;
+      document.body.classList.remove("stash-quick-actions-panel--saving");
+      setPerformerImageSaveEnabled(panel, !!String(panel.__sqapTagImageValue || "").trim());
+    }
+  }
+
+  async function openTagImageEditor(tagId) {
+    const id = String(tagId || "").trim();
+    if (!id) return;
+    const tag = await getTagById(id);
+    const modal = createModalShell("Set tag image", tag?.name || `Tag ${id}`);
+    state.currentItemType = "tag";
+    state.currentImageId = id;
+    state.currentImageIds = [id];
+    state.currentMode = "tag-image";
+    const body = modal.querySelector(".stash-quick-actions-panel__dialog-body");
+    const panel = document.createElement("section");
+    panel.className = "stash-quick-actions-panel__performer-image-panel";
+    panel.__sqapTagImageValue = "";
+    panel.innerHTML = `
+      <div class="stash-quick-actions-panel__performer-image-preview">
+        <img ${tag?.image_path ? `src="${escapeHtml(tag.image_path)}"` : "hidden"} alt="${escapeHtml(tag?.name || `Tag ${id}`)}">
+        <div class="stash-quick-actions-panel__performer-image-empty" ${tag?.image_path ? "hidden" : ""}>No image</div>
+      </div>
+      <div class="stash-quick-actions-panel__performer-image-controls">
+        <label>
+          <span>Image file</span>
+          <input type="file" accept="image/*" data-sqap-tag-image-file>
+        </label>
+        <label>
+          <span>Image URL</span>
+          <input type="url" placeholder="https://..." autocomplete="off" spellcheck="false" data-sqap-tag-image-url>
+        </label>
+        <div class="stash-quick-actions-panel__performer-image-actions">
+          <button type="button" data-sqap-save-tag-image disabled>Save image</button>
+        </div>
+        <div class="stash-quick-actions-panel__performer-image-status"></div>
+      </div>
+    `;
+    panel.addEventListener("change", async (event) => {
+      const input = event.target.closest("[data-sqap-tag-image-file]");
+      if (!(input instanceof HTMLInputElement)) return;
+      const file = input.files?.[0] || null;
+      if (!file) return;
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        panel.__sqapTagImageValue = dataUrl;
+        const urlInput = panel.querySelector("[data-sqap-tag-image-url]");
+        if (urlInput instanceof HTMLInputElement) urlInput.value = "";
+        setPerformerImagePreview(panel, dataUrl);
+        setPerformerImageStatus(panel, `Selected ${file.name}.`);
+        setPerformerImageSaveEnabled(panel, true);
+      } catch (err) {
+        setPerformerImageStatus(panel, err.message || "Could not read image file.", true);
+      }
+    });
+    panel.addEventListener("input", (event) => {
+      const input = event.target.closest("[data-sqap-tag-image-url]");
+      if (!(input instanceof HTMLInputElement)) return;
+      const value = input.value.trim();
+      panel.__sqapTagImageValue = value;
+      setPerformerImageSaveEnabled(panel, !!value);
+      if (value) {
+        setPerformerImagePreview(panel, value);
+        setPerformerImageStatus(panel, "URL ready.");
+      } else {
+        setPerformerImageStatus(panel, "");
+      }
+    });
+    panel.addEventListener("click", (event) => {
+      const save = event.target.closest("[data-sqap-save-tag-image]");
+      if (!save) return;
+      event.preventDefault();
+      saveTagImageFromPanel(panel);
+    });
+    body.innerHTML = "";
+    body.appendChild(panel);
+    panel.querySelector("[data-sqap-tag-image-file]")?.focus();
+  }
+
+  async function hydrateInlineTagCustomFieldsPanel(menu, tagId, x, y) {
+    const id = String(tagId || "").trim();
+    const panel = menu.querySelector("[data-sqap-inline-tag-custom-fields]");
+    if (!id || !panel) return;
+
+    state.currentItemType = "tag";
+    state.currentImageId = id;
+    state.currentImageIds = [id];
+    state.currentMode = "tag-custom-fields-inline";
+
+    try {
+      const tag = await getTagById(id);
+      if (!document.body.contains(menu)) return;
+      panel.innerHTML = `
+        <div class="stash-quick-actions-panel__custom-field-list stash-quick-actions-panel__custom-field-list--inline"></div>
+        <div class="stash-quick-actions-panel__custom-field-actions stash-quick-actions-panel__custom-field-actions--inline">
+          <button type="button" data-sqap-add-custom-field>Add</button>
+          <button type="button" data-sqap-save-tag-custom-fields>Save</button>
+        </div>
+        <div class="stash-quick-actions-panel__custom-field-status"></div>
+      `;
+      renderCustomFieldRows(panel, tag?.custom_fields || {}, { includePresets: true });
+      attachTagCustomFieldPanelEvents(panel);
+      positionFloatingElement(menu, x, y);
+    } catch (err) {
+      console.error("[StashQuickActionsPanel] inline tag custom field load failed", err);
+      if (!document.body.contains(menu)) return;
+      panel.innerHTML = '<div class="stash-quick-actions-panel__quick-search-empty">Could not load custom fields.</div>';
+      positionFloatingElement(menu, x, y);
+    }
+  }
+
+  function attachTagCustomFieldPanelEvents(panel) {
+    panel.addEventListener("click", async (event) => {
+      const remove = event.target.closest("[data-sqap-remove-custom-field]");
+      if (remove) {
+        event.preventDefault();
+        remove.closest("[data-sqap-custom-field-row]")?.remove();
+        return;
+      }
+      const add = event.target.closest("[data-sqap-add-custom-field]");
+      if (add) {
+        event.preventDefault();
+        const list = panel.querySelector(".stash-quick-actions-panel__custom-field-list");
+        if (!list) return;
+        list.querySelector(".stash-quick-actions-panel__empty")?.remove();
+        const row = document.createElement("div");
+        row.className = "stash-quick-actions-panel__custom-field-row";
+        row.setAttribute("data-sqap-custom-field-row", "1");
+        row.innerHTML = `
+          <input type="text" data-sqap-custom-field-key aria-label="Custom field name" placeholder="Field">
+          <input type="text" data-sqap-custom-field-value aria-label="Custom field value" placeholder="Value">
+          <button type="button" data-sqap-remove-custom-field aria-label="Clear custom field">x</button>
+        `;
+        list.appendChild(row);
+        row.querySelector("[data-sqap-custom-field-key]")?.focus();
+        return;
+      }
+      const save = event.target.closest("[data-sqap-save-tag-custom-fields]");
+      if (!save || state.isSaving) return;
+      event.preventDefault();
+      state.isSaving = true;
+      document.body.classList.add("stash-quick-actions-panel--saving");
+      setCustomFieldStatus(panel, "Saving...");
+      try {
+        const updated = await updateTagCustomFields(state.currentImageIds[0], getCustomFieldsPatchFromPanel(panel));
+        setTagCacheFromUpdate(updated);
+        setCustomFieldStatus(panel, "Saved custom fields.");
+        showQuickAccessToast("Updated tag custom fields.");
+      } catch (err) {
+        console.error("[StashQuickActionsPanel] tag custom field save failed", err);
+        setCustomFieldStatus(panel, err.message || "Could not save custom fields.", true);
+      } finally {
+        state.isSaving = false;
+        document.body.classList.remove("stash-quick-actions-panel--saving");
+      }
+    });
+  }
+
+  async function openTagParentEditor(tagId) {
+    const id = String(tagId || "").trim();
+    if (!id) return;
+    const tag = await getTagById(id);
+    const modal = createModalShell("Reparent tag", tag?.name || `Tag ${id}`);
+    state.currentItemType = "tag";
+    state.currentImageId = id;
+    state.currentImageIds = [id];
+    state.currentMode = "tag-parent";
+    const body = modal.querySelector(".stash-quick-actions-panel__dialog-body");
+    const candidates = (await fetchAllTags())
+      .map(normalizeTagRecord)
+      .filter((candidate) => candidate && candidate.id !== id);
+    body.innerHTML = `
+      <section class="stash-quick-actions-panel__performer-panel">
+        <div class="stash-quick-actions-panel__selected-performers">Current parent: ${escapeHtml((tag?.parents || []).map((parent) => parent.name).join(", ") || "None")}</div>
+        <input type="search" class="stash-quick-actions-panel__performer-search" placeholder="Search parent tags" autocomplete="off" spellcheck="false" data-sqap-parent-tag-search>
+        <div class="stash-quick-actions-panel__performer-results" data-sqap-parent-tag-results></div>
+        <div class="stash-quick-actions-panel__custom-field-status"></div>
+      </section>
+    `;
+    const renderResults = () => {
+      const query = normalizeSearchText(body.querySelector("[data-sqap-parent-tag-search]")?.value || "");
+      const results = candidates
+        .filter((candidate) => {
+          if (!query) return true;
+          return normalizeSearchText(candidate.name).includes(query) || normalizeSearchText(candidate.sort_name).includes(query);
+        })
+        .slice(0, 80);
+      const target = body.querySelector("[data-sqap-parent-tag-results]");
+      if (!target) return;
+      target.innerHTML = results.length
+        ? results
+            .map(
+              (candidate) => `
+                <button type="button" class="stash-quick-actions-panel__performer-result" data-sqap-select-parent-tag="${escapeHtml(candidate.id)}">
+                  <span class="stash-quick-actions-panel__performer-name">${escapeHtml(candidate.name)}</span>
+                </button>
+              `
+            )
+            .join("")
+        : '<div class="stash-quick-actions-panel__empty">No tags found.</div>';
+    };
+    body.addEventListener("input", (event) => {
+      if (event.target.closest("[data-sqap-parent-tag-search]")) renderResults();
+    });
+    body.addEventListener("click", async (event) => {
+      const row = event.target.closest("[data-sqap-select-parent-tag]");
+      if (!row || state.isSaving) return;
+      event.preventDefault();
+      const parentId = row.getAttribute("data-sqap-select-parent-tag") || "";
+      const status = body.querySelector(".stash-quick-actions-panel__custom-field-status");
+      state.isSaving = true;
+      document.body.classList.add("stash-quick-actions-panel--saving");
+      try {
+        const updated = await updateTagParents(id, [parentId]);
+        setTagCacheFromUpdate(updated);
+        showQuickAccessToast("Updated tag parent.");
+        closeModal();
+      } catch (err) {
+        console.error("[StashQuickActionsPanel] tag reparent failed", err);
+        if (status) {
+          status.textContent = err.message || "Could not reparent tag.";
+          status.classList.add("is-error");
+        }
+      } finally {
+        state.isSaving = false;
+        document.body.classList.remove("stash-quick-actions-panel--saving");
+      }
+    });
+    renderResults();
+    body.querySelector("[data-sqap-parent-tag-search]")?.focus();
+  }
+
+  async function unparentTagFromContext(tagId) {
+    if (!window.confirm("Remove all parents from this tag?")) return;
+    try {
+      const updated = await updateTagParents(tagId, []);
+      setTagCacheFromUpdate(updated);
+      showQuickAccessToast("Tag is now unparented.");
+    } catch (err) {
+      console.error("[StashQuickActionsPanel] tag unparent failed", err);
+      showQuickAccessToast(err.message || "Could not unparent tag.", true);
+    }
+  }
+
+  async function hydrateStudioMenuLabel(menu, studioId) {
+    try {
+      const studio = await fetchStudioById(studioId);
+      if (!studio || !document.body.contains(menu)) return;
+      const summary = menu.querySelector(".stash-quick-actions-panel__side-summary");
+      if (summary) summary.textContent = studio.name;
+      updateStudioPinButton(menu, studio);
+    } catch (err) {
+      console.warn("[StashQuickActionsPanel] studio menu hydrate failed", err);
+    }
+  }
+
+  function updateStudioPinButton(menu, studio) {
+    const button = menu.querySelector("[data-sqap-studio-pin-toggle]");
+    if (!(button instanceof HTMLButtonElement)) return;
+    const pinned = isStudioPinnedToQuickAccess(studio?.id, studio?.name);
+    button.setAttribute("data-sqap-studio-action", pinned ? "unpin" : "pin");
+    button.textContent = pinned ? "Remove from Quick Access Studios" : "Pin to Quick Access Studios";
+    button.classList.toggle("stash-quick-actions-panel__menu-item--danger", pinned);
+  }
+
+  function getPinnedQuickAccessStudios() {
+    return loadPinnedQuickAccessStudios();
+  }
+
+  async function pinStudioToQuickAccess(studioId, fallbackName) {
+    try {
+      const studio = await fetchStudioById(studioId);
+      const name = String(studio?.name || fallbackName || "").trim();
+      if (!name) throw new Error("Could not resolve studio name.");
+      const records = getPinnedQuickAccessStudios().filter((record) => {
+        if (studio?.id && record.id === String(studio.id)) return false;
+        return normalizeSearchText(record.name) !== normalizeSearchText(name);
+      });
+      records.push({
+        id: String(studio?.id || studioId || ""),
+        name,
+        sort_name: String(studio?.sort_name || name),
+        image_path: String(studio?.image_path || ""),
+        url: String(studio?.url || ""),
+      });
+      savePinnedQuickAccessStudioRecords(records);
+      showQuickAccessToast("Pinned studio to Quick Access Studios.");
+    } catch (err) {
+      console.error("[StashQuickActionsPanel] pin studio failed", err);
+      showQuickAccessToast(err.message || "Could not pin studio.", true);
+    }
+  }
+
+  async function unpinStudioFromQuickAccessById(studioId, fallbackName) {
+    try {
+      const studio = await fetchStudioById(studioId);
+      const id = String(studio?.id || studioId || "").trim();
+      const name = normalizeSearchText(studio?.name || fallbackName);
+      const studios = getPinnedQuickAccessStudios().filter((item) => {
+        if (id && item.id === id) return false;
+        return !name || normalizeSearchText(item.name) !== name;
+      });
+      savePinnedQuickAccessStudioRecords(studios);
+      showQuickAccessToast("Removed studio from Quick Access Studios.");
+    } catch (err) {
+      console.error("[StashQuickActionsPanel] unpin studio failed", err);
+      showQuickAccessToast(err.message || "Could not unpin studio.", true);
+    }
+  }
+
+  function updatePinnedStudioRecord(studio, previousName = "") {
+    const normalized = normalizeStudio(studio);
+    if (!normalized) return;
+    const oldName = normalizeSearchText(previousName);
+    const studios = getPinnedQuickAccessStudios();
+    if (!studios.some((record) => record.id === normalized.id || (oldName && normalizeSearchText(record.name) === oldName))) return;
+    savePinnedQuickAccessStudioRecords(
+      studios.map((record) =>
+        record.id === normalized.id || (oldName && normalizeSearchText(record.name) === oldName)
+          ? {
+              ...record,
+              id: normalized.id,
+              name: normalized.name,
+              sort_name: normalized.sort_name || normalized.name,
+              image_path: normalized.image_path || "",
+              url: normalized.url || "",
+            }
+          : record
+      )
+    );
+  }
+
+  async function openStudioRenameEditor(studioId, fallbackName) {
+    const studio = await fetchStudioById(studioId);
+    const originalName = String(studio?.name || fallbackName || "").trim();
+    const modal = createModalShell("Rename studio", originalName || `Studio ${studioId}`);
+    state.currentItemType = "studio";
+    state.currentImageId = String(studioId);
+    state.currentImageIds = [String(studioId)];
+    state.currentMode = "studio-rename";
+    const body = modal.querySelector(".stash-quick-actions-panel__dialog-body");
+    body.innerHTML = `
+      <section class="stash-quick-actions-panel__custom-field-panel">
+        <label class="stash-quick-actions-panel__metadata-row stash-quick-actions-panel__metadata-row--title">
+          <span>Name</span>
+          <input type="text" value="${escapeHtml(originalName)}" data-sqap-studio-name autocomplete="off" spellcheck="false">
+          <button type="button" class="stash-quick-actions-panel__metadata-save" data-sqap-save-studio-name>Save</button>
+        </label>
+        <div class="stash-quick-actions-panel__custom-field-status"></div>
+      </section>
+    `;
+    body.addEventListener("click", async (event) => {
+      const save = event.target.closest("[data-sqap-save-studio-name]");
+      if (!save || state.isSaving) return;
+      event.preventDefault();
+      const input = body.querySelector("[data-sqap-studio-name]");
+      const nextName = input instanceof HTMLInputElement ? input.value.trim() : "";
+      const status = body.querySelector(".stash-quick-actions-panel__custom-field-status");
+      if (!nextName) {
+        if (status) {
+          status.textContent = "Name is required.";
+          status.classList.add("is-error");
+        }
+        return;
+      }
+      state.isSaving = true;
+      document.body.classList.add("stash-quick-actions-panel--saving");
+      try {
+        const updated = await updateStudioMetadata(studioId, { name: nextName });
+        updatePinnedStudioRecord(updated, originalName);
+        showQuickAccessToast("Renamed studio.");
+        closeModal();
+      } catch (err) {
+        console.error("[StashQuickActionsPanel] studio rename failed", err);
+        if (status) {
+          status.textContent = err.message || "Could not rename studio.";
+          status.classList.add("is-error");
+        }
+      } finally {
+        state.isSaving = false;
+        document.body.classList.remove("stash-quick-actions-panel--saving");
+      }
+    });
+    body.querySelector("[data-sqap-studio-name]")?.focus();
+  }
+
+  async function openStudioUrlEditor(studioId) {
+    const studio = await fetchStudioById(studioId);
+    const studioUrl = await fetchStudioUrl(studioId).catch((err) => {
+      console.warn("[StashQuickActionsPanel] studio URL lookup failed", err);
+      return "";
+    });
+    const modal = createModalShell("Edit studio URL", studio?.name || `Studio ${studioId}`);
+    state.currentItemType = "studio";
+    state.currentImageId = String(studioId);
+    state.currentImageIds = [String(studioId)];
+    state.currentMode = "studio-url";
+    const body = modal.querySelector(".stash-quick-actions-panel__dialog-body");
+    body.innerHTML = `
+      <section class="stash-quick-actions-panel__custom-field-panel">
+        <label class="stash-quick-actions-panel__metadata-row stash-quick-actions-panel__metadata-row--title">
+          <span>URL</span>
+          <input type="url" value="${escapeHtml(studioUrl)}" data-sqap-studio-url autocomplete="off" spellcheck="false" placeholder="https://...">
+          <button type="button" class="stash-quick-actions-panel__metadata-save" data-sqap-save-studio-url>Save</button>
+        </label>
+        <div class="stash-quick-actions-panel__custom-field-status"></div>
+      </section>
+    `;
+    body.addEventListener("click", async (event) => {
+      const save = event.target.closest("[data-sqap-save-studio-url]");
+      if (!save || state.isSaving) return;
+      event.preventDefault();
+      const input = body.querySelector("[data-sqap-studio-url]");
+      const nextUrl = input instanceof HTMLInputElement ? input.value.trim() : "";
+      const status = body.querySelector(".stash-quick-actions-panel__custom-field-status");
+      state.isSaving = true;
+      document.body.classList.add("stash-quick-actions-panel--saving");
+      try {
+        const updated = await updateStudioUrl(studioId, nextUrl);
+        updatePinnedStudioRecord(updated, studio?.name || "");
+        showQuickAccessToast("Updated studio URL.");
+        closeModal();
+      } catch (err) {
+        console.error("[StashQuickActionsPanel] studio URL update failed", err);
+        if (status) {
+          status.textContent = err.message || "Could not update studio URL.";
+          status.classList.add("is-error");
+        }
+      } finally {
+        state.isSaving = false;
+        document.body.classList.remove("stash-quick-actions-panel--saving");
+      }
+    });
+    body.querySelector("[data-sqap-studio-url]")?.focus();
+  }
+
+  async function saveStudioImageFromPanel(panel) {
+    const studioId = state.currentImageIds[0];
+    if (!studioId || state.isSaving) return;
+    const imageValue = String(panel.__sqapStudioImageValue || "").trim();
+    if (!imageValue) {
+      setPerformerImageStatus(panel, "Choose an image file or paste an image URL first.", true);
+      return;
+    }
+
+    state.isSaving = true;
+    document.body.classList.add("stash-quick-actions-panel--saving");
+    setPerformerImageSaveEnabled(panel, false);
+    setPerformerImageStatus(panel, "Saving image...");
+    try {
+      const studio = await updateStudioImage(studioId, imageValue);
+      updatePinnedStudioRecord(studio);
+      setPerformerImagePreview(panel, cacheBustUrl(String(studio?.image_path || imageValue || "")));
+      setPerformerImageStatus(panel, "Saved studio image.");
+      showQuickAccessToast("Updated studio image.");
+    } catch (err) {
+      console.error("[StashQuickActionsPanel] studio image update failed", err);
+      setPerformerImageStatus(panel, err.message || "Could not update studio image.", true);
+    } finally {
+      state.isSaving = false;
+      document.body.classList.remove("stash-quick-actions-panel--saving");
+      setPerformerImageSaveEnabled(panel, !!String(panel.__sqapStudioImageValue || "").trim());
+    }
+  }
+
+  async function openStudioImageEditor(studioId) {
+    const id = String(studioId || "").trim();
+    if (!id) return;
+    const studio = await fetchStudioById(id);
+    const modal = createModalShell("Set studio image", studio?.name || `Studio ${id}`);
+    state.currentItemType = "studio";
+    state.currentImageId = id;
+    state.currentImageIds = [id];
+    state.currentMode = "studio-image";
+    const body = modal.querySelector(".stash-quick-actions-panel__dialog-body");
+    const panel = document.createElement("section");
+    panel.className = "stash-quick-actions-panel__performer-image-panel";
+    panel.__sqapStudioImageValue = "";
+    panel.innerHTML = `
+      <div class="stash-quick-actions-panel__performer-image-preview">
+        <img ${studio?.image_path ? `src="${escapeHtml(studio.image_path)}"` : "hidden"} alt="${escapeHtml(studio?.name || `Studio ${id}`)}">
+        <div class="stash-quick-actions-panel__performer-image-empty" ${studio?.image_path ? "hidden" : ""}>No image</div>
+      </div>
+      <div class="stash-quick-actions-panel__performer-image-controls">
+        <label>
+          <span>Image file</span>
+          <input type="file" accept="image/*" data-sqap-studio-image-file>
+        </label>
+        <label>
+          <span>Image URL</span>
+          <input type="url" placeholder="https://..." autocomplete="off" spellcheck="false" data-sqap-studio-image-url>
+        </label>
+        <div class="stash-quick-actions-panel__performer-image-actions">
+          <button type="button" data-sqap-save-studio-image disabled>Save image</button>
+        </div>
+        <div class="stash-quick-actions-panel__performer-image-status"></div>
+      </div>
+    `;
+    panel.addEventListener("change", async (event) => {
+      const input = event.target.closest("[data-sqap-studio-image-file]");
+      if (!(input instanceof HTMLInputElement)) return;
+      const file = input.files?.[0] || null;
+      if (!file) return;
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        panel.__sqapStudioImageValue = dataUrl;
+        const urlInput = panel.querySelector("[data-sqap-studio-image-url]");
+        if (urlInput instanceof HTMLInputElement) urlInput.value = "";
+        setPerformerImagePreview(panel, dataUrl);
+        setPerformerImageStatus(panel, `Selected ${file.name}.`);
+        setPerformerImageSaveEnabled(panel, true);
+      } catch (err) {
+        setPerformerImageStatus(panel, err.message || "Could not read image file.", true);
+      }
+    });
+    panel.addEventListener("input", (event) => {
+      const input = event.target.closest("[data-sqap-studio-image-url]");
+      if (!(input instanceof HTMLInputElement)) return;
+      const value = input.value.trim();
+      panel.__sqapStudioImageValue = value;
+      setPerformerImageSaveEnabled(panel, !!value);
+      if (value) {
+        setPerformerImagePreview(panel, value);
+        setPerformerImageStatus(panel, "URL ready.");
+      } else {
+        setPerformerImageStatus(panel, "");
+      }
+    });
+    panel.addEventListener("click", (event) => {
+      const save = event.target.closest("[data-sqap-save-studio-image]");
+      if (!save) return;
+      event.preventDefault();
+      saveStudioImageFromPanel(panel);
+    });
+    body.innerHTML = "";
+    body.appendChild(panel);
+    panel.querySelector("[data-sqap-studio-image-file]")?.focus();
+  }
+
+  async function hydrateInlineStudioCustomFieldsPanel(menu, studioId, x, y) {
+    const id = String(studioId || "").trim();
+    const panel = menu.querySelector("[data-sqap-inline-studio-custom-fields]");
+    if (!id || !panel) return;
+
+    state.currentItemType = "studio";
+    state.currentImageId = id;
+    state.currentImageIds = [id];
+    state.currentMode = "studio-custom-fields-inline";
+
+    try {
+      const customFieldData = await fetchStudioCustomFields(id);
+      if (!document.body.contains(menu)) return;
+      if (!customFieldData.supported) {
+        panel.innerHTML = '<div class="stash-quick-actions-panel__quick-search-empty">Studio custom fields are not exposed by this Stash build.</div>';
+        positionFloatingElement(menu, x, y);
+        return;
+      }
+      panel.innerHTML = `
+        <div class="stash-quick-actions-panel__custom-field-list stash-quick-actions-panel__custom-field-list--inline"></div>
+        <div class="stash-quick-actions-panel__custom-field-actions stash-quick-actions-panel__custom-field-actions--inline">
+          <button type="button" data-sqap-add-custom-field>Add</button>
+          <button type="button" data-sqap-save-studio-custom-fields>Save</button>
+        </div>
+        <div class="stash-quick-actions-panel__custom-field-status"></div>
+      `;
+      renderCustomFieldRows(panel, customFieldData.fields || {}, { includePresets: true });
+      attachStudioCustomFieldPanelEvents(panel);
+      positionFloatingElement(menu, x, y);
+    } catch (err) {
+      console.error("[StashQuickActionsPanel] inline studio custom field load failed", err);
+      if (!document.body.contains(menu)) return;
+      panel.innerHTML = '<div class="stash-quick-actions-panel__quick-search-empty">Could not load custom fields.</div>';
+      positionFloatingElement(menu, x, y);
+    }
+  }
+
+  function attachStudioCustomFieldPanelEvents(panel) {
+    panel.addEventListener("click", async (event) => {
+      const remove = event.target.closest("[data-sqap-remove-custom-field]");
+      if (remove) {
+        event.preventDefault();
+        remove.closest("[data-sqap-custom-field-row]")?.remove();
+        return;
+      }
+      const add = event.target.closest("[data-sqap-add-custom-field]");
+      if (add) {
+        event.preventDefault();
+        const list = panel.querySelector(".stash-quick-actions-panel__custom-field-list");
+        if (!list) return;
+        list.querySelector(".stash-quick-actions-panel__empty")?.remove();
+        const row = document.createElement("div");
+        row.className = "stash-quick-actions-panel__custom-field-row";
+        row.setAttribute("data-sqap-custom-field-row", "1");
+        row.innerHTML = `
+          <input type="text" data-sqap-custom-field-key aria-label="Custom field name" placeholder="Field">
+          <input type="text" data-sqap-custom-field-value aria-label="Custom field value" placeholder="Value">
+          <button type="button" data-sqap-remove-custom-field aria-label="Clear custom field">x</button>
+        `;
+        list.appendChild(row);
+        row.querySelector("[data-sqap-custom-field-key]")?.focus();
+        return;
+      }
+      const save = event.target.closest("[data-sqap-save-studio-custom-fields]");
+      if (!save || state.isSaving) return;
+      event.preventDefault();
+      state.isSaving = true;
+      document.body.classList.add("stash-quick-actions-panel--saving");
+      setCustomFieldStatus(panel, "Saving...");
+      try {
+        const updated = await updateStudioCustomFields(state.currentImageIds[0], getCustomFieldsPatchFromPanel(panel));
+        updatePinnedStudioRecord(updated);
+        setCustomFieldStatus(panel, "Saved custom fields.");
+        showQuickAccessToast("Updated studio custom fields.");
+      } catch (err) {
+        console.error("[StashQuickActionsPanel] studio custom field save failed", err);
+        setCustomFieldStatus(panel, err.message || "Could not save custom fields.", true);
+      } finally {
+        state.isSaving = false;
+        document.body.classList.remove("stash-quick-actions-panel--saving");
+      }
+    });
+  }
+
+  async function openStudioParentEditor(studioId) {
+    const id = String(studioId || "").trim();
+    if (!id) return;
+    const studio = await fetchStudioById(id);
+    const modal = createModalShell("Reparent studio", studio?.name || `Studio ${id}`);
+    state.currentItemType = "studio";
+    state.currentImageId = id;
+    state.currentImageIds = [id];
+    state.currentMode = "studio-parent";
+    const body = modal.querySelector(".stash-quick-actions-panel__dialog-body");
+    body.innerHTML = `
+      <section class="stash-quick-actions-panel__performer-panel">
+        <div class="stash-quick-actions-panel__selected-performers">Current parent: ${escapeHtml(studio?.parent_studio?.name || "None")}</div>
+        <input type="search" class="stash-quick-actions-panel__performer-search" placeholder="Search parent studios" autocomplete="off" spellcheck="false" data-sqap-parent-studio-search>
+        <div class="stash-quick-actions-panel__performer-results" data-sqap-parent-studio-results></div>
+        <div class="stash-quick-actions-panel__custom-field-status"></div>
+      </section>
+    `;
+    const renderResults = async () => {
+      const query = body.querySelector("[data-sqap-parent-studio-search]")?.value || "";
+      const results = (await searchStudios(query)).filter((candidate) => candidate.id !== id);
+      const target = body.querySelector("[data-sqap-parent-studio-results]");
+      if (!target) return;
+      target.innerHTML = results.length
+        ? results
+            .map(
+              (candidate) => `
+                <button type="button" class="stash-quick-actions-panel__performer-result" data-sqap-select-parent-studio="${escapeHtml(candidate.id)}">
+                  <span class="stash-quick-actions-panel__performer-name">${escapeHtml(candidate.name)}</span>
+                </button>
+              `
+            )
+            .join("")
+        : '<div class="stash-quick-actions-panel__empty">No studios found.</div>';
+    };
+    let searchTimer = 0;
+    body.addEventListener("input", (event) => {
+      if (!event.target.closest("[data-sqap-parent-studio-search]")) return;
+      window.clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(() => renderResults(), 180);
+    });
+    body.addEventListener("click", async (event) => {
+      const row = event.target.closest("[data-sqap-select-parent-studio]");
+      if (!row || state.isSaving) return;
+      event.preventDefault();
+      const parentId = row.getAttribute("data-sqap-select-parent-studio") || "";
+      const status = body.querySelector(".stash-quick-actions-panel__custom-field-status");
+      state.isSaving = true;
+      document.body.classList.add("stash-quick-actions-panel--saving");
+      try {
+        const updated = await updateStudioParent(id, parentId);
+        updatePinnedStudioRecord(updated, studio?.name || "");
+        showQuickAccessToast("Updated studio parent.");
+        closeModal();
+      } catch (err) {
+        console.error("[StashQuickActionsPanel] studio reparent failed", err);
+        if (status) {
+          status.textContent = err.message || "Could not reparent studio.";
+          status.classList.add("is-error");
+        }
+      } finally {
+        state.isSaving = false;
+        document.body.classList.remove("stash-quick-actions-panel--saving");
+      }
+    });
+    renderResults();
+    body.querySelector("[data-sqap-parent-studio-search]")?.focus();
+  }
+
+  async function unparentStudioFromContext(studioId) {
+    if (!window.confirm("Remove this studio's parent?")) return;
+    try {
+      const updated = await updateStudioParent(studioId, null);
+      updatePinnedStudioRecord(updated);
+      showQuickAccessToast("Studio is now unparented.");
+    } catch (err) {
+      console.error("[StashQuickActionsPanel] studio unparent failed", err);
+      showQuickAccessToast(err.message || "Could not unparent studio.", true);
+    }
+  }
+
+  function getPinnedQuickAccessPerformers() {
+    return loadPinnedQuickAccessPerformers();
+  }
+
+  function updatePerformerPinButton(menu, performer) {
+    const button = menu.querySelector("[data-sqap-performer-pin-toggle]");
+    if (!(button instanceof HTMLButtonElement)) return;
+    const pinned = isPerformerPinnedToQuickAccess(performer?.id, performer?.name);
+    button.setAttribute("data-sqap-action", pinned ? "unpin-performer-quick-access" : "pin-performer-quick-access");
+    button.textContent = pinned ? "Remove from Quick Access Performers" : "Pin to Quick Access Performers";
+    button.classList.toggle("stash-quick-actions-panel__menu-item--danger", pinned);
+  }
+
+  async function hydratePerformerQuickAccessButton(menu, performerId) {
+    try {
+      const performer = await fetchPerformerById(performerId);
+      if (!performer || !document.body.contains(menu)) return;
+      updatePerformerPinButton(menu, performer);
+    } catch (err) {
+      console.warn("[StashQuickActionsPanel] performer quick access button hydrate failed", err);
+    }
+  }
+
+  function updatePinnedPerformerRecord(performer, previousName = "") {
+    const normalized = normalizePinnedQuickAccessPerformer(performer);
+    if (!normalized) return;
+    const oldName = normalizeSearchText(previousName);
+    const performers = getPinnedQuickAccessPerformers();
+    if (!performers.some((record) => record.id === normalized.id || (oldName && normalizeSearchText(record.name) === oldName))) return;
+    savePinnedQuickAccessPerformerRecords(
+      performers.map((record) =>
+        record.id === normalized.id || (oldName && normalizeSearchText(record.name) === oldName)
+          ? {
+              ...record,
+              id: normalized.id,
+              name: normalized.name,
+              sort_name: normalized.sort_name || normalized.name,
+              image_path: normalized.image_path || "",
+            }
+          : record
+      )
+    );
+  }
+
+  async function pinPerformerToQuickAccess(performerId, fallbackName = "") {
+    try {
+      const performer = await fetchPerformerById(performerId);
+      const name = String(performer?.name || fallbackName || "").trim();
+      if (!name) throw new Error("Could not resolve performer name.");
+      const records = getPinnedQuickAccessPerformers().filter((record) => {
+        if (performer?.id && record.id === String(performer.id)) return false;
+        return normalizeSearchText(record.name) !== normalizeSearchText(name);
+      });
+      records.push({
+        id: String(performer?.id || performerId || ""),
+        name,
+        sort_name: String(performer?.sort_name || name),
+        image_path: String(performer?.image_path || ""),
+      });
+      savePinnedQuickAccessPerformerRecords(records);
+      showQuickAccessToast("Pinned performer to Quick Access Performers.");
+    } catch (err) {
+      console.error("[StashQuickActionsPanel] pin performer failed", err);
+      showQuickAccessToast(err.message || "Could not pin performer.", true);
+    }
+  }
+
+  async function unpinPerformerFromQuickAccessById(performerId, fallbackName = "") {
+    try {
+      const performer = await fetchPerformerById(performerId).catch(() => null);
+      const id = String(performer?.id || performerId || "").trim();
+      const name = normalizeSearchText(performer?.name || fallbackName);
+      const performers = getPinnedQuickAccessPerformers().filter((item) => {
+        if (id && item.id === id) return false;
+        return !name || normalizeSearchText(item.name) !== name;
+      });
+      savePinnedQuickAccessPerformerRecords(performers);
+      showQuickAccessToast("Removed performer from Quick Access Performers.");
+    } catch (err) {
+      console.error("[StashQuickActionsPanel] unpin performer failed", err);
+      showQuickAccessToast(err.message || "Could not unpin performer.", true);
+    }
   }
 
   async function savePerformerImageFromPanel(panel) {
@@ -5265,6 +7017,7 @@
     try {
       const performer = await updatePerformerImage(performerId, imageValue);
       const imagePath = String(performer?.image_path || imageValue || "");
+      updatePinnedPerformerRecord(performer);
       const cacheKey = `preview:${getItemCacheKey("performer", performerId)}`;
       state.imagePreviewCache.set(cacheKey, {
         id: String(performer?.id || performerId),
@@ -5823,6 +7576,31 @@
   function handleContextMenu(event) {
     if (getAccessMode() !== ACCESS_MODE_RIGHT_CLICK) return;
     if (event.target.closest(`#${MENU_ID}, #${MODAL_ID}`)) return;
+
+    const tagContext = getTagContextFromEventTarget(event.target);
+    if (tagContext) {
+      event.preventDefault();
+      event.stopPropagation();
+      openTagContextMenu(event, tagContext);
+      return;
+    }
+
+    const studioContext = getStudioContextFromEventTarget(event.target);
+    if (studioContext) {
+      event.preventDefault();
+      event.stopPropagation();
+      openStudioContextMenu(event, studioContext);
+      return;
+    }
+
+    const performerContext = getPerformerContextFromEventTarget(event.target);
+    if (performerContext) {
+      event.preventDefault();
+      event.stopPropagation();
+      openContextMenu(event, "performer", [performerContext.performerId]);
+      return;
+    }
+
     const context = getContextCardFromEventTarget(event.target);
     if (!context) return;
 
@@ -5927,6 +7705,7 @@
     state.config = null;
     state.searchIndex = null;
     state.allTags = null;
+    state.studioUrlSchemaPromise = null;
     state.quickSearchTokens = new Map();
     window.__stashQuickActionsPanelInitialized = false;
     if (window.__stashQuickActionsPanelCleanup === cleanup) {
