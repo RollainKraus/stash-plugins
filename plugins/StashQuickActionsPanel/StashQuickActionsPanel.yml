@@ -1,6 +1,6 @@
 name: Stash Quick Actions Panel
 description: Comprehensive quick action panel for editing image, scene, performer, tag, and studio metadata from Stash UI elements
-version: 1.1.8
+version: 1.1.9
 url: https://github.com/RollainKraus/stash-plugins
 
 settings:
