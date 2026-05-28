@@ -1,5 +1,5 @@
 name: Edit Tags Overhaul
-description: Hierarchical tag browser with inline search, copy/paste, and fullscreen quick tagging for scene, gallery, and image pages
+description: Hierarchical tag browser with inline search, copy/paste, and a quick tag panel overlay for scene, gallery, and image pages
 version: 1.5.1
 url: https://github.com/RollainKraus/stash-plugins
 settings:
@@ -40,30 +40,35 @@ settings:
     type: BOOLEAN
     description: Attempt to refresh Stash's native scene page data after tag changes without a full browser reload. Default false.
 
-  enableFullscreenQuickTagPanel:
-    displayName: Enable Fullscreen Quick Tag Panel
+  enableQuickTagPanelOverlay:
+    displayName: Enable Quick Tag Panel Overlay
     type: BOOLEAN
-    description: Show a floating Tags button during fullscreen scene playback. Default true.
+    description: Show a floating Tags button and quick tag panel overlay on scene pages. Default true.
 
-  autoOpenFullscreenQuickTagPanel:
-    displayName: Auto Open Fullscreen Quick Tag Panel
+  autoOpenQuickTagPanelOverlay:
+    displayName: Auto Open Quick Tag Panel Overlay
     type: BOOLEAN
-    description: Automatically open the fullscreen quick tag menu when entering fullscreen. Default false.
+    description: When true, automatically open the quick tag panel and tag timeline, and remember whether the Tags button was left open or closed. When false, the Tags button opens and closes overlays only for the current page session. Default false.
 
-  fullscreenQuickTagButtonPosition:
-    displayName: Fullscreen Quick Tag Button Position
+  quickTagPanelButtonPosition:
+    displayName: Quick Tag Panel Button Position
     type: STRING
     description: topright, topleft, bottomleft, or bottomright. Default bottomright.
 
-  fullscreenQuickTagIdleOpacity:
-    displayName: Fullscreen Quick Tag Idle Opacity
+  quickTagPanelIdleOpacity:
+    displayName: Quick Tag Panel Idle Opacity
     type: STRING
     description: Panel opacity when the mouse is not hovering over it, from 0.02 to 1. Default 0.1.
 
-  fullscreenQuickTagSharedHover:
-    displayName: Fullscreen Quick Tag Shared Hover
+  quickTagPanelSharedHover:
+    displayName: Quick Tag Panel Shared Hover
     type: BOOLEAN
-    description: Hovering any fullscreen quick tag panel keeps all fullscreen quick tag panels visible. Default false.
+    description: Hovering any quick tag panel overlay keeps all quick tag panels visible. Default false.
+
+  enableTagTimelineOverlay:
+    displayName: Enable Tag Timeline Overlay
+    type: BOOLEAN
+    description: Alpha feature. Show timeline marker buttons and the floating scene tag timeline overlay. Tags with an eto_timeline_tag custom field are timeline tags; colors can be edited from the Timeline Tags palette. Default false.
 
 ui:
   javascript:
