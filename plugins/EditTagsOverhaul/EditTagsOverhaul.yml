@@ -1,6 +1,6 @@
 name: Edit Tags Overhaul
 description: Hierarchical tag browser with inline search, copy/paste, and a quick tag panel overlay for scene, gallery, and image pages
-version: 1.5.1
+version: 2.5.1
 url: https://github.com/RollainKraus/stash-plugins
 settings:
   defaultExpanded:
