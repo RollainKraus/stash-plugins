@@ -7623,6 +7623,17 @@
     if (getAccessMode() !== ACCESS_MODE_RIGHT_CLICK) return;
     if (event.target.closest(`#${MENU_ID}, #${MODAL_ID}`)) return;
 
+    const context = getContextCardFromEventTarget(event.target);
+    if (context) {
+      const imageIds = getItemIdsForContextCard(context.card, context.itemType);
+      if (!imageIds.length) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      openContextMenu(event, context.itemType, imageIds);
+      return;
+    }
+
     const tagContext = getTagContextFromEventTarget(event.target);
     if (tagContext) {
       event.preventDefault();
@@ -7646,16 +7657,6 @@
       openContextMenu(event, "performer", [performerContext.performerId]);
       return;
     }
-
-    const context = getContextCardFromEventTarget(event.target);
-    if (!context) return;
-
-    const imageIds = getItemIdsForContextCard(context.card, context.itemType);
-    if (!imageIds.length) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    openContextMenu(event, context.itemType, imageIds);
   }
 
   function handleDocumentClick(event) {
