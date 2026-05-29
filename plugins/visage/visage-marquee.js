@@ -5,7 +5,7 @@
   const STASHFACE_ORIGIN = "https://cc1234-stashface.hf.space";
   const THRESHOLD = 0.5;
   const MAX_RESULTS = 5;
-  const GRADIO_CLIENT_URL = "https://cdn.jsdelivr.net/npm/@gradio/client@1.15.3/dist/index.js";
+  const LOOKUP_TIMEOUT_MS = 90000;
   const PLUGIN_ID = "visage";
   const ROUTE_EVENT = "visage:route-change";
   const FLOATING_BUTTON_ID = "visage-floating-button";
@@ -15,8 +15,6 @@
   let lastCropPngBlob = null;
   let lastCropDataUrl = null;
   let lastCropPngDataUrl = null;
-  let gradioClientModule = null;
-  let gradioClient = null;
   let config = {
     floatingImageButton: false,
   };
@@ -41,6 +39,9 @@
     return (
       document.querySelector(".image-image img") ||
       document.querySelector("img.image-image") ||
+      document.querySelector(".image-container img") ||
+      document.querySelector(".image-viewer img") ||
+      document.querySelector(".detail-body img") ||
       document.querySelector(".image-image")
     );
   }
@@ -73,10 +74,24 @@
     window.setTimeout(() => toast.remove(), 2600);
   }
 
+  function withTimeout(promise, label, timeoutMs = LOOKUP_TIMEOUT_MS) {
+    let timeoutId = 0;
+    const timeout = new Promise((_, reject) => {
+      timeoutId = window.setTimeout(
+        () => reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s.`)),
+        timeoutMs
+      );
+    });
+
+    return Promise.race([promise, timeout]).finally(() => {
+      window.clearTimeout(timeoutId);
+    });
+  }
+
   function getCsLib() {
     if (typeof csLib !== "undefined") return csLib;
     if (window.csLib) return window.csLib;
-    throw new Error("CommunityScriptsUILibrary is not available.");
+    return null;
   }
 
   function gqlString(value) {
@@ -88,7 +103,27 @@
   }
 
   async function callGQL(query, variables) {
-    return gqlData(await getCsLib().callGQL({ query, variables }));
+    const lib = getCsLib();
+    if (lib?.callGQL) {
+      return gqlData(await lib.callGQL({ query, variables }));
+    }
+
+    const response = await fetch("/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ query, variables }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`GraphQL HTTP ${response.status}`);
+    }
+
+    const json = await response.json();
+    if (json.errors?.length) {
+      throw new Error(json.errors.map((error) => error.message).join("; "));
+    }
+    return gqlData(json);
   }
 
   async function loadConfig() {
@@ -225,7 +260,7 @@
         id
       }
     }`;
-    const response = await getCsLib().callGQL({ query, variables });
+    const response = await callGQL(query, variables);
     const data = gqlData(response);
     const performerId = data?.performerCreate?.id;
     if (!performerId) {
@@ -277,7 +312,7 @@
               id
             }
           }`;
-    return await getCsLib().callGQL({ query, variables });
+    return await callGQL(query, variables);
   }
 
   async function assignPerformer(candidate) {
@@ -375,28 +410,180 @@
     URL.revokeObjectURL(url);
   }
 
-  async function callOfficialGradioClient() {
-    if (!lastCropPngBlob) {
+  function normalizeUploadResponse(uploadJson) {
+    if (Array.isArray(uploadJson)) return uploadJson[0];
+    if (Array.isArray(uploadJson?.files)) return uploadJson.files[0];
+    if (Array.isArray(uploadJson?.data)) return uploadJson.data[0];
+    return uploadJson?.path || uploadJson?.file || uploadJson;
+  }
+
+  async function uploadCropToGradio() {
+    const blob = lastCropPngBlob || lastCropBlob;
+    if (!blob) {
       throw new Error("No face crop is available.");
     }
 
-    if (!gradioClientModule) {
-      gradioClientModule = await import(GRADIO_CLIENT_URL);
-    }
-
-    if (!gradioClient) {
-      gradioClient = await gradioClientModule.Client.connect(STASHFACE_ORIGIN);
-    }
-
-    const file = new File([lastCropPngBlob], "visage-face-crop.png", {
-      type: "image/png",
+    const file = new File([blob], "visage-face-crop.png", {
+      type: blob.type || "image/png",
     });
-    const fileHandle = gradioClientModule.handle_file(file);
-    return await gradioClient.predict("/multiple_image_search", [
-      fileHandle,
-      THRESHOLD,
-      MAX_RESULTS,
-    ]);
+    const formData = new FormData();
+    formData.append("files", file);
+
+    const uploaded = normalizeUploadResponse(
+      await xhrJsonRequest(`${STASHFACE_ORIGIN}/gradio_api/upload`, {
+        method: "POST",
+        label: "StashFace upload",
+        body: formData,
+      })
+    );
+    const path = typeof uploaded === "string" ? uploaded : uploaded?.path;
+    if (!path) {
+      throw new Error("StashFace upload did not return a file path.");
+    }
+
+    return {
+      path,
+      url: typeof uploaded === "object" && uploaded?.url ? uploaded.url : null,
+      orig_name: "visage-face-crop.png",
+      size: file.size,
+      mime_type: file.type || "image/png",
+      meta: { _type: "gradio.FileData" },
+    };
+  }
+
+  function parseJsonText(text, label) {
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      const preview = String(text || "").replace(/\s+/g, " ").slice(0, 220);
+      throw new Error(`${label} returned non-JSON: ${preview || error.message}`);
+    }
+  }
+
+  function xhrRequest(url, options = {}) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open(options.method || "GET", url, true);
+      xhr.timeout = options.timeoutMs || LOOKUP_TIMEOUT_MS;
+
+      Object.entries(options.headers || {}).forEach(([key, value]) => {
+        xhr.setRequestHeader(key, value);
+      });
+
+      xhr.onload = () => {
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new Error(`${options.label || "Request"} returned HTTP ${xhr.status}`));
+          return;
+        }
+        resolve(xhr.responseText);
+      };
+      xhr.onerror = () => reject(new Error(`${options.label || "Request"} failed.`));
+      xhr.ontimeout = () =>
+        reject(
+          new Error(
+            `${options.label || "Request"} timed out after ${Math.round(xhr.timeout / 1000)}s.`
+          )
+        );
+
+      xhr.send(options.body || null);
+    });
+  }
+
+  async function xhrJsonRequest(url, options = {}) {
+    return parseJsonText(
+      await xhrRequest(url, options),
+      options.label || "Request"
+    );
+  }
+
+  function readGradioEventSource(eventId) {
+    return new Promise((resolve, reject) => {
+      const source = new EventSource(
+        `${STASHFACE_ORIGIN}/gradio_api/call/multiple_image_search/${encodeURIComponent(eventId)}`
+      );
+      let latestData = null;
+      let settled = false;
+      let timeoutId = 0;
+
+      const cleanup = () => {
+        settled = true;
+        window.clearTimeout(timeoutId);
+        source.close();
+      };
+
+      const finish = (callback, value) => {
+        if (settled) return;
+        cleanup();
+        callback(value);
+      };
+
+      const parseAndResolve = (data) => {
+        if (!data || data === "[DONE]") return;
+        finish(resolve, JSON.parse(data));
+      };
+
+      timeoutId = window.setTimeout(() => {
+        if (latestData) {
+          try {
+            parseAndResolve(latestData);
+            return;
+          } catch (error) {
+            finish(reject, error);
+            return;
+          }
+        }
+        finish(
+          reject,
+          new Error(`StashFace result timed out after ${Math.round(LOOKUP_TIMEOUT_MS / 1000)}s.`)
+        );
+      }, LOOKUP_TIMEOUT_MS);
+
+      source.addEventListener("generating", (event) => {
+        latestData = event.data;
+      });
+      source.addEventListener("data", (event) => {
+        latestData = event.data;
+      });
+      source.addEventListener("complete", (event) => {
+        try {
+          parseAndResolve(event.data || latestData);
+        } catch (error) {
+          finish(reject, error);
+        }
+      });
+      source.addEventListener("error", (event) => {
+        if (latestData) {
+          try {
+            parseAndResolve(latestData);
+            return;
+          } catch (error) {
+            finish(reject, error);
+            return;
+          }
+        }
+        finish(reject, new Error("StashFace event stream failed."));
+      });
+    });
+  }
+
+  async function findMatchesViaStashFace() {
+    const fileData = await uploadCropToGradio();
+    const startJson = await xhrJsonRequest(
+      `${STASHFACE_ORIGIN}/gradio_api/call/multiple_image_search`,
+      {
+        method: "POST",
+        label: "StashFace start",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          data: [fileData, THRESHOLD, MAX_RESULTS],
+        }),
+      }
+    );
+    const eventId = startJson?.event_id;
+    if (!eventId) {
+      throw new Error("StashFace did not return an event id.");
+    }
+    return await readGradioEventSource(eventId);
   }
 
   function imageSource(value) {
@@ -405,10 +592,80 @@
     return `data:image/jpeg;base64,${value}`;
   }
 
+  function collectFaceResults(value, results = []) {
+    if (!value) return results;
+    if (Array.isArray(value)) {
+      if (value.some((item) => Array.isArray(item?.performers))) {
+        results.push(...value.filter((item) => Array.isArray(item?.performers)));
+        return results;
+      }
+      value.forEach((item) => collectFaceResults(item, results));
+      return results;
+    }
+    if (typeof value === "object") {
+      if (Array.isArray(value.performers)) {
+        results.push(value);
+        return results;
+      }
+      Object.values(value).forEach((item) => collectFaceResults(item, results));
+    }
+    return results;
+  }
+
+  function looksLikePerformerCandidate(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    if (Array.isArray(value.performers)) return false;
+    return !!(
+      value.name ||
+      value.performer_name ||
+      value.image ||
+      value.image_url ||
+      value.performer_url ||
+      Number.isFinite(Number(value.confidence))
+    );
+  }
+
+  function collectCandidateResults(value, results = []) {
+    if (!value) return results;
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectCandidateResults(item, results));
+      return results;
+    }
+    if (typeof value === "object") {
+      if (looksLikePerformerCandidate(value)) {
+        results.push(value);
+        return results;
+      }
+      Object.values(value).forEach((item) => collectCandidateResults(item, results));
+    }
+    return results;
+  }
+
+  function normalizeCandidate(candidate) {
+    return {
+      ...candidate,
+      name: candidate.name || candidate.performer_name || "",
+      image: candidate.image || candidate.image_url || candidate.image_path || "",
+      confidence: Number.isFinite(Number(candidate.confidence))
+        ? Number(candidate.confidence)
+        : candidate.confidence,
+    };
+  }
+
   function extractCandidates(result) {
-    const faces = Array.isArray(result?.data?.[0]) ? result.data[0] : [];
-    return faces
-      .flatMap((face) => face.performers || [])
+    const nestedCandidates = collectFaceResults(result).flatMap((face) => face.performers || []);
+    const directCandidates = collectCandidateResults(result);
+    const seen = new Set();
+    return nestedCandidates
+      .concat(directCandidates)
+      .map(normalizeCandidate)
+      .filter((candidate) => {
+        const key = `${candidate.id || ""}:${candidate.name || ""}:${candidate.performer_url || ""}`;
+        if (!candidate.name && !candidate.image) return false;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
       .sort((a, b) => (Number(b.confidence) || -1) - (Number(a.confidence) || -1));
   }
 
@@ -499,8 +756,7 @@
     resultBox.textContent = "Finding performer matches...";
 
     try {
-      const result = await callOfficialGradioClient();
-      const candidates = extractCandidates(result);
+      const candidates = await findMatchesForLastCrop();
       renderMatches(resultBox, candidates);
     } catch (error) {
       resultBox.textContent = `StashFace lookup failed: ${error.message}`;
@@ -728,11 +984,16 @@
   }
 
   async function findMatchesForLastCrop() {
-    if (!lastCropPngBlob) {
+    if (!lastCropPngBlob && !lastCropDataUrl) {
       throw new Error("No face crop is available.");
     }
-    const result = await callOfficialGradioClient();
-    return extractCandidates(result);
+
+    try {
+      const restResult = await withTimeout(findMatchesViaStashFace(), "StashFace lookup");
+      return extractCandidates(restResult);
+    } catch (error) {
+      throw new Error(error?.message || "StashFace lookup failed.");
+    }
   }
 
   window.VisageQuickTagging = {
