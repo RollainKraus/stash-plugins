@@ -4629,6 +4629,15 @@
         button.disabled = !ready;
       });
     panel.classList.toggle("has-visage-crop", !!ready);
+
+    const preview = panel.querySelector(".stash-quick-actions-panel__visage-crop-preview");
+    const previewImg = preview?.querySelector("img");
+    const crop = ready ? getVisageBridge()?.getLastCrop?.() : null;
+    const dataUrl = crop?.dataUrl || crop?.pngDataUrl || "";
+    if (preview && previewImg) {
+      preview.hidden = !dataUrl;
+      previewImg.src = dataUrl || "";
+    }
   }
 
   function getCandidateImageSource(candidate) {
@@ -4706,7 +4715,51 @@
     await bridge.cropTarget(sourceImg, selectionRect, targetRect);
 
     setVisageCropReady(panel, true);
-    setVisageStatus(panel, "Crop ready.");
+    setVisageStatus(panel, "Crop ready. Click Find matches to search StashFace.");
+  }
+
+  async function runVisageFind(panel, button) {
+    const bridge = getVisageBridge();
+    if (!bridge?.findMatches) {
+      setVisageStatus(panel, "Visage match search is not available.", true);
+      return;
+    }
+
+    const crop = bridge.getLastCrop?.();
+    if (!crop?.pngBlob && !crop?.blob && !crop?.dataUrl && !crop?.pngDataUrl) {
+      setVisageCropReady(panel, false);
+      setVisageStatus(panel, "Crop a face first.", true);
+      return;
+    }
+
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Finding...";
+    }
+    setVisageStatus(panel, "Finding performer matches...");
+    const results = panel.querySelector(".stash-quick-actions-panel__visage-results");
+    if (results) {
+      results.innerHTML = '<div class="stash-quick-actions-panel__loading">Searching StashFace...</div>';
+    }
+
+    try {
+      const candidates = await bridge.findMatches();
+      renderVisageCandidates(panel, candidates || []);
+      setVisageStatus(
+        panel,
+        candidates?.length
+          ? "Click a match to assign it."
+          : "No matches found. Try a tighter crop, a clearer face, or Open StashFace."
+      );
+    } catch (err) {
+      const message = err?.message || "Visage lookup failed.";
+      setVisageStatus(panel, `Lookup failed: ${message}`, true);
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Find matches";
+      }
+    }
   }
 
   function startVisageCropMode(panel) {
@@ -4803,11 +4856,17 @@
         </div>
       </div>
       <div class="stash-quick-actions-panel__visage-status"></div>
+      <div class="stash-quick-actions-panel__visage-crop-preview" hidden>
+        <img alt="Current Visage crop">
+        <span>Current crop</span>
+      </div>
       <div class="stash-quick-actions-panel__visage-results"></div>
     `;
 
     const searchInput = panel.querySelector(".stash-quick-actions-panel__performer-search");
     panel.insertBefore(visagePanel, searchInput || panel.firstChild);
+    const existingCrop = getVisageBridge()?.getLastCrop?.();
+    setVisageCropReady(panel, !!(existingCrop?.dataUrl || existingCrop?.pngDataUrl));
   }
 
   function getCurrentPerformerResults(panel) {
@@ -6039,20 +6098,10 @@
       }
 
       if (action === "find") {
-        button.disabled = true;
-        button.textContent = "Finding...";
-        setVisageStatus(panel, "Finding performer matches...");
-        const candidates = await bridge.findMatches();
-        renderVisageCandidates(panel, candidates || []);
-        setVisageStatus(panel, candidates?.length ? "Click a match to assign it." : "No matches found.");
+        await runVisageFind(panel, button);
       }
     } catch (err) {
       setVisageStatus(panel, err.message || "Visage action failed.", true);
-    } finally {
-      if (action === "find") {
-        button.disabled = false;
-        button.textContent = "Find matches";
-      }
     }
   }
 
