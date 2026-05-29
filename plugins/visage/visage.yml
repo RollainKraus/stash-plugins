@@ -1,7 +1,6 @@
 name: Visage
-# requires: CommunityScriptsUILibrary
 description: Use facial Recognition To Lookup Performers. Roughly patched and uses marquee selection instead of face detection
-version: 2.0.3
+version: 2.0.15
 ui:
   requires:
     - CommunityScriptsUILibrary
@@ -13,8 +12,6 @@ ui:
   csp:
     connect-src:
       - "https://cc1234-stashface.hf.space"
-    script-src:
-      - "https://cdn.jsdelivr.net/npm/@gradio/client@1.15.3/dist/index.js"
 settings:
   floatingImageButton:
     displayName: Floating Image Button
