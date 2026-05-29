@@ -1566,6 +1566,33 @@
   color: #ffb4b4;
 }
 
+.stash-quick-actions-panel__visage-crop-preview {
+  display: grid;
+  grid-template-columns: 54px 1fr;
+  align-items: center;
+  gap: 8px;
+  min-height: 54px;
+  padding: 6px;
+  border: 1px solid rgba(92, 196, 255, 0.22);
+  border-radius: 6px;
+  background: rgba(92, 196, 255, 0.08);
+  color: rgba(245, 247, 251, 0.76);
+  font-size: 12px;
+}
+
+.stash-quick-actions-panel__visage-crop-preview[hidden] {
+  display: none;
+}
+
+.stash-quick-actions-panel__visage-crop-preview img {
+  display: block;
+  width: 54px;
+  height: 54px;
+  border-radius: 5px;
+  object-fit: cover;
+  background: #090b0f;
+}
+
 .stash-quick-actions-panel__visage-results {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
