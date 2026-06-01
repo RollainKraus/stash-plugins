@@ -11,8 +11,8 @@
   const TIMELINE_TAG_COLORS_STORAGE_KEY = "EditTagsOverhaul.timelineTagColors";
   const TIMELINE_PALETTE_LAYOUT_STORAGE_KEY = "EditTagsOverhaul.timelinePaletteLayout";
   const QUICK_TAG_OVERLAY_OPEN_STORAGE_KEY = "EditTagsOverhaul.quickTagOverlayOpen";
-  const FULLSCREEN_LAYOUT_STORAGE_KEY = "EditTagsOverhaul.fullscreenQuickTagLayout";
-  const FULLSCREEN_MINI_PANELS_STORAGE_KEY = "EditTagsOverhaul.fullscreenMiniPanels";
+  const FULLSCREEN_LAYOUT_STORAGE_KEY = "EditTagsOverhaul.quickTagPanelOverlayLayout";
+  const FULLSCREEN_MINI_PANELS_STORAGE_KEY = "EditTagsOverhaul.quickTagPanelMiniPanels";
   const ROUTE_EVENT = "edit-tags-overhaul:navigation";
   const ROUTE_HOOK_STATE_KEY = "__editTagsOverhaulRouteHooks";
   const CLEANUP_KEY = "__editTagsOverhaulCleanup";
@@ -792,13 +792,17 @@
   }
 
   function getHoverPreviewHost() {
+    const root = document.fullscreenElement instanceof HTMLElement ? document.fullscreenElement : document.body;
     let host = document.getElementById(HOVER_PREVIEW_ID);
-    if (host) return host;
+    if (host) {
+      if (host.parentElement !== root) root.appendChild(host);
+      return host;
+    }
     host = document.createElement("div");
     host.id = HOVER_PREVIEW_ID;
     host.className = "edit-tags-overhaul-hover-preview";
     host.setAttribute("aria-hidden", "true");
-    document.body.appendChild(host);
+    root.appendChild(host);
     return host;
   }
 
@@ -3146,6 +3150,8 @@
     panel.addEventListener("pointermove", handleFullscreenPanelDrag);
     panel.addEventListener("pointerup", stopFullscreenPanelDrag);
     panel.addEventListener("pointercancel", stopFullscreenPanelDrag);
+    panel.addEventListener("mouseover", handlePanelHoverIn);
+    panel.addEventListener("mouseout", handlePanelHoverOut);
 
     panel.addEventListener("click", (event) => {
       const minimizeBtn = event.target.closest("[data-eto-fullscreen-minimize]");
