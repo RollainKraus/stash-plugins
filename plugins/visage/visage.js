@@ -14447,13 +14447,21 @@
               alert(
                 "Something went wrong. It's likely a server issue, Please try again later."
               );
-              return;
+              return null;
             }
 
             return response.json();
           })
           .then((data) => {
             $$invalidate(0, (scanner = false));
+
+            if (!data) return;
+            if (!Array.isArray(data.data) || !Array.isArray(data.data[0])) {
+              alert(
+                "Something went wrong. Visage returned an unexpected response. Please try again later."
+              );
+              return;
+            }
 
             if (data.data[0].length === 0) {
               alert("No matches found");
@@ -15219,13 +15227,21 @@
             alert(
               "Something went wrong. It's likely a server issue, Please try again later."
             );
-            return;
+            return null;
           }
 
           return response.json();
         })
         .then((data) => {
           $$invalidate(0, (scanner = false));
+
+          if (!data) return;
+          if (!Array.isArray(data.data) || !Array.isArray(data.data[0])) {
+            alert(
+              "Something went wrong. Visage returned an unexpected response. Please try again later."
+            );
+            return;
+          }
 
           // find a div with class row
           let row = document.querySelector(".row");
