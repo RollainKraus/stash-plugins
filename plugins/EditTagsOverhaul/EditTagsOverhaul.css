@@ -541,7 +541,7 @@
 
 #edit-tags-overhaul-hover-preview.edit-tags-overhaul-hover-preview {
   position: fixed;
-  z-index: 1085;
+  z-index: 2147483647;
   left: 0;
   top: 0;
   width: min(34rem, calc(100vw - 2rem));
@@ -904,7 +904,7 @@ body.edit-tags-overhaul-timeline-hover-active .edit-tags-overhaul--timeline-pale
 .edit-tags-overhaul--fullscreen-panel .edit-tags-overhaul__tag--text {
   min-height: 1.45em;
   padding: 0.08em 0.42em;
-  font-size: 0.78em;
+  font-size: 0.9em;
 }
 
 .edit-tags-overhaul--fullscreen-panel .edit-tags-overhaul__tag.is-selected,
