@@ -1,6 +1,6 @@
 name: Content Banners
 description: Adds configurable scene preview banners to Stash detail pages.
-version: 1.1.2
+version: 2.2.0
 ui:
   css:
     - ContentBanners.css
@@ -43,3 +43,7 @@ settings:
     displayName: Show Scene Title
     type: BOOLEAN
     description: Show clickable scene title badges when hovering over the banner. Default true.
+  showControls:
+    displayName: Show Floating Controls
+    type: BOOLEAN
+    description: Show draggable media controls on pages with active banners. Controls include previous, next, play/pause, 1 second seek, and speed adjustment. Default true.
