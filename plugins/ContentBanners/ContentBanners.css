@@ -198,3 +198,88 @@
   color: rgba(255, 255, 255, 0.62);
   font-size: 0.9rem;
 }
+
+.content-banners-controls {
+  position: fixed;
+  z-index: 9999;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: calc(100vw - 1rem);
+  padding: 0.42rem;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background:
+    linear-gradient(135deg, rgba(15, 19, 28, 0.92), rgba(7, 9, 13, 0.82));
+  box-shadow:
+    0 0.75rem 2rem rgba(0, 0, 0, 0.42),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(14px);
+  user-select: none;
+}
+
+.content-banners-controls.is-paused {
+  border-color: rgba(255, 210, 105, 0.36);
+  box-shadow:
+    0 0.75rem 2rem rgba(0, 0, 0, 0.42),
+    0 0 1rem rgba(255, 210, 105, 0.16),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.content-banners-controls.is-dragging {
+  cursor: grabbing;
+  opacity: 0.92;
+}
+
+.content-banners-control {
+  min-width: 2.35rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.content-banners-control:hover,
+.content-banners-control:focus-visible {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.content-banners-control--primary {
+  min-width: 3.35rem;
+  background: rgba(255, 255, 255, 0.86);
+  color: #10131a;
+}
+
+.content-banners-control--primary:hover,
+.content-banners-control--primary:focus-visible {
+  background: #fff;
+  color: #07090d;
+}
+
+.content-banners-control--handle {
+  min-width: 3rem;
+  cursor: grab;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.content-banners-speed {
+  min-width: 2.2rem;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-align: center;
+}
