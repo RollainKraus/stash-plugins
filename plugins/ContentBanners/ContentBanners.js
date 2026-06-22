@@ -4,8 +4,11 @@
   const PLUGIN_ID = "ContentBanners";
   const ROUTE_EVENT = "content-banners:navigation";
   const ROUTE_HOOK_STATE_KEY = "__contentBannersRouteHookState";
+  const CONTROLS_POSITION_STORAGE_KEY = "contentBanners.controlsPosition";
+  const CONTROLS_SPEED_STORAGE_KEY = "contentBanners.speedMultiplier";
   const BANNER_MODES = new Set(["preview", "screenshot", "mixed"]);
   const SELECTION_MODES = new Set(["random", "highest_rating", "most_recent_releases", "recently_added"]);
+  const SPEED_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
   const DEFAULT_BANNER_OVERLAY = 0.38;
   const DEFAULT_BANNER_BRIGHTNESS = 0.62;
   const DEFAULT_BANNER_SATURATION = 1;
@@ -21,6 +24,7 @@
     bannerAdjustments: "0.38,0.62,1.0,0.0",
     bannerObjectPosition: "center 18%",
     showTitle: true,
+    showControls: true,
   };
 
   const state = {
@@ -34,6 +38,10 @@
     rotationTimer: 0,
     refreshTimer: 0,
     routeToken: 0,
+    controls: null,
+    controlsResizeListener: null,
+    isPaused: false,
+    speedMultiplier: 1,
   };
 
   function gql(query, variables = {}) {
@@ -154,6 +162,7 @@
       blur: bannerAdjustments.blur,
       bannerObjectPosition: normalizeObjectPosition(config.bannerObjectPosition),
       showTitle: getConfigBoolean(config.showTitle, DEFAULTS.showTitle),
+      showControls: getConfigBoolean(config.showControls, DEFAULTS.showControls),
     };
   }
 
@@ -190,6 +199,228 @@
     return document.querySelector("div.detail-header");
   }
 
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function getStoredControlsPosition() {
+    try {
+      const position = JSON.parse(localStorage.getItem(CONTROLS_POSITION_STORAGE_KEY) || "null");
+      if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return null;
+      return position;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function saveControlsPosition(x, y) {
+    try {
+      localStorage.setItem(CONTROLS_POSITION_STORAGE_KEY, JSON.stringify({ x: Math.round(x), y: Math.round(y) }));
+    } catch (_error) {
+      // Storage can be blocked in hardened browser profiles; controls still work for the session.
+    }
+  }
+
+  function getStoredSpeedMultiplier() {
+    try {
+      const stored = Number(localStorage.getItem(CONTROLS_SPEED_STORAGE_KEY));
+      if (!Number.isFinite(stored)) return 1;
+      return SPEED_STEPS.includes(stored) ? stored : 1;
+    } catch (_error) {
+      return 1;
+    }
+  }
+
+  function saveSpeedMultiplier() {
+    try {
+      localStorage.setItem(CONTROLS_SPEED_STORAGE_KEY, String(state.speedMultiplier));
+    } catch (_error) {
+      // Non-persistent speed is fine if storage is unavailable.
+    }
+  }
+
+  function getRotationDelayMs() {
+    return Math.max(750, (state.config.rotationSeconds * 1000) / state.speedMultiplier);
+  }
+
+  function getBannerVideos() {
+    return Array.from(state.layer?.querySelectorAll(".content-banners-media video") || []);
+  }
+
+  function syncPlaybackState() {
+    getBannerVideos().forEach((video) => {
+      video.playbackRate = state.speedMultiplier;
+      if (state.isPaused) {
+        video.pause();
+      } else {
+        video.play().catch(() => {});
+      }
+    });
+    updateControlsState();
+  }
+
+  function updateControlsState() {
+    if (!state.controls) return;
+    state.controls.classList.toggle("is-paused", state.isPaused);
+    const playButton = state.controls.querySelector('[data-content-banners-action="toggle"]');
+    const speedLabel = state.controls.querySelector("[data-content-banners-speed]");
+    if (playButton instanceof HTMLButtonElement) {
+      playButton.textContent = state.isPaused ? "Play" : "Pause";
+      playButton.setAttribute("aria-label", state.isPaused ? "Play banner rotation" : "Pause banner rotation");
+    }
+    if (speedLabel) speedLabel.textContent = `${state.speedMultiplier}x`;
+  }
+
+  function applyControlsPosition() {
+    if (!state.controls) return;
+    const rect = state.controls.getBoundingClientRect();
+    const stored = getStoredControlsPosition();
+    const defaultX = 18;
+    const defaultY = 18;
+    const x = clamp(stored?.x ?? defaultX, 8, Math.max(8, window.innerWidth - rect.width - 8));
+    const y = clamp(stored?.y ?? defaultY, 8, Math.max(8, window.innerHeight - rect.height - 8));
+    state.controls.style.left = `${x}px`;
+    state.controls.style.top = `${y}px`;
+  }
+
+  function installControlsDrag(handle) {
+    if (!(handle instanceof HTMLElement)) return;
+    let drag = null;
+
+    handle.addEventListener("pointerdown", (event) => {
+      if (!state.controls) return;
+      const rect = state.controls.getBoundingClientRect();
+      drag = {
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+      };
+      handle.setPointerCapture?.(event.pointerId);
+      state.controls.classList.add("is-dragging");
+      event.preventDefault();
+    });
+
+    handle.addEventListener("pointermove", (event) => {
+      if (!drag || !state.controls) return;
+      const rect = state.controls.getBoundingClientRect();
+      const x = clamp(event.clientX - drag.offsetX, 8, Math.max(8, window.innerWidth - rect.width - 8));
+      const y = clamp(event.clientY - drag.offsetY, 8, Math.max(8, window.innerHeight - rect.height - 8));
+      state.controls.style.left = `${x}px`;
+      state.controls.style.top = `${y}px`;
+    });
+
+    const endDrag = () => {
+      if (!drag || !state.controls) return;
+      const rect = state.controls.getBoundingClientRect();
+      saveControlsPosition(rect.left, rect.top);
+      state.controls.classList.remove("is-dragging");
+      drag = null;
+    };
+
+    handle.addEventListener("pointerup", endDrag);
+    handle.addEventListener("pointercancel", endDrag);
+  }
+
+  function setSpeedStep(direction) {
+    const currentIndex = Math.max(0, SPEED_STEPS.indexOf(state.speedMultiplier));
+    const nextIndex = clamp(currentIndex + direction, 0, SPEED_STEPS.length - 1);
+    state.speedMultiplier = SPEED_STEPS[nextIndex];
+    saveSpeedMultiplier();
+    syncPlaybackState();
+    if (!state.isPaused) scheduleRotation();
+  }
+
+  function seekActiveVideos(seconds) {
+    getBannerVideos()
+      .filter((video) => video.closest(".content-banners-media")?.classList.contains("is-active"))
+      .forEach((video) => {
+        const duration = Number.isFinite(video.duration) ? video.duration : 0;
+        const maxTime = duration > 0 ? Math.max(0, duration - 0.05) : Number.MAX_SAFE_INTEGER;
+        try {
+          video.currentTime = clamp(video.currentTime + seconds, 0, maxTime);
+        } catch (_error) {
+          // Some preview videos briefly reject seeking while metadata is still loading.
+        }
+      });
+  }
+
+  function showItemStep(direction, reschedule = true) {
+    if (state.items.length <= 1) return;
+    const step = Math.max(1, state.panelIndexes.length || 1);
+    state.panelIndexes = state.panelIndexes.map((index) => {
+      const next = index + direction * step;
+      return ((next % state.items.length) + state.items.length) % state.items.length;
+    });
+    state.index = state.panelIndexes[0] || 0;
+    showCurrentItems();
+    if (reschedule && !state.isPaused) scheduleRotation();
+  }
+
+  function removeControls() {
+    state.controls?.remove();
+    state.controls = null;
+    if (state.controlsResizeListener) {
+      window.removeEventListener("resize", state.controlsResizeListener);
+      state.controlsResizeListener = null;
+    }
+  }
+
+  function ensureControls() {
+    if (!state.config.showControls || !state.layer || !state.items.length) {
+      removeControls();
+      return;
+    }
+
+    if (state.controls?.isConnected) {
+      applyControlsPosition();
+      updateControlsState();
+      return;
+    }
+
+    const controls = document.createElement("div");
+    controls.className = "content-banners-controls";
+    controls.innerHTML = `
+      <button class="content-banners-control content-banners-control--handle" type="button" aria-label="Move banner controls" title="Move">Move</button>
+      <button class="content-banners-control" type="button" data-content-banners-action="previous" aria-label="Previous banner" title="Previous">Prev</button>
+      <button class="content-banners-control" type="button" data-content-banners-action="seek-back" aria-label="Rewind preview 1 second" title="Rewind 1 second">-1s</button>
+      <button class="content-banners-control content-banners-control--primary" type="button" data-content-banners-action="toggle" aria-label="Pause banner rotation" title="Play/Pause">Pause</button>
+      <button class="content-banners-control" type="button" data-content-banners-action="seek-forward" aria-label="Skip preview 1 second" title="Skip 1 second">+1s</button>
+      <button class="content-banners-control" type="button" data-content-banners-action="next" aria-label="Next banner" title="Next">Next</button>
+      <button class="content-banners-control" type="button" data-content-banners-action="slower" aria-label="Decrease banner speed" title="Slower">-</button>
+      <span class="content-banners-speed" data-content-banners-speed>1x</span>
+      <button class="content-banners-control" type="button" data-content-banners-action="faster" aria-label="Increase banner speed" title="Faster">+</button>
+    `;
+
+    controls.addEventListener("click", (event) => {
+      const button = event.target instanceof HTMLElement ? event.target.closest("[data-content-banners-action]") : null;
+      if (!(button instanceof HTMLButtonElement)) return;
+      const action = button.dataset.contentBannersAction;
+      if (action === "previous") showItemStep(-1);
+      if (action === "next") showItemStep(1);
+      if (action === "seek-back") seekActiveVideos(-1);
+      if (action === "seek-forward") seekActiveVideos(1);
+      if (action === "toggle") {
+        state.isPaused = !state.isPaused;
+        window.clearTimeout(state.rotationTimer);
+        syncPlaybackState();
+        if (!state.isPaused) scheduleRotation();
+      }
+      if (action === "slower") setSpeedStep(-1);
+      if (action === "faster") setSpeedStep(1);
+    });
+
+    document.body.appendChild(controls);
+    state.controls = controls;
+    if (!state.controlsResizeListener) {
+      state.controlsResizeListener = () => applyControlsPosition();
+      window.addEventListener("resize", state.controlsResizeListener);
+    }
+    installControlsDrag(controls.querySelector(".content-banners-control--handle"));
+    requestAnimationFrame(() => {
+      applyControlsPosition();
+      updateControlsState();
+    });
+  }
+
   function clearBanner() {
     window.clearTimeout(state.rotationTimer);
     window.clearTimeout(state.refreshTimer);
@@ -207,6 +438,7 @@
     }
     state.layer?.remove();
     state.titleLayer?.remove();
+    removeControls();
     state.target = null;
     state.layer = null;
     state.titleLayer = null;
@@ -387,6 +619,7 @@
       video.loop = true;
       video.playsInline = true;
       video.preload = "metadata";
+      video.playbackRate = state.speedMultiplier;
       video.onerror = () => {
         if (item.screenshot) {
           renderImage(slot, item.screenshot);
@@ -396,12 +629,16 @@
         }
       };
       slot.appendChild(video);
-      video.play().catch(() => {
-        if (item.screenshot) {
-          renderImage(slot, item.screenshot);
-          requestAnimationFrame(() => slot.classList.add("is-active"));
-        }
-      });
+      if (state.isPaused) {
+        video.pause();
+      } else {
+        video.play().catch(() => {
+          if (item.screenshot) {
+            renderImage(slot, item.screenshot);
+            requestAnimationFrame(() => slot.classList.add("is-active"));
+          }
+        });
+      }
     } else {
       renderImage(slot, url);
     }
@@ -462,25 +699,23 @@
     if (!rendered) {
       showEmpty("No usable banner media found.");
     }
+    syncPlaybackState();
   }
 
   function showNextItem() {
-    if (state.items.length <= 1) return;
-    const step = Math.max(1, state.panelIndexes.length || 1);
-    state.panelIndexes = state.panelIndexes.map((index) => (index + step) % state.items.length);
-    state.index = state.panelIndexes[0] || 0;
-    showCurrentItems();
-    scheduleRotation();
+    showItemStep(1);
   }
 
   function scheduleRotation() {
     window.clearTimeout(state.rotationTimer);
+    if (state.isPaused) return;
     if (state.items.length <= 1) return;
-    state.rotationTimer = window.setTimeout(showNextItem, state.config.rotationSeconds * 1000);
+    state.rotationTimer = window.setTimeout(showNextItem, getRotationDelayMs());
   }
 
   function showEmpty(message) {
     if (!state.layer) return;
+    removeControls();
     state.layer.querySelectorAll(".content-banners-media").forEach((slot) => {
       slot.classList.remove("is-active");
       slot.replaceChildren();
@@ -535,6 +770,7 @@
     }
 
     showCurrentItems();
+    ensureControls();
     scheduleRotation();
   }
 
@@ -591,6 +827,7 @@
       window.__contentBannersCleanup();
     }
     window.__contentBannersCleanup = cleanup;
+    state.speedMultiplier = getStoredSpeedMultiplier();
     installRouteHooks();
     refreshBanner().catch((error) => console.warn("[ContentBanners] Startup failed.", error));
   }
