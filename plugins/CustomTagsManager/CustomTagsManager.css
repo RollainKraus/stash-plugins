@@ -105,6 +105,13 @@
   background: rgba(255, 255, 255, 0.14);
 }
 
+#tag-manager-host .tag-manager__summary-button:disabled,
+#tag-manager-host .tag-manager__summary-button.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
 #tag-manager-host .tag-manager__summary-button:active {
   transform: translateY(1px);
 }
@@ -810,7 +817,7 @@
 
 #tag-manager-host .tag-manager__inspector-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(240px, 0.5fr);
+  grid-template-columns: minmax(0, 1.72fr) minmax(190px, 0.34fr);
   gap: 0.8rem;
   align-items: start;
 }
@@ -1077,9 +1084,9 @@
 }
 
 #tag-manager-host .tag-manager__meta-card--usage .tag-manager__usage-badges {
-  flex-wrap: nowrap;
-  justify-content: space-between;
-  gap: 0.24rem;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 0.3rem;
 }
 
 #tag-manager-host .tag-manager__usage-badge {
@@ -1109,14 +1116,17 @@
 }
 
 #tag-manager-host .tag-manager__meta-card--usage .tag-manager__usage-badge {
-  flex: 1 1 0;
-  min-width: 0;
+  flex: 1 1 4.8rem;
+  min-width: max-content;
   justify-content: center;
-  padding-inline: 0.35rem;
+  padding-inline: 0.45rem;
   font-size: 0.7rem;
 }
 
 #tag-manager-host .tag-manager__meta-card--usage .tag-manager__usage-badge strong {
+  display: inline-block;
+  flex: 0 0 auto;
+  min-width: max-content;
   white-space: nowrap;
 }
 
@@ -1124,6 +1134,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
   min-width: 0.9rem;
   color: #eef4fd;
 }
@@ -1182,6 +1193,23 @@
   border-radius: 1rem;
   background: rgba(255, 255, 255, 0.03);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+#tag-manager-host .tag-manager__main-image-slot {
+  display: grid;
+  gap: 0.55rem;
+  align-content: start;
+}
+
+#tag-manager-host .tag-manager__main-image-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+#tag-manager-host .tag-manager__main-image-set,
+#tag-manager-host .tag-manager__main-image-clear {
+  white-space: nowrap;
 }
 
 #tag-manager-host .tag-manager__image-preview-grid[data-main-aspect="wide"] .tag-manager__image-preview--main {
@@ -1267,10 +1295,11 @@
 
 #tag-manager-host .tag-manager__supplemental-input-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 0.45rem;
 }
 
+#tag-manager-host .tag-manager__supplemental-set,
 #tag-manager-host .tag-manager__supplemental-clear {
   white-space: nowrap;
 }
@@ -1442,6 +1471,71 @@
   gap: 0.8rem;
 }
 
+#tag-manager-host .tag-manager__relationship-card {
+  margin-top: 1.1rem;
+}
+
+#tag-manager-host .tag-manager__relationship-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+  align-items: start;
+}
+
+#tag-manager-host .tag-manager__expanded-sort-workspace {
+  display: grid;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+#tag-manager-host .tag-manager__expanded-sort-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+#tag-manager-host .tag-manager__sort-workspace-status {
+  flex: 0 0 auto;
+  padding: 0.34rem 0.68rem;
+  border-radius: 999px;
+  background: var(--ctm-surface-muted);
+  color: var(--ctm-text);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+#tag-manager-host .tag-manager__expanded-sort-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+#tag-manager-host .tag-manager__expanded-sort-pane {
+  display: grid;
+  grid-template-rows: auto minmax(24rem, 70vh);
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.75rem;
+  border-radius: 0.9rem;
+  background: var(--ctm-surface);
+  border: 1px solid var(--ctm-border);
+}
+
+#tag-manager-host .tag-manager__expanded-sort-pane-header {
+  display: grid;
+  gap: 0.18rem;
+}
+
+#tag-manager-host .tag-manager__expanded-sort-tree-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding: 0.45rem 0.35rem;
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--ctm-surface-muted) 46%, transparent);
+}
+
 #tag-manager-host .tag-manager__editor-split {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1452,6 +1546,10 @@
 #tag-manager-host .tag-manager__editor-card--primary {
   min-height: 54rem;
   align-content: start;
+}
+
+#tag-manager-host .tag-manager__editor-card--primary > .tag-manager__field-grid {
+  margin-top: 1.75rem;
 }
 
 #tag-manager-host .tag-manager__editor-card--primary.is-organized {
@@ -1799,6 +1897,13 @@
 }
 
 @media (max-width: 900px) {
+  #tag-manager-host .tag-manager__layout,
+  #tag-manager-host.is-expanded-sort-mode .tag-manager__layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
   #tag-manager-toolbar {
     margin-left: 0;
     margin-top: 0.45rem;
@@ -1821,11 +1926,327 @@
   #tag-manager-host .tag-manager__field-grid,
   #tag-manager-host .tag-manager__inline-form,
   #tag-manager-host .tag-manager__editor-split,
+  #tag-manager-host .tag-manager__relationship-grid,
   #tag-manager-host .tag-manager__split-grid {
     grid-template-columns: 1fr;
   }
 
   #tag-manager-host .tag-manager__meta-card--usage .tag-manager__usage-badges {
     flex-wrap: wrap;
+  }
+}
+
+/* Theme bridge: prefer Stash/Bootstrap/custom-theme variables over fixed plugin colors. */
+#tag-manager-host.tag-manager,
+#custom-tags-manager-hover-preview.tag-manager-hover-preview,
+#custom-tags-manager-tag-detail-panel.custom-tags-manager-tag-detail-panel {
+  --ctm-bg: var(--bs-body-bg, var(--body-bg, var(--body-background, #1f2326)));
+  --ctm-surface: var(--bs-card-bg, var(--card-bg, var(--secondary-bg, rgba(255, 255, 255, 0.04))));
+  --ctm-surface-muted: var(--bs-secondary-bg, var(--secondary, rgba(255, 255, 255, 0.07)));
+  --ctm-border: var(--bs-border-color, var(--border-color, rgba(255, 255, 255, 0.12)));
+  --ctm-text: var(--bs-body-color, var(--body-color, var(--text-color, #f5f8fa)));
+  --ctm-muted: var(--bs-secondary-color, var(--text-muted, #adb5bd));
+  --ctm-input-bg: var(--input-bg, var(--bs-body-bg, rgba(255, 255, 255, 0.05)));
+  --ctm-input-border: var(--input-border-color, var(--ctm-border));
+  --ctm-accent: var(--bs-primary, var(--primary, #d49c21));
+  --ctm-success: var(--bs-success, var(--success, #28a745));
+  --ctm-danger: var(--bs-danger, var(--danger, #dc3545));
+}
+
+#tag-manager-host.tag-manager {
+  color: var(--ctm-text);
+  background: var(--ctm-bg);
+  border-color: var(--ctm-border);
+  box-shadow: none;
+}
+
+#tag-manager-host .tag-manager__tree-wrap,
+#tag-manager-host .tag-manager__group,
+#tag-manager-host .tag-manager__root-section,
+#tag-manager-host .tag-manager__editor-card,
+#tag-manager-host .tag-manager__meta-card,
+#tag-manager-host .tag-manager__empty-state,
+#tag-manager-host .tag-manager__image-preview--main,
+#tag-manager-host .tag-manager__supplemental-preview,
+#tag-manager-host .tag-manager__image-picker,
+#custom-tags-manager-hover-preview .tag-manager-hover-preview__card,
+#custom-tags-manager-tag-detail-panel.custom-tags-manager-tag-detail-panel,
+#custom-tags-manager-tag-detail-panel .custom-tags-manager-tag-detail-panel__slot {
+  background: var(--ctm-surface);
+  border-color: var(--ctm-border);
+  box-shadow: none;
+}
+
+#tag-manager-host .tag-manager__root-header,
+#tag-manager-host .tag-manager__group-header,
+#tag-manager-host .tag-manager__subgroup-header,
+#tag-manager-host .tag-manager__tree-item,
+#tag-manager-host .tag-manager__search-result,
+#tag-manager-host .tag-manager__attach-result,
+#tag-manager-host .tag-manager__chip,
+#tag-manager-host .tag-manager__child-chip,
+#tag-manager-host .tag-manager__alias-chip,
+#tag-manager-host .tag-manager__usage-badge,
+#tag-manager-host .tag-manager__id-chip,
+#tag-manager-host .tag-manager__summary-button,
+#tag-manager-host .tag-manager__filter-chip,
+#custom-tags-manager-hover-preview .tag-manager-hover-preview__image-frame,
+#custom-tags-manager-hover-preview .tag-manager-hover-preview__image-empty {
+  background: var(--ctm-surface-muted);
+  color: var(--ctm-text);
+}
+
+#tag-manager-host .tag-manager__root-title,
+#tag-manager-host .tag-manager__tree-item-name,
+#tag-manager-host .tag-manager__search-name,
+#tag-manager-host .tag-manager__inspector-title,
+#tag-manager-host .tag-manager__section-title,
+#tag-manager-host .tag-manager__meta-value,
+#custom-tags-manager-hover-preview .tag-manager-hover-preview__title,
+#custom-tags-manager-tag-detail-panel .custom-tags-manager-tag-detail-panel__header {
+  color: var(--ctm-text);
+}
+
+#tag-manager-host .tag-manager__summary,
+#tag-manager-host .tag-manager__summary-note,
+#tag-manager-host .tag-manager__root-meta,
+#tag-manager-host .tag-manager__root-empty,
+#tag-manager-host .tag-manager__search-meta,
+#tag-manager-host .tag-manager__helper,
+#tag-manager-host .tag-manager__meta-label,
+#tag-manager-host .tag-manager__field-label,
+#tag-manager-host .tag-manager__field-note,
+#tag-manager-host .tag-manager__attach-result-meta,
+#tag-manager-host .tag-manager__meta-empty,
+#tag-manager-host .tag-manager__empty,
+#tag-manager-host .tag-manager__empty-state,
+#custom-tags-manager-hover-preview .tag-manager-hover-preview__description,
+#custom-tags-manager-hover-preview .tag-manager-hover-preview__image-empty {
+  color: var(--ctm-muted);
+}
+
+#tag-manager-host .tag-manager__input,
+#tag-manager-host .tag-manager__textarea {
+  color: var(--ctm-text);
+  background: var(--ctm-input-bg);
+  border-color: var(--ctm-input-border);
+}
+
+#tag-manager-host .tag-manager__input:focus,
+#tag-manager-host .tag-manager__textarea:focus {
+  border-color: var(--ctm-accent);
+  box-shadow: 0 0 0 0.12rem color-mix(in srgb, var(--ctm-accent) 28%, transparent);
+}
+
+#tag-manager-host .tag-manager__filter-chip.is-active,
+#tag-manager-host .tag-manager__summary-button.is-active,
+#tag-manager-host .tag-manager__group-header.is-selected,
+#tag-manager-host .tag-manager__subgroup-header.is-selected,
+#tag-manager-host .tag-manager__tree-item.is-selected,
+#tag-manager-host .tag-manager__usage-badge--total {
+  border-color: var(--ctm-accent);
+  box-shadow: inset 0 0 0 1px var(--ctm-accent);
+}
+
+#tag-manager-host .tag-manager__filter-chip--new,
+#tag-manager-host .tag-manager__summary-button--apply,
+#tag-manager-host .tag-manager__editor-card--primary.is-organized,
+#tag-manager-host .tag-manager__id-chip.is-organized,
+#tag-manager-host .tag-manager__group-header.is-organized,
+#tag-manager-host .tag-manager__subgroup-header.is-organized,
+#tag-manager-host .tag-manager__tree-item.is-organized {
+  border-color: var(--ctm-success);
+  box-shadow: inset 0 0 0 1px var(--ctm-success);
+}
+
+#tag-manager-host .tag-manager__status--success {
+  color: var(--ctm-success);
+}
+
+#tag-manager-host .tag-manager__status--error,
+#tag-manager-host .tag-manager__delete-button,
+#tag-manager-host .tag-manager__danger-title {
+  color: var(--ctm-danger);
+}
+
+/* Outline hierarchy layout. Keeps existing controls/states while reducing card chrome. */
+#tag-manager-host .tag-manager__layout {
+  grid-template-columns: minmax(210px, 23vw) minmax(0, 1fr);
+}
+
+#tag-manager-host .tag-manager__inspector-grid {
+  grid-template-columns: minmax(0, 1.72fr) minmax(190px, 0.34fr);
+}
+
+#tag-manager-host .tag-manager__tree-wrap {
+  padding: 0.55rem 0.45rem;
+}
+
+#tag-manager-host .tag-manager__root-body {
+  gap: 0.05rem;
+  padding: 0.25rem 0.1rem 0.35rem;
+}
+
+#tag-manager-host .tag-manager__group,
+#tag-manager-host .tag-manager__root-section,
+#tag-manager-host .tag-manager__subgroup {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+  margin: 0;
+}
+
+#tag-manager-host .tag-manager__root-section {
+  border-top: 1px solid var(--ctm-border);
+  padding-top: 0.25rem;
+}
+
+#tag-manager-host .tag-manager__root-section + .tag-manager__root-section,
+#tag-manager-host .tag-manager__group + .tag-manager__group {
+  margin-top: 0.25rem;
+}
+
+#tag-manager-host .tag-manager__root-header {
+  min-height: 2.1rem;
+  padding: 0.36rem 0.45rem;
+  border-radius: 0.45rem;
+  background: transparent;
+  box-shadow: none;
+}
+
+#tag-manager-host .tag-manager__group-header,
+#tag-manager-host .tag-manager__subgroup-header,
+#tag-manager-host .tag-manager__tree-item {
+  min-height: 2rem;
+  gap: 0.45rem;
+  padding-top: 0.2rem;
+  padding-bottom: 0.2rem;
+  border-radius: 0.45rem;
+  background: transparent;
+  box-shadow: none;
+}
+
+#tag-manager-host .tag-manager__group-header {
+  padding-left: 0.2rem;
+  padding-right: 0.35rem;
+  font-size: 0.94rem;
+  font-weight: 750;
+}
+
+#tag-manager-host .tag-manager__subgroup-header {
+  margin: 0;
+  padding-left: 1.35rem;
+  padding-right: 0.35rem;
+  font-size: 0.88rem;
+}
+
+#tag-manager-host .tag-manager__tree-item {
+  padding-left: 2.65rem;
+  padding-right: 0.35rem;
+  font-size: 0.84rem;
+}
+
+#tag-manager-host .tag-manager__subgroup-children .tag-manager__tree-item {
+  padding-left: 3.95rem;
+}
+
+#tag-manager-host .tag-manager__group-body,
+#tag-manager-host .tag-manager__subgroup-children {
+  gap: 0.03rem;
+  position: relative;
+}
+
+#tag-manager-host .tag-manager__subgroup,
+#tag-manager-host .tag-manager__tree-item {
+  border-top: 0;
+}
+
+#tag-manager-host .tag-manager__subgroup::before,
+#tag-manager-host .tag-manager__subgroup-children .tag-manager__tree-item::before,
+#tag-manager-host .tag-manager__group-body > .tag-manager__tree-item::before {
+  content: "";
+  position: absolute;
+  top: 0.98rem;
+  width: 0.55rem;
+  border-top: 1px solid color-mix(in srgb, var(--ctm-muted) 38%, transparent);
+  pointer-events: none;
+}
+
+#tag-manager-host .tag-manager__subgroup::before {
+  left: 0.82rem;
+}
+
+#tag-manager-host .tag-manager__group-body > .tag-manager__tree-item::before {
+  left: 1.95rem;
+}
+
+#tag-manager-host .tag-manager__subgroup-children .tag-manager__tree-item::before {
+  left: 3.2rem;
+}
+
+#tag-manager-host .tag-manager__group-main,
+#tag-manager-host .tag-manager__subgroup-main,
+#tag-manager-host .tag-manager__tree-item-main {
+  padding: 0.25rem 0;
+  font-size: inherit;
+  min-width: 0;
+}
+
+#tag-manager-host .tag-manager__row-left {
+  gap: 0.38rem;
+}
+
+#tag-manager-host .tag-manager__row-actions {
+  gap: 0.18rem;
+}
+
+#tag-manager-host .tag-manager__tree-toggle,
+#tag-manager-host .tag-manager__batch-toggle,
+#tag-manager-host .tag-manager__drag-handle,
+#tag-manager-host .tag-manager__sort-handle {
+  width: 1.65rem;
+  min-width: 1.65rem;
+  height: 1.65rem;
+}
+
+#tag-manager-host .tag-manager__sort-badge {
+  min-width: 1.65rem;
+  height: 1.35rem;
+  padding: 0 0.32rem;
+  font-size: 0.68rem;
+}
+
+#tag-manager-host.is-expanded-sort-mode .tag-manager__layout {
+  grid-template-columns: minmax(280px, 22vw) minmax(0, 1fr);
+}
+
+#tag-manager-host.is-expanded-sort-mode .tag-manager__inspector {
+  align-content: stretch;
+}
+
+#tag-manager-host .tag-manager__group.is-expanded > .tag-manager__group-header,
+#tag-manager-host .tag-manager__subgroup.is-expanded > .tag-manager__subgroup-header {
+  border-radius: 0.45rem;
+}
+
+#tag-manager-host .tag-manager__group-main:hover,
+#tag-manager-host .tag-manager__subgroup-main:hover,
+#tag-manager-host .tag-manager__tree-item-main:hover {
+  background: transparent;
+}
+
+@media (max-width: 1180px) {
+  #tag-manager-host .tag-manager__layout {
+    grid-template-columns: minmax(220px, 32vw) minmax(0, 1fr);
+  }
+
+  #tag-manager-host .tag-manager__inspector-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #tag-manager-host .tag-manager__expanded-sort-grid {
+    grid-template-columns: 1fr;
   }
 }
