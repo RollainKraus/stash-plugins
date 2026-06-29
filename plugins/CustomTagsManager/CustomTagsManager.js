@@ -16,6 +16,7 @@
   const TAG_DETAIL_PANEL_ID = "custom-tags-manager-tag-detail-panel";
   const DEFAULT_CONFIG = {
     treeExpansionBehavior: "remember",
+    enableGeneratedSortOrder: true,
   };
   const RETRY_DELAYS = [0, 180, 420, 900];
   const SEARCH_LIMIT = 50;
@@ -96,9 +97,13 @@
     status: { type: "", text: "" },
     isSaving: false,
     sortMode: false,
+    expandedSortMode: false,
     sortOriginalContainers: null,
+    sortOriginalParentIds: null,
+    sortPendingParentIds: new Map(),
     sortDirectChangeIds: new Set(),
     treeScrollTop: 0,
+    expandedSortScrollTop: { left: 0, right: 0 },
     dragKind: "",
     draggingTagId: "",
     dragOverTagId: "",
@@ -207,6 +212,10 @@
     )
       .trim()
       .toLowerCase();
+    const enableGeneratedSortOrder = normalizeBooleanSetting(
+      raw?.c_enableGeneratedSortOrder ?? raw?.enableGeneratedSortOrder,
+      DEFAULT_CONFIG.enableGeneratedSortOrder
+    );
 
     return {
       treeExpansionBehavior:
@@ -215,7 +224,24 @@
         treeExpansionBehavior === "remember"
           ? treeExpansionBehavior
           : DEFAULT_CONFIG.treeExpansionBehavior,
+      enableGeneratedSortOrder,
     };
+  }
+
+  function normalizeBooleanSetting(value, fallback = false) {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value !== 0;
+    const normalized = String(value ?? "")
+      .trim()
+      .toLowerCase();
+    if (!normalized) return !!fallback;
+    if (["true", "1", "yes", "on", "enabled"].includes(normalized)) return true;
+    if (["false", "0", "no", "off", "disabled"].includes(normalized)) return false;
+    return !!fallback;
+  }
+
+  function isGeneratedSortOrderEnabled() {
+    return cache.config?.enableGeneratedSortOrder !== false;
   }
 
   function loadConfig() {
@@ -310,8 +336,17 @@
       .replace(/[^\d]/g, "");
   }
 
+  function normalizeSupplementalImageValue(value) {
+    return String(value ?? "").trim();
+  }
+
+  function isSupplementalImageId(value) {
+    const raw = normalizeSupplementalImageValue(value);
+    return !!raw && /^\d+$/.test(raw);
+  }
+
   function getSupplementalImageValue(customFields, key) {
-    return normalizeSupplementalImageId(customFields?.[key]);
+    return normalizeSupplementalImageValue(customFields?.[key]);
   }
 
   function getSupplementalImagePath(imageRecord) {
@@ -320,7 +355,8 @@
 
   function getSupplementalImageIdsFromDraft(draft) {
     if (!draft) return [];
-    return SUPPLEMENTAL_IMAGE_FIELDS.map((field) => normalizeSupplementalImageId(draft?.[field.draftKey]))
+    return SUPPLEMENTAL_IMAGE_FIELDS.map((field) => normalizeSupplementalImageValue(draft?.[field.draftKey]))
+      .filter(isSupplementalImageId)
       .filter(Boolean);
   }
 
@@ -340,8 +376,8 @@
     const partial = {};
     let changed = false;
     SUPPLEMENTAL_IMAGE_FIELDS.forEach((field) => {
-      const nextValue = normalizeSupplementalImageId(draft?.[field.draftKey]);
-      const currentValue = normalizeSupplementalImageId(currentRecord?.[field.draftKey]);
+      const nextValue = normalizeSupplementalImageValue(draft?.[field.draftKey]);
+      const currentValue = normalizeSupplementalImageValue(currentRecord?.[field.draftKey]);
       if (nextValue !== currentValue) {
         partial[field.key] = nextValue;
         changed = true;
@@ -447,9 +483,11 @@
 
     pushImage(record?.image_path, record?.name || "Primary image");
     SUPPLEMENTAL_IMAGE_FIELDS.forEach((field, index) => {
-      const imageId = normalizeSupplementalImageId(record?.[field.draftKey]);
-      if (!imageId) return;
-      const preview = getSupplementalImagePath(cache.supplementalImages.get(imageId));
+      const value = normalizeSupplementalImageValue(record?.[field.draftKey]);
+      if (!value) return;
+      const preview = isSupplementalImageId(value)
+        ? getSupplementalImagePath(cache.supplementalImages.get(value))
+        : value;
       pushImage(preview, field.label || `Supplemental image ${index + 1}`);
     });
 
@@ -1303,6 +1341,7 @@
   function renderSidebarSummary() {
     const summary = getSummary();
     const sortStats = getSortModeChangeStats();
+    const generatedSortEnabled = isGeneratedSortOrderEnabled();
     return `
       <div class="tag-manager__summary-bar">
         <div class="tag-manager__summary-row">
@@ -1314,9 +1353,17 @@
           <div class="tag-manager__summary-actions">
             <button
               type="button"
-              class="tag-manager__summary-button ${state.sortMode ? "is-active" : ""}"
+              class="tag-manager__summary-button ${state.sortMode ? "is-active" : ""} ${
+                generatedSortEnabled ? "" : "is-disabled"
+              }"
               data-action="toggle-sort-mode"
               aria-pressed="${state.sortMode ? "true" : "false"}"
+              title="${
+                generatedSortEnabled
+                  ? "Drag/reorder tags and generate sort names"
+                  : "Generated sort order is disabled in plugin settings. Use each tag's Sort Name field instead."
+              }"
+              ${generatedSortEnabled ? "" : "disabled"}
             >${state.sortMode ? "Exit Sort Mode" : "Sort Mode"}</button>
           </div>
         </div>
@@ -1328,9 +1375,15 @@
                       sortStats.changedTags === 1 ? "" : "s"
                     } across ${formatCount(sortStats.changedContainers)} changed section${
                       sortStats.changedContainers === 1 ? "" : "s"
+                    }${
+                      sortStats.changedParents
+                        ? `, including ${formatCount(sortStats.changedParents)} hierarchy move${
+                            sortStats.changedParents === 1 ? "" : "s"
+                          }`
+                        : ""
                     }. `
                   : ""
-              }Drag sort handles to reorder within a sibling list. Tags with multiple parents are marked Multi and will be skipped by sort mode.</div>
+              }Drag sort handles to reorder within or between hierarchy sections. Tags with multiple parents are marked Multi and will be skipped by sort mode.</div>
               <div class="tag-manager__summary-actions tag-manager__summary-actions--sort-mode">
                 <button
                   type="button"
@@ -1342,7 +1395,14 @@
                   class="tag-manager__summary-button"
                   data-action="discard-sort-order"
                 >Discard</button>
+                <button
+                  type="button"
+                  class="tag-manager__summary-button ${state.expandedSortMode ? "is-active" : ""}"
+                  data-action="toggle-expanded-sort-mode"
+                >${state.expandedSortMode ? "Compact Sort View" : "Expanded Sort View"}</button>
               </div>`
+            : !generatedSortEnabled
+            ? `<div class="tag-manager__summary-note">Generated Sort Mode is disabled in plugin settings. Manual Sort Name fields are still loaded after refresh and can be edited per tag.</div>`
             : ""
         }
       </div>
@@ -1386,9 +1446,19 @@
     return snapshot;
   }
 
+  function buildCurrentParentSnapshot(tagMap = state.tagMap) {
+    const snapshot = new Map();
+    tagMap.forEach((record, id) => {
+      snapshot.set(String(id), (record?.parentIds || []).map(String).sort());
+    });
+    return snapshot;
+  }
+
   function ensureSortOrderBaseline(forceReset = false) {
     if (forceReset || !(state.sortOriginalContainers instanceof Map)) {
       state.sortOriginalContainers = buildCurrentSortSnapshot();
+      state.sortOriginalParentIds = buildCurrentParentSnapshot();
+      state.sortPendingParentIds = new Map();
       state.sortDirectChangeIds = new Set();
     }
     return state.sortOriginalContainers;
@@ -1396,6 +1466,8 @@
 
   function clearSortOrderBaseline() {
     state.sortOriginalContainers = null;
+    state.sortOriginalParentIds = null;
+    state.sortPendingParentIds = new Map();
     state.sortDirectChangeIds = new Set();
   }
 
@@ -1430,11 +1502,15 @@
         if (String(container.originalIds?.[index] || "") !== String(id || "")) changedIds.add(String(id));
       });
     });
+    state.sortPendingParentIds.forEach((parentIds, id) => {
+      void parentIds;
+      changedIds.add(String(id));
+    });
     return Array.from(changedIds);
   }
 
   function hasPendingSortOrderChanges() {
-    return getSortModeChangedContainers().length > 0;
+    return getSortModeChangedContainers().length > 0 || state.sortPendingParentIds.size > 0;
   }
 
   function getSortModeChangeStats() {
@@ -1443,6 +1519,7 @@
     return {
       changedContainers: changedContainers.length,
       changedTags: changedTags.length,
+      changedParents: state.sortPendingParentIds.size,
     };
   }
 
@@ -1459,12 +1536,16 @@
     const recordId = String(record?.id || "");
     const current = Number(currentPosition) || 0;
     const original = eligible ? getOriginalSortPosition(containerKey, recordId) : 0;
-    const changed = !!eligible && !!original && !!current && original !== current;
+    const parentChanged = state.sortPendingParentIds.has(recordId);
+    const positionChanged = !!eligible && !!original && !!current && original !== current;
+    const changed = parentChanged || positionChanged;
     const changeType = changed && state.sortDirectChangeIds.has(recordId) ? "direct" : changed ? "indirect" : "";
     const label = getSortModeEligibilityLabel(record);
     const title = eligible
       ? changed
-        ? changeType === "direct"
+        ? parentChanged
+          ? "Pending hierarchy move and sort position update"
+          : changeType === "direct"
           ? `Manually moved from sort position ${original} to ${current}`
           : `Affected by another move: original sort position ${original}, pending sort position ${current}`
         : `Current sort position ${current}`
@@ -1571,7 +1652,7 @@
       renderFontAwesomeIconMarkup(checked ? "faSquareCheck" : "faSquare", {
         className: "tag-manager__batch-toggle-icon",
         title: checked ? `Deselect ${label || "tag"}` : `Select ${label || "tag"}`,
-      }) || `<span class="tag-manager__batch-toggle-fallback">${checked ? "☑" : "☐"}</span>`;
+      }) || `<span class="tag-manager__batch-toggle-fallback">${checked ? "[x]" : "[ ]"}</span>`;
     return `
       <button
         type="button"
@@ -1612,7 +1693,7 @@
     if (mode === "add-parent" && (sourceRecord.parentIds || []).includes(targetId)) {
       return "Current tag already has that parent.";
     }
-    if (isDescendantTag(sourceId, targetId)) {
+    if (isDescendantTag(sourceId, targetId, tagMap)) {
       return "You cannot reparent a tag beneath one of its descendants.";
     }
     if (!canAttachTagToParent(sourceId, targetId, tagMap)) {
@@ -1632,7 +1713,7 @@
     if (!canTagHaveChildren(sourceId, tagMap)) return "Current tag is already under 2 tag groups.";
     if (sourceId === targetId) return "Select a different tag.";
     if ((targetRecord.parentIds || []).includes(sourceId)) return "Selected tag is already a child of the current tag.";
-    if (isDescendantTag(targetId, sourceId)) {
+    if (isDescendantTag(targetId, sourceId, tagMap)) {
       return "You cannot attach an ancestor beneath its descendant.";
     }
     if (!canAttachTagToParent(targetId, sourceId, tagMap)) {
@@ -1661,7 +1742,7 @@
     if (sourceParents.every((parentId) => (targetRecord.parentIds || []).map(String).includes(parentId))) {
       return "Selected tag already shares those parents.";
     }
-    if (sourceParents.some((parentId) => parentId === targetId || isDescendantTag(targetId, parentId))) {
+    if (sourceParents.some((parentId) => parentId === targetId || isDescendantTag(targetId, parentId, tagMap))) {
       return "That sibling relationship would create an invalid hierarchy.";
     }
     if (sourceParents.some((parentId) => !canAttachTagToParent(targetId, parentId, tagMap))) {
@@ -1762,6 +1843,7 @@
     const currentImage = String(getDraftImageByTarget(target) || "").trim();
     return `
       <div class="tag-manager__image-picker">
+        <input class="tag-manager__file-input" type="file" accept="image/*" data-field="image-file" data-image-target="${escapeHtml(target)}" />
         <div class="tag-manager__image-picker-row">
           <button type="button" class="btn btn-secondary tag-manager__picker-button" data-action="open-image-url-picker" data-image-target="${escapeHtml(target)}">From URL</button>
           <button type="button" class="btn btn-secondary tag-manager__picker-button" data-action="open-image-file-picker" data-image-target="${escapeHtml(target)}">From File</button>
@@ -2050,10 +2132,12 @@
   }
 
   function renderSupplementalImageField(field, draft) {
-    const imageId = normalizeSupplementalImageId(draft?.[field.draftKey]);
-    const imageRecord = imageId ? cache.supplementalImages.get(imageId) : null;
-    const previewPath = getSupplementalImagePath(imageRecord);
-    const isMissing = !!imageId && cache.supplementalImages.has(imageId) && !imageRecord;
+    const value = normalizeSupplementalImageValue(draft?.[field.draftKey]);
+    const usesImageId = isSupplementalImageId(value);
+    const imageRecord = usesImageId ? cache.supplementalImages.get(value) : null;
+    const previewPath = usesImageId ? getSupplementalImagePath(imageRecord) : value;
+    const isMissing = usesImageId && cache.supplementalImages.has(value) && !imageRecord;
+    const imageTarget = `supplemental:${field.draftKey}`;
 
     return `
       <div class="tag-manager__supplemental-slot" data-preview-slot="${escapeHtml(field.draftKey)}">
@@ -2075,21 +2159,28 @@
               id="tag-manager-${escapeHtml(field.draftKey)}"
               class="tag-manager__input"
               type="text"
-              inputmode="numeric"
-              pattern="[0-9]*"
               data-field="draft-${escapeHtml(field.draftKey)}"
-              value="${escapeHtml(imageId)}"
-              placeholder="Stash image ID"
+              value="${escapeHtml(value)}"
+              placeholder="Stash image ID or image URL"
               ${state.isSaving ? "disabled" : ""}
             />
+            <button
+              type="button"
+              class="btn btn-secondary tag-manager__supplemental-set"
+              data-action="toggle-image-picker"
+              data-image-target="${escapeHtml(imageTarget)}"
+              ${state.isSaving ? "disabled" : ""}
+            >Set</button>
             <button
               type="button"
               class="btn btn-secondary tag-manager__supplemental-clear"
               data-action="clear-supplemental-image"
               data-supplemental-slot="${escapeHtml(field.draftKey)}"
-              ${imageId && !state.isSaving ? "" : "disabled"}
+              data-image-target="${escapeHtml(imageTarget)}"
+              ${value && !state.isSaving ? "" : "disabled"}
             >Clear</button>
           </div>
+          ${renderImagePicker(imageTarget)}
           ${
             isMissing
               ? `<div class="tag-manager__field-note">This image id could not be resolved. Save is still allowed.</div>`
@@ -2221,6 +2312,18 @@
       .slice(0, 40);
   }
 
+  function findTagByExactName(query, excludeIds = []) {
+    const normalized = String(query || "").trim().toLowerCase();
+    if (!normalized) return null;
+    const excluded = new Set((excludeIds || []).map(String));
+    return (
+      Array.from(state.tagMap.values()).find((record) => {
+        if (!record || excluded.has(String(record.id))) return false;
+        return String(record.name || "").trim().toLowerCase() === normalized;
+      }) || null
+    );
+  }
+
   function createDraftFromRecord(record) {
     return record
       ? {
@@ -2230,8 +2333,8 @@
           sort_name: record.sort_name || "",
           description: record.description || "",
           image_path: record.image_path || "",
-          supplemental_image_1_id: normalizeSupplementalImageId(record.supplemental_image_1_id),
-          supplemental_image_2_id: normalizeSupplementalImageId(record.supplemental_image_2_id),
+          supplemental_image_1_id: normalizeSupplementalImageValue(record.supplemental_image_1_id),
+          supplemental_image_2_id: normalizeSupplementalImageValue(record.supplemental_image_2_id),
         }
       : null;
   }
@@ -2250,12 +2353,19 @@
   }
 
   function getDraftImageByTarget(target = "main") {
+    const supplementalField = getSupplementalFieldFromTarget(target);
+    if (supplementalField) return String(state.draft?.[supplementalField.draftKey] || "");
     if (target === "split-new") return String(state.splitNewDraft?.image_path || "");
     if (target === "split-original") return String(state.splitOriginalDraft?.image_path || "");
     return String(state.draft?.image_path || "");
   }
 
   function setDraftImageByTarget(target = "main", value = "") {
+    const supplementalField = getSupplementalFieldFromTarget(target);
+    if (supplementalField && state.draft) {
+      state.draft[supplementalField.draftKey] = normalizeSupplementalImageValue(value);
+      return;
+    }
     if (target === "split-new" && state.splitNewDraft) {
       state.splitNewDraft.image_path = String(value || "");
       return;
@@ -2267,6 +2377,21 @@
     if (state.draft) {
       state.draft.image_path = String(value || "");
     }
+  }
+
+  function getSupplementalFieldFromTarget(target = "") {
+    const match = String(target || "").match(/^supplemental:(.+)$/);
+    if (!match) return null;
+    const draftKey = String(match[1] || "");
+    return SUPPLEMENTAL_IMAGE_FIELDS.find((field) => field.draftKey === draftKey) || null;
+  }
+
+  function canSetDraftImageTarget(target = "main") {
+    if (getSupplementalFieldFromTarget(target)) return !!state.draft;
+    if (target === "main") return !!state.draft;
+    if (target === "split-new") return !!state.splitNewDraft;
+    if (target === "split-original") return !!state.splitOriginalDraft;
+    return !!state.draft;
   }
 
   function getSplitOccupiedIdentityMap(excludeOriginalId = state.selectedTagId) {
@@ -3045,8 +3170,8 @@
         !!String(state.draft?.sort_name || "").trim() ||
         !!String(state.draft?.description || "").trim() ||
         !!String(state.draft?.image_path || "").trim() ||
-        !!normalizeSupplementalImageId(state.draft?.supplemental_image_1_id) ||
-        !!normalizeSupplementalImageId(state.draft?.supplemental_image_2_id)
+        !!normalizeSupplementalImageValue(state.draft?.supplemental_image_1_id) ||
+        !!normalizeSupplementalImageValue(state.draft?.supplemental_image_2_id)
       );
     }
     if (!state.draft?.id || !state.selectedTagId) return false;
@@ -3059,11 +3184,114 @@
       String(state.draft.sort_name || "") !== String(record.sort_name || "") ||
       String(state.draft.description || "") !== String(record.description || "") ||
       String(state.draft.image_path || "") !== String(record.image_path || "") ||
-      normalizeSupplementalImageId(state.draft.supplemental_image_1_id) !==
-        normalizeSupplementalImageId(record.supplemental_image_1_id) ||
-      normalizeSupplementalImageId(state.draft.supplemental_image_2_id) !==
-        normalizeSupplementalImageId(record.supplemental_image_2_id)
+      normalizeSupplementalImageValue(state.draft.supplemental_image_1_id) !==
+        normalizeSupplementalImageValue(record.supplemental_image_1_id) ||
+      normalizeSupplementalImageValue(state.draft.supplemental_image_2_id) !==
+        normalizeSupplementalImageValue(record.supplemental_image_2_id)
     );
+  }
+
+  function renderRelationshipManager(options) {
+    const {
+      record,
+      parentDisabledMessage,
+      childDisabledMessage,
+      siblingDisabledMessage,
+      reparentActionsAllowed,
+      addParentAllowed,
+      childActionsAllowed,
+      siblingActionsAllowed,
+      reparentOptions,
+      attachChildOptions,
+      attachSiblingOptions,
+      reparentReason,
+      addParentReason,
+      attachChildReason,
+      attachSiblingReason,
+    } = options || {};
+    const parentValue = reparentActionsAllowed ? state.reparentQuery : parentDisabledMessage;
+    const childValue = childActionsAllowed ? state.attachChildQuery : childDisabledMessage;
+    const siblingValue = siblingActionsAllowed ? state.attachSiblingQuery : siblingDisabledMessage;
+    const parentHasInput = !!String(state.reparentQuery || "").trim() || !!state.reparentTargetId;
+    const childHasInput =
+      !!String(state.attachChildQuery || "").trim() || !!(state.attachChildTargetIds || []).length;
+    const siblingHasInput = !!String(state.attachSiblingQuery || "").trim() || !!state.attachSiblingTargetId;
+
+    return `
+      <div class="tag-manager__editor-card tag-manager__relationship-card">
+        <div class="tag-manager__section-title">Related Tags</div>
+        <div class="tag-manager__relationship-grid">
+          <div class="tag-manager__field-group">
+            <label class="tag-manager__field-label" for="tag-manager-reparent-query">Parent Tag</label>
+            <input id="tag-manager-reparent-query" class="tag-manager__input" type="search" data-field="reparent-query" value="${escapeHtml(
+              parentValue
+            )}" placeholder="${
+              reparentActionsAllowed ? `Search or type a parent for ${escapeHtml(record?.name || "this tag")}` : ""
+            }" ${reparentActionsAllowed ? "" : "disabled"} />
+            ${reparentActionsAllowed ? renderAttachPicker(state.reparentQuery, state.reparentTargetId, reparentOptions, "reparent") : ""}
+            <div class="tag-manager__button-row">
+              <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="reparent-current" ${
+                reparentActionsAllowed && parentHasInput && !reparentReason && !state.isSaving ? "" : "disabled"
+              }>Reparent</button>
+              <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="add-additional-parent" ${
+                addParentAllowed && parentHasInput && !addParentReason && !state.isSaving ? "" : "disabled"
+              }>Add Parent</button>
+            </div>
+            ${
+              reparentActionsAllowed && (reparentReason || (addParentAllowed && addParentReason))
+                ? `<div class="tag-manager__field-note">${escapeHtml(reparentReason || addParentReason)}</div>`
+                : `<div class="tag-manager__field-note">Choose an existing tag or type a new name.</div>`
+            }
+          </div>
+
+          <div class="tag-manager__field-group">
+            <label class="tag-manager__field-label" for="tag-manager-attach-child-query">Child Tag</label>
+            <input id="tag-manager-attach-child-query" class="tag-manager__input" type="search" data-field="attach-child-query" value="${escapeHtml(
+              childValue
+            )}" placeholder="${
+              childActionsAllowed ? `Search or type a child for ${escapeHtml(record?.name || "this tag")}` : ""
+            }" ${childActionsAllowed ? "" : "disabled"} />
+            ${childActionsAllowed ? renderAttachPickerMulti(
+              state.attachChildQuery,
+              state.attachChildTargetIds,
+              attachChildOptions,
+              "attach-child"
+            ) : ""}
+            <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="attach-existing-child" ${
+              childActionsAllowed && childHasInput && !attachChildReason && !state.isSaving ? "" : "disabled"
+            }>Add Child</button>
+            ${
+              childActionsAllowed && attachChildReason
+                ? `<div class="tag-manager__field-note">${escapeHtml(attachChildReason)}</div>`
+                : `<div class="tag-manager__field-note">Choose existing tags or type a new name.</div>`
+            }
+          </div>
+
+          <div class="tag-manager__field-group">
+            <label class="tag-manager__field-label" for="tag-manager-attach-sibling-query">Sibling Tag</label>
+            <input id="tag-manager-attach-sibling-query" class="tag-manager__input" type="search" data-field="attach-sibling-query" value="${escapeHtml(
+              siblingValue
+            )}" placeholder="${
+              siblingActionsAllowed ? `Search or type a sibling for ${escapeHtml(record?.name || "this tag")}` : ""
+            }" ${siblingActionsAllowed ? "" : "disabled"} />
+            ${siblingActionsAllowed ? renderAttachPicker(
+              state.attachSiblingQuery,
+              state.attachSiblingTargetId,
+              attachSiblingOptions,
+              "attach-sibling"
+            ) : ""}
+            <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="attach-existing-sibling" ${
+              siblingActionsAllowed && siblingHasInput && !attachSiblingReason && !state.isSaving ? "" : "disabled"
+            }>Add Sibling</button>
+            ${
+              siblingActionsAllowed && attachSiblingReason
+                ? `<div class="tag-manager__field-note">${escapeHtml(attachSiblingReason)}</div>`
+                : `<div class="tag-manager__field-note">Choose an existing tag or type a new name.</div>`
+            }
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   function renderInspector() {
@@ -3139,14 +3367,24 @@
           <div class="tag-manager__editor-card tag-manager__editor-card--primary ${organized ? "is-organized" : ""}">
             <div class="tag-manager__image-preview-grid">
               ${renderSupplementalImageField(SUPPLEMENTAL_IMAGE_FIELDS[0], state.draft)}
-              <div class="tag-manager__image-preview tag-manager__image-preview--main">
-                ${
-                  previewImagePath
-                    ? `<img src="${escapeHtml(previewImagePath)}" alt="${escapeHtml(
-                        state.draft.name || "Tag preview"
-                      )}" />`
-                    : `<div class="tag-manager__supplemental-empty tag-manager__supplemental-empty--main">No main tag image</div>`
-                }
+              <div class="tag-manager__main-image-slot">
+                <div class="tag-manager__image-preview tag-manager__image-preview--main">
+                  ${
+                    previewImagePath
+                      ? `<img src="${escapeHtml(previewImagePath)}" alt="${escapeHtml(
+                          state.draft.name || "Tag preview"
+                        )}" />`
+                      : `<div class="tag-manager__supplemental-empty tag-manager__supplemental-empty--main">No main tag image</div>`
+                  }
+                </div>
+                <div class="tag-manager__main-image-actions">
+                  <button type="button" class="btn btn-secondary tag-manager__main-image-set" data-action="toggle-image-picker" data-image-target="main" ${
+                    state.isSaving ? "disabled" : ""
+                  }>Set Image</button>
+                  <button type="button" class="btn btn-secondary tag-manager__main-image-clear" data-action="clear-image" ${
+                    previewImagePath && !state.isSaving ? "" : "disabled"
+                  }>Clear Image</button>
+                </div>
               </div>
               ${renderSupplementalImageField(SUPPLEMENTAL_IMAGE_FIELDS[1], state.draft)}
             </div>
@@ -3178,12 +3416,6 @@
               <button type="button" class="btn btn-secondary" data-action="reset-draft" ${
                 dirty ? "" : "disabled"
               }>Reset</button>
-              <button type="button" class="btn btn-secondary" data-action="toggle-image-picker" ${
-                state.isSaving ? "disabled" : ""
-              }>Set Image</button>
-              <button type="button" class="btn btn-secondary" data-action="clear-image" ${
-                previewImagePath && !state.isSaving ? "" : "disabled"
-              }>Clear Image</button>
               ${
                 creatingNew
                   ? ""
@@ -3244,102 +3476,23 @@
           ${
             creatingNew
               ? ""
-              : `<div class="tag-manager__editor-split">
-            <div class="tag-manager__editor-card">
-              <div class="tag-manager__section-title">Create Related Tags</div>
-              <div class="tag-manager__field-group">
-                <label class="tag-manager__field-label" for="tag-manager-parent-create">New Parent Tag</label>
-                <input id="tag-manager-parent-create" class="tag-manager__input" type="text" data-field="parent-create-name" value="${escapeHtml(
-                  createParentAllowed ? state.parentCreateName : parentDisabledMessage
-                )}" placeholder="${createParentAllowed ? `Create above ${escapeHtml(record.name)}` : ""}" ${
-                  createParentAllowed ? "" : "disabled"
-                } />
-                <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="create-parent" ${
-                  createParentAllowed && state.parentCreateName.trim() && !state.isSaving ? "" : "disabled"
-                }>Create Parent</button>
-              </div>
-              <div class="tag-manager__field-group">
-                <label class="tag-manager__field-label" for="tag-manager-child-create">New Child Tag</label>
-                <input id="tag-manager-child-create" class="tag-manager__input" type="text" data-field="child-create-name" value="${escapeHtml(
-                  childActionsAllowed ? state.childCreateName : childDisabledMessage
-                )}" placeholder="${childActionsAllowed ? `Create under ${escapeHtml(record.name)}` : ""}" ${
-                  childActionsAllowed ? "" : "disabled"
-                } />
-                <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="create-child" ${
-                  childActionsAllowed && state.childCreateName.trim() && !state.isSaving ? "" : "disabled"
-                }>Create Child</button>
-              </div>
-              <div class="tag-manager__field-group">
-                <label class="tag-manager__field-label" for="tag-manager-sibling-create">New Sibling Tag</label>
-                <input id="tag-manager-sibling-create" class="tag-manager__input" type="text" data-field="sibling-create-name" value="${escapeHtml(
-                  siblingActionsAllowed ? state.siblingCreateName : siblingDisabledMessage
-                )}" placeholder="${siblingActionsAllowed ? `Create next to ${escapeHtml(record.name)}` : ""}" ${
-                  siblingActionsAllowed ? "" : "disabled"
-                } />
-                <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="create-sibling" ${
-                  siblingActionsAllowed && state.siblingCreateName.trim() && !state.isSaving ? "" : "disabled"
-                }>Create Sibling</button>
-              </div>
-            </div>
-
-            <div class="tag-manager__editor-card">
-              <div class="tag-manager__section-title">Move / Attach Existing Tags</div>
-              <div class="tag-manager__field-group">
-                <label class="tag-manager__field-label" for="tag-manager-reparent-query">Reparent Current Tag</label>
-                <input id="tag-manager-reparent-query" class="tag-manager__input" type="search" data-field="reparent-query" value="${escapeHtml(
-                  reparentActionsAllowed ? state.reparentQuery : parentDisabledMessage
-                )}" placeholder="${reparentActionsAllowed ? "Search for the new parent tag" : ""}" ${
-                  reparentActionsAllowed ? "" : "disabled"
-                } />
-                ${reparentActionsAllowed ? renderAttachPicker(state.reparentQuery, state.reparentTargetId, reparentOptions, "reparent") : ""}
-                <div class="tag-manager__button-row">
-                  <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="reparent-current" ${
-                    reparentActionsAllowed && state.reparentTargetId && !reparentReason && !state.isSaving ? "" : "disabled"
-                  }>Reparent</button>
-                  <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="add-additional-parent" ${
-                    addParentAllowed && state.reparentTargetId && !addParentReason && !state.isSaving ? "" : "disabled"
-                  }>Add Parent</button>
-                </div>
-                ${reparentActionsAllowed && (reparentReason || (addParentAllowed && addParentReason)) ? `<div class="tag-manager__field-note">${escapeHtml(reparentReason || addParentReason)}</div>` : ""}
-              </div>
-              <div class="tag-manager__field-group">
-                <label class="tag-manager__field-label" for="tag-manager-attach-child-query">Attach Existing Child</label>
-                <input id="tag-manager-attach-child-query" class="tag-manager__input" type="search" data-field="attach-child-query" value="${escapeHtml(
-                  childActionsAllowed ? state.attachChildQuery : childDisabledMessage
-                )}" placeholder="${childActionsAllowed ? `Search for a tag to attach under ${escapeHtml(record.name)}` : ""}" ${
-                  childActionsAllowed ? "" : "disabled"
-                } />
-                ${childActionsAllowed ? renderAttachPickerMulti(
-                  state.attachChildQuery,
-                  state.attachChildTargetIds,
+              : renderRelationshipManager({
+                  record,
+                  parentDisabledMessage,
+                  childDisabledMessage,
+                  siblingDisabledMessage,
+                  reparentActionsAllowed,
+                  addParentAllowed,
+                  childActionsAllowed,
+                  siblingActionsAllowed,
+                  reparentOptions,
                   attachChildOptions,
-                  "attach-child"
-                ) : ""}
-                <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="attach-existing-child" ${
-                  childActionsAllowed && state.attachChildTargetIds.length && !attachChildReason && !state.isSaving ? "" : "disabled"
-                }>Attach Child</button>
-                ${childActionsAllowed && attachChildReason ? `<div class="tag-manager__field-note">${escapeHtml(attachChildReason)}</div>` : ""}
-              </div>
-              <div class="tag-manager__field-group">
-                <label class="tag-manager__field-label" for="tag-manager-attach-sibling-query">Add Existing Sibling</label>
-                <input id="tag-manager-attach-sibling-query" class="tag-manager__input" type="search" data-field="attach-sibling-query" value="${escapeHtml(
-                  siblingActionsAllowed ? state.attachSiblingQuery : siblingDisabledMessage
-                )}" placeholder="${siblingActionsAllowed ? `Search for a tag to share ${escapeHtml(record.name)}'s parents` : ""}" ${
-                  siblingActionsAllowed ? "" : "disabled"
-                } />
-                ${siblingActionsAllowed ? renderAttachPicker(
-                  state.attachSiblingQuery,
-                  state.attachSiblingTargetId,
                   attachSiblingOptions,
-                  "attach-sibling"
-                ) : ""}
-                <button type="button" class="btn btn-secondary tag-manager__action-button" data-action="attach-existing-sibling" ${
-                  siblingActionsAllowed && state.attachSiblingTargetId && !attachSiblingReason && !state.isSaving ? "" : "disabled"
-                }>Add Sibling</button>
-                ${siblingActionsAllowed && attachSiblingReason ? `<div class="tag-manager__field-note">${escapeHtml(attachSiblingReason)}</div>` : ""}
-              </div>
-            </div>
-          </div>`
+                  reparentReason,
+                  addParentReason,
+                  attachChildReason,
+                  attachSiblingReason,
+                })
           }
         </div>
 
@@ -3369,6 +3522,41 @@
                   </div>
                 </div>`
           }
+        </div>
+      </div>
+    `;
+  }
+
+  function renderExpandedSortWorkspace() {
+    const sortStats = getSortModeChangeStats();
+    const pendingText = sortStats.changedTags
+      ? `${formatCount(sortStats.changedTags)} pending tag${sortStats.changedTags === 1 ? "" : "s"}${
+          sortStats.changedParents ? `, ${formatCount(sortStats.changedParents)} hierarchy move${sortStats.changedParents === 1 ? "" : "s"}` : ""
+        }`
+      : "No pending changes";
+    const paneMarkup = (side, title) => `
+      <section class="tag-manager__expanded-sort-pane" data-expanded-sort-pane="${escapeHtml(side)}">
+        <div class="tag-manager__expanded-sort-pane-header">
+          <div class="tag-manager__section-title">${escapeHtml(title)}</div>
+          <div class="tag-manager__summary-note">Scroll independently, then drag sort handles between panes.</div>
+        </div>
+        <div class="tag-manager__expanded-sort-tree-scroll" data-expanded-sort-scroll="${escapeHtml(side)}">
+          ${renderTree()}
+        </div>
+      </section>
+    `;
+    return `
+      <div class="tag-manager__expanded-sort-workspace">
+        <div class="tag-manager__expanded-sort-header">
+          <div>
+            <h3 class="tag-manager__inspector-title">Expanded Sort Mode</h3>
+            <p class="tag-manager__helper">Both panes show the same hierarchy. Drag a sort handle from either pane and drop before or after a tag to stage hierarchy and sort order changes.</p>
+          </div>
+          <div class="tag-manager__sort-workspace-status">${escapeHtml(pendingText)}</div>
+        </div>
+        <div class="tag-manager__expanded-sort-grid">
+          ${paneMarkup("left", "Sort Pane A")}
+          ${paneMarkup("right", "Sort Pane B")}
         </div>
       </div>
     `;
@@ -3468,18 +3656,22 @@
       button.disabled = !siblingActionsAllowed || !state.siblingCreateName.trim() || state.isSaving;
     });
     host.querySelectorAll('[data-action="reparent-current"]').forEach((button) => {
-      button.disabled = !reparentActionsAllowed || !state.reparentTargetId || !!reparentReason || state.isSaving;
+      const hasParentInput = !!String(state.reparentQuery || "").trim() || !!state.reparentTargetId;
+      button.disabled = !reparentActionsAllowed || !hasParentInput || !!reparentReason || state.isSaving;
     });
     host.querySelectorAll('[data-action="add-additional-parent"]').forEach((button) => {
-      button.disabled = !addParentAllowed || !state.reparentTargetId || !!addParentReason || state.isSaving;
+      const hasParentInput = !!String(state.reparentQuery || "").trim() || !!state.reparentTargetId;
+      button.disabled = !addParentAllowed || !hasParentInput || !!addParentReason || state.isSaving;
     });
     host.querySelectorAll('[data-action="attach-existing-child"]').forEach((button) => {
+      const hasChildInput = !!String(state.attachChildQuery || "").trim() || !!state.attachChildTargetIds.length;
       button.disabled =
-        !childActionsAllowed || !state.attachChildTargetIds.length || !!attachChildReason || state.isSaving;
+        !childActionsAllowed || !hasChildInput || !!attachChildReason || state.isSaving;
     });
     host.querySelectorAll('[data-action="attach-existing-sibling"]').forEach((button) => {
+      const hasSiblingInput = !!String(state.attachSiblingQuery || "").trim() || !!state.attachSiblingTargetId;
       button.disabled =
-        !siblingActionsAllowed || !state.attachSiblingTargetId || !!attachSiblingReason || state.isSaving;
+        !siblingActionsAllowed || !hasSiblingInput || !!attachSiblingReason || state.isSaving;
     });
     host.querySelectorAll('[data-action="toggle-merge-panel"]').forEach((button) => {
       button.disabled = state.isSaving || isDraftDirty();
@@ -3504,13 +3696,18 @@
       button.disabled = state.isSaving;
     });
     host.querySelectorAll('[data-action="toggle-sort-mode"]').forEach((button) => {
-      button.disabled = state.isSaving;
+      button.disabled = state.isSaving || !isGeneratedSortOrderEnabled();
     });
     host.querySelectorAll('[data-action="apply-sort-order"]').forEach((button) => {
-      button.disabled = !state.sortMode || !hasPendingSortOrderChanges() || state.isSaving;
+      button.disabled =
+        !isGeneratedSortOrderEnabled() || !state.sortMode || !hasPendingSortOrderChanges() || state.isSaving;
     });
     host.querySelectorAll('[data-action="discard-sort-order"]').forEach((button) => {
-      button.disabled = !state.sortMode || !hasPendingSortOrderChanges() || state.isSaving;
+      button.disabled =
+        !isGeneratedSortOrderEnabled() || !state.sortMode || !hasPendingSortOrderChanges() || state.isSaving;
+    });
+    host.querySelectorAll('[data-action="toggle-expanded-sort-mode"]').forEach((button) => {
+      button.disabled = !isGeneratedSortOrderEnabled() || !state.sortMode || state.isSaving;
     });
     host.querySelectorAll('[data-action="reparent-selected-tags"]').forEach((button) => {
       button.disabled =
@@ -3556,14 +3753,14 @@
     const usageCard = host.querySelector(".tag-manager__meta-card--usage");
     const parentsCard = host.querySelector(".tag-manager__meta-card--parents");
     const childrenCard = host.querySelector(".tag-manager__meta-card--children");
-      const childPanel = host.querySelector(".tag-manager__child-panel-scroll");
-      if (
-        !(sidebar instanceof HTMLElement) ||
-        !(treeWrap instanceof HTMLElement) ||
-        !(treePanel instanceof HTMLElement)
-      ) {
-        return;
-      }
+    const childPanel = host.querySelector(".tag-manager__child-panel-scroll");
+    if (
+      !(sidebar instanceof HTMLElement) ||
+      !(treeWrap instanceof HTMLElement) ||
+      !(treePanel instanceof HTMLElement)
+    ) {
+      return;
+    }
 
     const sidebarGap = parseFloat(window.getComputedStyle(sidebar).gap || "0");
     treeWrap.style.maxHeight = "";
@@ -3572,17 +3769,17 @@
     const sidebarOtherHeight =
       sidebarChildren.reduce((sum, child) => sum + getElementOuterHeight(child), 0) +
       Math.max(0, sidebarChildren.length) * sidebarGap;
-      const fallbackTreeHeight = Math.max(
-        240,
-        Math.floor(window.innerHeight * 0.7 - sidebarOtherHeight)
-      );
-      const targetTreeHeight =
-        inspectorMain instanceof HTMLElement
-          ? Math.max(
-              240,
-              Math.floor(inspectorMain.getBoundingClientRect().height - sidebarOtherHeight)
-            )
-          : fallbackTreeHeight;
+    const fallbackTreeHeight = Math.max(
+      240,
+      Math.floor(window.innerHeight * 0.7 - sidebarOtherHeight)
+    );
+    const targetTreeHeight =
+      inspectorMain instanceof HTMLElement
+        ? Math.max(
+            240,
+            Math.floor(inspectorMain.getBoundingClientRect().height - sidebarOtherHeight)
+          )
+        : fallbackTreeHeight;
     treeWrap.style.maxHeight = `${targetTreeHeight}px`;
     const treeWrapStyle = window.getComputedStyle(treeWrap);
     const treeInnerHeight = Math.max(
@@ -3593,12 +3790,12 @@
     );
     treePanel.style.maxHeight = `${treeInnerHeight}px`;
 
-      if (
-        !(inspectorMain instanceof HTMLElement) ||
-        !(inspectorSide instanceof HTMLElement) ||
-        !(usageCard instanceof HTMLElement) ||
-        !(parentsCard instanceof HTMLElement) ||
-        !(childrenCard instanceof HTMLElement) ||
+    if (
+      !(inspectorMain instanceof HTMLElement) ||
+      !(inspectorSide instanceof HTMLElement) ||
+      !(usageCard instanceof HTMLElement) ||
+      !(parentsCard instanceof HTMLElement) ||
+      !(childrenCard instanceof HTMLElement) ||
       !(childPanel instanceof HTMLElement)
     ) {
       return;
@@ -3629,6 +3826,19 @@
     const treePanel = host.querySelector(".tag-manager__tree-panel-scroll");
     if (!(treePanel instanceof HTMLElement)) return;
     treePanel.scrollTop = state.treeScrollTop || 0;
+  }
+
+  function restoreExpandedSortScrollPositions(host = getHost()) {
+    if (!(host instanceof HTMLElement)) return;
+    host.querySelectorAll("[data-expanded-sort-scroll]").forEach((pane) => {
+      if (!(pane instanceof HTMLElement)) return;
+      const side = String(pane.getAttribute("data-expanded-sort-scroll") || "");
+      if (side !== "left" && side !== "right") return;
+      pane.scrollTop = state.expandedSortScrollTop?.[side] || 0;
+      pane.addEventListener("scroll", () => {
+        state.expandedSortScrollTop[side] = pane.scrollTop;
+      });
+    });
   }
 
   function classifyPreviewAspect(width, height) {
@@ -3723,6 +3933,13 @@
     if (previousTree) {
       state.treeScrollTop = previousTree.scrollTop;
     }
+    host?.querySelectorAll("[data-expanded-sort-scroll]").forEach((pane) => {
+      if (!(pane instanceof HTMLElement)) return;
+      const side = String(pane.getAttribute("data-expanded-sort-scroll") || "");
+      if (side === "left" || side === "right") {
+        state.expandedSortScrollTop[side] = pane.scrollTop;
+      }
+    });
     if (!host) {
       host = document.createElement("section");
       host.id = HOST_ID;
@@ -3754,10 +3971,13 @@
           </div>
           ${renderSidebarSummary()}
         </aside>
-        <section class="tag-manager__inspector">${renderInspector()}</section>
+        <section class="tag-manager__inspector">${
+          state.sortMode && state.expandedSortMode ? renderExpandedSortWorkspace() : renderInspector()
+        }</section>
       </div>
     `;
     host.classList.toggle("is-sort-mode", state.sortMode);
+    host.classList.toggle("is-expanded-sort-mode", state.sortMode && state.expandedSortMode);
 
     syncControlStates();
     syncMeasuredPanelHeights();
@@ -3772,6 +3992,7 @@
         state.treeScrollTop = nextTree.scrollTop;
       });
     }
+    restoreExpandedSortScrollPositions(host);
     applyTreeDragIndicators();
     syncEditorImagePreviewLayout();
     syncSupplementalImagePreviews();
@@ -3794,13 +4015,17 @@
       });
   }
 
-  function findTreeRowElement(tagId, host = getHost()) {
-    if (!(host instanceof HTMLElement) || !tagId) return null;
+  function findTreeRowElements(tagId, host = getHost()) {
+    if (!(host instanceof HTMLElement) || !tagId) return [];
     const safeId =
       window.CSS && typeof window.CSS.escape === "function"
         ? window.CSS.escape(String(tagId))
         : String(tagId).replace(/"/g, '\\"');
-    return host.querySelector(`[data-tree-row-id="${safeId}"]`);
+    return Array.from(host.querySelectorAll(`[data-tree-row-id="${safeId}"]`));
+  }
+
+  function findTreeRowElement(tagId, host = getHost()) {
+    return findTreeRowElements(tagId, host)[0] || null;
   }
 
   function applyTreeDragIndicators() {
@@ -3809,13 +4034,13 @@
     clearTreeDragIndicators(host);
 
     if (state.draggingTagId) {
-      const sourceRow = findTreeRowElement(state.draggingTagId, host);
-      if (sourceRow) sourceRow.classList.add("is-drag-source");
+      findTreeRowElements(state.draggingTagId, host).forEach((sourceRow) => {
+        sourceRow.classList.add("is-drag-source");
+      });
     }
 
     if (state.dragOverTagId) {
-      const targetRow = findTreeRowElement(state.dragOverTagId, host);
-      if (targetRow) {
+      findTreeRowElements(state.dragOverTagId, host).forEach((targetRow) => {
         if (state.dragOverMode === "invalid") {
           targetRow.classList.add("is-drop-invalid");
         } else if (state.dragOverMode === "sort-before") {
@@ -3825,7 +4050,7 @@
         } else {
           targetRow.classList.add("is-drop-target");
         }
-      }
+      });
     }
   }
 
@@ -3846,6 +4071,61 @@
     applyTreeDragIndicators();
   }
 
+  function resolveTreeRowFromDragEvent(event) {
+    const target = event?.target instanceof Element ? event.target : null;
+    const directRow = target?.closest("[data-tree-row-id]");
+    if (directRow instanceof HTMLElement) return directRow;
+
+    const scope =
+      target?.closest("[data-expanded-sort-scroll], .tag-manager__tree-panel-scroll, #tag-manager-host") ||
+      getHost();
+    if (!(scope instanceof HTMLElement)) return null;
+
+    const elementsAtPoint =
+      typeof document.elementsFromPoint === "function"
+        ? document.elementsFromPoint(event.clientX, event.clientY)
+        : [];
+    for (const element of elementsAtPoint) {
+      if (!(element instanceof Element) || !scope.contains(element)) continue;
+      const row = element.closest("[data-tree-row-id]");
+      if (row instanceof HTMLElement && scope.contains(row)) return row;
+    }
+
+    const rows = Array.from(scope.querySelectorAll("[data-tree-row-id]")).filter(
+      (row) => row instanceof HTMLElement && row.getAttribute("data-tree-row-id")
+    );
+    let nearestRow = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    rows.forEach((row) => {
+      const rect = row.getBoundingClientRect();
+      const horizontalMatch = event.clientX >= rect.left - 12 && event.clientX <= rect.right + 12;
+      if (!horizontalMatch) return;
+      const distance =
+        event.clientY < rect.top
+          ? rect.top - event.clientY
+          : event.clientY > rect.bottom
+          ? event.clientY - rect.bottom
+          : 0;
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestRow = row;
+      }
+    });
+
+    return nearestDistance <= 36 ? nearestRow : null;
+  }
+
+  function getSortPlacementFromDragEvent(event, row) {
+    if (!(row instanceof HTMLElement)) return "sort-before";
+    const rect = row.getBoundingClientRect();
+    return event.clientY < rect.top + rect.height / 2 ? "sort-before" : "sort-after";
+  }
+
+  function isSortDragInsideTreePane(event) {
+    const target = event?.target instanceof Element ? event.target : null;
+    return !!target?.closest("[data-expanded-sort-scroll], .tag-manager__tree-panel-scroll");
+  }
+
   function getDragDropBlockReason(sourceTagId, targetTagId) {
     const sourceId = String(sourceTagId || "");
     const targetId = String(targetTagId || "");
@@ -3857,6 +4137,96 @@
       return "";
     }
     return getParentRelationshipBlockReason(sourceId, targetId, "reparent");
+  }
+
+  function buildSortPendingTagMap(extraParentChange = null) {
+    const nextMap = new Map();
+    state.tagMap.forEach((record, id) => {
+      nextMap.set(String(id), {
+        ...record,
+        parentIds: (record.parentIds || []).map(String),
+        childIds: (record.childIds || []).map(String),
+      });
+    });
+
+    const changes = new Map(state.sortPendingParentIds || []);
+    if (extraParentChange?.id) {
+      changes.set(String(extraParentChange.id), (extraParentChange.parentIds || []).map(String));
+    }
+
+    changes.forEach((parentIds, id) => {
+      const record = nextMap.get(String(id));
+      if (record) record.parentIds = (parentIds || []).map(String);
+    });
+
+    nextMap.forEach((record) => {
+      record.childIds = [];
+    });
+    nextMap.forEach((record, id) => {
+      (record.parentIds || []).forEach((parentId) => {
+        const parent = nextMap.get(String(parentId));
+        if (!parent) return;
+        parent.childIds = Array.from(new Set([...(parent.childIds || []).map(String), String(id)]));
+      });
+    });
+
+    return nextMap;
+  }
+
+  function getParentIdsForSortContainer(containerKey) {
+    const [kind, id = ""] = String(containerKey || "").split(":");
+    if (kind === "root-groups" || kind === "root-leaves") return [];
+    if ((kind === "group" || kind === "subgroup") && id) return [String(id)];
+    return null;
+  }
+
+  function normalizeParentIds(parentIds) {
+    return (parentIds || []).map(String).filter(Boolean).sort();
+  }
+
+  function setPendingSortParentIds(tagId, parentIds) {
+    const id = String(tagId || "");
+    if (!id) return;
+    const normalized = normalizeParentIds(parentIds);
+    const original =
+      state.sortOriginalParentIds instanceof Map
+        ? normalizeParentIds(state.sortOriginalParentIds.get(id) || [])
+        : normalizeParentIds(state.tagMap.get(id)?.parentIds || []);
+    const changed =
+      normalized.length !== original.length ||
+      normalized.some((parentId, index) => parentId !== original[index]);
+    if (changed) state.sortPendingParentIds.set(id, normalized);
+    else state.sortPendingParentIds.delete(id);
+  }
+
+  function applySortParentPreview(tagId, parentIds) {
+    const id = String(tagId || "");
+    const record = state.tagMap.get(id);
+    if (!record) return;
+    const nextParentIds = (parentIds || []).map(String);
+    const previousParentIds = (record.parentIds || []).map(String);
+
+    previousParentIds.forEach((parentId) => {
+      const parent = state.tagMap.get(String(parentId));
+      if (!parent) return;
+      parent.childIds = (parent.childIds || []).map(String).filter((childId) => childId !== id);
+    });
+
+    record.parentIds = nextParentIds;
+    record.parents = nextParentIds
+      .map((parentId) => state.tagMap.get(String(parentId)))
+      .filter(Boolean)
+      .map((parent) => ({
+        id: String(parent.id),
+        name: parent.name || "",
+        sort_name: parent.sort_name || "",
+      }));
+
+    nextParentIds.forEach((parentId) => {
+      const parent = state.tagMap.get(String(parentId));
+      if (!parent) return;
+      parent.childIds = Array.from(new Set([...(parent.childIds || []).map(String), id]));
+    });
   }
 
   function getSortContainerDetails(tagId) {
@@ -3871,6 +4241,8 @@
         containerKey: createSortContainerKey("root-groups"),
         list: state.groups,
         index: rootGroupIndex,
+        item: state.groups[rootGroupIndex],
+        id,
       };
     }
 
@@ -3882,6 +4254,8 @@
         containerKey: createSortContainerKey("root-leaves"),
         list: state.ungroupedLeaves,
         index: rootLeafIndex,
+        item: state.ungroupedLeaves[rootLeafIndex],
+        id,
       };
     }
 
@@ -3893,6 +4267,8 @@
           containerKey: createSortContainerKey("group", groupId),
           list: group.items,
           index: groupItemIndex,
+          item: group.items[groupItemIndex],
+          id,
         };
       }
 
@@ -3904,6 +4280,8 @@
             containerKey: createSortContainerKey("subgroup", item.id),
             list: item.children,
             index: childIndex,
+            item: item.children[childIndex],
+            id,
           };
         }
       }
@@ -3926,8 +4304,10 @@
     const sourceDetails = getSortContainerDetails(sourceId);
     const targetDetails = getSortContainerDetails(targetId);
     if (!sourceDetails || !targetDetails) return "Selected tag could not be found.";
+    const targetParentIds = getParentIdsForSortContainer(targetDetails.containerKey);
+    if (!targetParentIds) return "Sort target could not be resolved.";
     if (sourceDetails.containerKey !== targetDetails.containerKey) {
-      return "Tags can only be reordered within the same section.";
+      return getSortCrossSectionBlockReason(sourceDetails, targetDetails, targetParentIds);
     }
     if (!Array.isArray(sourceDetails.list) || sourceDetails.list.length < 2) {
       return "Nothing to reorder in this section.";
@@ -3949,6 +4329,42 @@
     return true;
   }
 
+  function moveItemBetweenArrays(sourceList, sourceIndex, targetList, targetIndex) {
+    if (!Array.isArray(sourceList) || !Array.isArray(targetList)) return false;
+    if (sourceIndex < 0 || sourceIndex >= sourceList.length || targetIndex < 0 || targetIndex > targetList.length) {
+      return false;
+    }
+    const [moved] = sourceList.splice(sourceIndex, 1);
+    if (typeof moved === "undefined") return false;
+    targetList.splice(targetIndex, 0, moved);
+    return true;
+  }
+
+  function getSortCrossSectionBlockReason(sourceDetails, targetDetails, nextParentIds) {
+    const sourceId = String(sourceDetails?.id || "");
+    if (!sourceId || !sourceDetails?.item || !targetDetails?.item) return "Sort target could not be resolved.";
+    if (!sourceDetails.item.id || !targetDetails.item.id) {
+      return "Top-level parent groups can only be reordered with other top-level parent groups.";
+    }
+    if (String(sourceDetails.containerKey || "").startsWith("root-groups")) {
+      return "Top-level parent groups can only be reordered with other top-level parent groups.";
+    }
+    if (String(targetDetails.containerKey || "").startsWith("root-groups")) {
+      return "Drop onto a root leaf or a child row to change this tag's parent.";
+    }
+    if (String(targetDetails.containerKey || "").startsWith("root-leaves") && sourceDetails.item.type !== "leaf") {
+      return "Only leaf tags can be moved into the root leaf section.";
+    }
+
+    const pendingMap = buildSortPendingTagMap({ id: sourceId, parentIds: nextParentIds });
+    if (!nextParentIds.length) return "";
+    return (
+      nextParentIds
+        .map((parentId) => getParentRelationshipBlockReason(sourceId, parentId, "reparent", pendingMap))
+        .find(Boolean) || ""
+    );
+  }
+
   function reorderTagBySortDrag(sourceTagId, targetTagId, placement) {
     const sourceId = String(sourceTagId || "");
     const targetId = String(targetTagId || "");
@@ -3964,7 +4380,7 @@
 
     const sourceDetails = getSortContainerDetails(sourceId);
     const targetDetails = getSortContainerDetails(targetId);
-    if (!sourceDetails || !targetDetails || sourceDetails.list !== targetDetails.list) {
+    if (!sourceDetails || !targetDetails) {
       setStatus("error", "Sort target could not be resolved.");
       render();
       return;
@@ -3972,14 +4388,23 @@
 
     const sourceIndex = Number(sourceDetails.index);
     const targetIndex = Number(targetDetails.index);
+    const sameList = sourceDetails.list === targetDetails.list;
     let insertIndex = normalizedPlacement === "after" ? targetIndex + 1 : targetIndex;
-    if (sourceIndex < insertIndex) insertIndex -= 1;
+    if (sameList && sourceIndex < insertIndex) insertIndex -= 1;
 
-    const moved = moveItemWithinArray(sourceDetails.list, sourceIndex, insertIndex);
+    const moved = sameList
+      ? moveItemWithinArray(sourceDetails.list, sourceIndex, insertIndex)
+      : moveItemBetweenArrays(sourceDetails.list, sourceIndex, targetDetails.list, insertIndex);
     if (!moved) return;
 
+    if (!sameList) {
+      const nextParentIds = getParentIdsForSortContainer(targetDetails.containerKey) || [];
+      setPendingSortParentIds(sourceId, nextParentIds);
+      applySortParentPreview(sourceId, nextParentIds);
+      expandAncestors(nextParentIds);
+    }
     state.sortDirectChangeIds.add(sourceId);
-    setStatus("info", "Pending sort order updated.");
+    setStatus("info", sameList ? "Pending sort order updated." : "Pending hierarchy and sort order updated.");
     render();
   }
 
@@ -4063,6 +4488,17 @@
     return changed;
   }
 
+  function restoreHierarchyFromCachedTags() {
+    if (!Array.isArray(cache.tags) || !cache.tags.length) return false;
+    const hierarchy = buildHierarchy(cache.tags);
+    state.groups = hierarchy.groups;
+    state.ungroupedLeaves = hierarchy.ungroupedLeaves;
+    state.rootIds = hierarchy.rootIds;
+    state.tagMap = hierarchy.tagMap;
+    state.searchIndex = hierarchy.searchIndex;
+    return true;
+  }
+
   function formatSortNameSegment(index) {
     return String((Number(index) + 1) * 100).padStart(5, "0");
   }
@@ -4132,47 +4568,65 @@
   }
 
   async function applyPendingSortOrder() {
-    if (state.isSaving) return;
+    if (!isGeneratedSortOrderEnabled() || state.isSaving) return;
     const pendingTagIds = getSortModeChangedTagIds();
     if (!pendingTagIds.length) {
-      setStatus("info", "No pending sort order changes to apply.");
+      setStatus("info", "No pending hierarchy or sort order changes to apply.");
       render();
       return;
     }
 
+    const parentUpdates = Array.from(state.sortPendingParentIds.entries()).map(([id, parentIds]) => [
+      String(id),
+      (parentIds || []).map(String),
+    ]);
     const desiredSortNames = buildDesiredSortNameMap();
     const updates = Array.from(desiredSortNames.entries()).filter(([id, nextSortName]) => {
       const record = state.tagMap.get(String(id));
       return record && String(record.sort_name || "") !== String(nextSortName || "");
     });
 
-    if (!updates.length) {
+    if (!parentUpdates.length && !updates.length) {
       clearSortOrderBaseline();
       ensureSortOrderBaseline(true);
-      setStatus("success", "Sort order is already in sync.");
+      setStatus("success", "Hierarchy and sort order are already in sync.");
       render();
       return;
     }
 
     state.isSaving = true;
+    const totalUpdates = parentUpdates.length + updates.length;
     setStatus(
       "info",
-      `Applying sort order to ${formatCount(updates.length)} tag${updates.length === 1 ? "" : "s"}...`
+      `Applying hierarchy and sort order to ${formatCount(totalUpdates)} update${totalUpdates === 1 ? "" : "s"}...`
     );
     render();
 
     try {
+      for (const [tagId, parentIds] of parentUpdates) {
+        await assignTagParents(tagId, parentIds);
+      }
       for (const [tagId, sortName] of updates) {
         await updateTagSortName(tagId, sortName);
       }
 
       invalidateTags();
+      const expectedParentIds = new Map(parentUpdates.map(([tagId, parentIds]) => [String(tagId), normalizeParentIds(parentIds)]));
       const expectedSortNames = new Map(updates.map(([tagId, sortName]) => [String(tagId), String(sortName)]));
       await refreshDataWithRetry(() => {
-        return Array.from(expectedSortNames.entries()).every(([tagId, sortName]) => {
+        const parentsMatch = Array.from(expectedParentIds.entries()).every(([tagId, parentIds]) => {
+          const updatedRecord = state.tagMap.get(String(tagId));
+          const updatedParentIds = normalizeParentIds(updatedRecord?.parentIds || []);
+          return (
+            updatedParentIds.length === parentIds.length &&
+            updatedParentIds.every((parentId, index) => parentId === parentIds[index])
+          );
+        });
+        const sortNamesMatch = Array.from(expectedSortNames.entries()).every(([tagId, sortName]) => {
           const updatedRecord = state.tagMap.get(String(tagId));
           return String(updatedRecord?.sort_name || "") === String(sortName);
         });
+        return parentsMatch && sortNamesMatch;
       });
 
       updateSelectedDraftFromRecord(state.tagMap.get(String(state.selectedTagId || "")) || null);
@@ -4180,12 +4634,14 @@
       ensureSortOrderBaseline(true);
       setStatus(
         "success",
-        `Sort order applied to ${formatCount(updates.length)} tag${updates.length === 1 ? "" : "s"}.`
+        `Applied ${formatCount(parentUpdates.length)} hierarchy move${
+          parentUpdates.length === 1 ? "" : "s"
+        } and ${formatCount(updates.length)} sort update${updates.length === 1 ? "" : "s"}.`
       );
       render();
     } catch (err) {
-      console.error("[CustomTagsManager] apply sort order failed", err);
-      setStatus("error", err?.message || "Failed to apply sort order.");
+      console.error("[CustomTagsManager] apply hierarchy/sort order failed", err);
+      setStatus("error", err?.message || "Failed to apply hierarchy and sort order.");
       render();
     } finally {
       state.isSaving = false;
@@ -4196,15 +4652,18 @@
   function discardPendingSortOrder() {
     if (state.isSaving) return;
     if (!hasPendingSortOrderChanges()) {
-      setStatus("info", "No pending sort order changes to discard.");
+      setStatus("info", "No pending hierarchy or sort order changes to discard.");
       render();
       return;
     }
 
-    const restored = restoreSortOrderFromBaseline();
+    const hadParentChanges = state.sortPendingParentIds.size > 0;
+    const hierarchyRestored = hadParentChanges ? restoreHierarchyFromCachedTags() : false;
+    state.sortPendingParentIds = new Map();
+    const restored = restoreSortOrderFromBaseline() || hierarchyRestored;
     resetTreeDragState();
     clearTreeDragIndicators();
-    setStatus("info", restored ? "Pending sort order discarded." : "Sort order restored.");
+    setStatus("info", restored ? "Pending hierarchy and sort order discarded." : "Hierarchy and sort order restored.");
     render();
   }
 
@@ -4217,6 +4676,36 @@
     });
   }
 
+  function getInputSelectionRange(input) {
+    if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) {
+      return { start: null, end: null };
+    }
+    return {
+      start: Number.isInteger(input.selectionStart) ? input.selectionStart : null,
+      end: Number.isInteger(input.selectionEnd) ? input.selectionEnd : null,
+    };
+  }
+
+  function restoreInputAfterRender(field, selection) {
+    const safeField =
+      window.CSS && typeof window.CSS.escape === "function"
+        ? window.CSS.escape(String(field || ""))
+        : String(field || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const nextInput = getHost()?.querySelector(`[data-field="${safeField}"]`);
+    if (!(nextInput instanceof HTMLInputElement || nextInput instanceof HTMLTextAreaElement)) return;
+    nextInput.focus();
+    if (typeof nextInput.setSelectionRange !== "function") return;
+    const valueLength = String(nextInput.value || "").length;
+    const start = Number.isInteger(selection?.start) ? Math.min(selection.start, valueLength) : valueLength;
+    const end = Number.isInteger(selection?.end) ? Math.min(selection.end, valueLength) : start;
+    nextInput.setSelectionRange(start, end);
+  }
+
+  function renderAndRestoreInput(field, selection) {
+    render();
+    restoreInputAfterRender(field, selection);
+  }
+
   function onHostInput(event) {
     const target = event.target;
     if (
@@ -4224,15 +4713,11 @@
     )
       return;
     const field = target.getAttribute("data-field") || "";
+    const selection = getInputSelectionRange(target);
 
     if (field === "search-text") {
       state.searchText = target.value || "";
-      render();
-      const nextInput = getHost()?.querySelector('[data-field="search-text"]');
-      if (nextInput instanceof HTMLInputElement) {
-        nextInput.focus();
-        nextInput.setSelectionRange(state.searchText.length, state.searchText.length);
-      }
+      renderAndRestoreInput(field, selection);
       return;
     }
     if (
@@ -4261,13 +4746,7 @@
         state.mergeQuery = target.value || "";
         state.mergeSourceId = "";
       }
-      render();
-      const selector = `[data-field="${field}"]`;
-      const nextInput = getHost()?.querySelector(selector);
-      if (nextInput instanceof HTMLInputElement) {
-        nextInput.focus();
-        nextInput.setSelectionRange(nextInput.value.length, nextInput.value.length);
-      }
+      renderAndRestoreInput(field, selection);
       return;
     }
     if (field === "image-url-draft") {
@@ -4294,14 +4773,9 @@
       (field === "draft-supplemental_image_1_id" || field === "draft-supplemental_image_2_id") &&
       state.draft
     ) {
-      const nextValue = normalizeSupplementalImageId(target.value);
+      const nextValue = normalizeSupplementalImageValue(target.value);
       state.draft[field.replace(/^draft-/, "")] = nextValue;
-      render();
-      const nextInput = getHost()?.querySelector(`[data-field="${field}"]`);
-      if (nextInput instanceof HTMLInputElement) {
-        nextInput.focus();
-        nextInput.setSelectionRange(nextInput.value.length, nextInput.value.length);
-      }
+      renderAndRestoreInput(field, selection);
       syncSupplementalImagePreviews();
       return;
     }
@@ -4327,6 +4801,10 @@
         : null;
     if (!(handle instanceof HTMLElement) || state.isSaving) return;
     const dragKind = handle.hasAttribute("data-sort-drag-tag-id") ? "sort" : "parent";
+    if (dragKind === "sort" && !isGeneratedSortOrderEnabled()) {
+      event.preventDefault();
+      return;
+    }
     if (state.sortMode && dragKind !== "sort") {
       event.preventDefault();
       return;
@@ -4353,8 +4831,12 @@
   function onHostDragOver(event) {
     if (!state.draggingTagId) return;
     if (state.dragKind === "sort") {
-      const row = event.target instanceof Element ? event.target.closest("[data-tree-row-id]") : null;
+      const row = resolveTreeRowFromDragEvent(event);
       if (!(row instanceof HTMLElement)) {
+        if (isSortDragInsideTreePane(event)) {
+          event.preventDefault();
+          if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+        }
         setTreeDragTarget("", "");
         return;
       }
@@ -4370,8 +4852,7 @@
         return;
       }
 
-      const rect = row.getBoundingClientRect();
-      const placement = event.clientY < rect.top + rect.height / 2 ? "sort-before" : "sort-after";
+      const placement = getSortPlacementFromDragEvent(event, row);
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
       setTreeDragTarget(targetId, placement);
@@ -4490,8 +4971,11 @@
     if (!state.draggingTagId) return;
     if (state.dragKind === "sort") {
       const sourceId = state.draggingTagId;
-      const targetId = state.dragOverTagId;
-      const placement = state.dragOverMode === "sort-after" ? "after" : "before";
+      const row = resolveTreeRowFromDragEvent(event);
+      const eventTargetId = row instanceof HTMLElement ? String(row.getAttribute("data-tree-row-id") || "") : "";
+      const eventPlacement = row instanceof HTMLElement ? getSortPlacementFromDragEvent(event, row) : "";
+      const targetId = eventTargetId || state.dragOverTagId;
+      const placement = (eventPlacement || state.dragOverMode) === "sort-after" ? "after" : "before";
       event.preventDefault();
       resetTreeDragState();
       if (targetId) reorderTagBySortDrag(sourceId, targetId, placement);
@@ -4517,9 +5001,7 @@
     const field = target.getAttribute("data-field") || "";
     if (field !== "image-file") return;
     const imageTarget = String(target.getAttribute("data-image-target") || state.imagePickerTarget || "main");
-    if (imageTarget === "main" && !state.draft) return;
-    if (imageTarget === "split-new" && !state.splitNewDraft) return;
-    if (imageTarget === "split-original" && !state.splitOriginalDraft) return;
+    if (!canSetDraftImageTarget(imageTarget)) return;
 
     const file = target.files?.[0];
     if (!file) return;
@@ -4544,9 +5026,7 @@
 
   async function readImageFromClipboard(target = "main") {
     if (state.isSaving) return;
-    if (target === "main" && !state.draft) return;
-    if (target === "split-new" && !state.splitNewDraft) return;
-    if (target === "split-original" && !state.splitOriginalDraft) return;
+    if (!canSetDraftImageTarget(target)) return;
     if (!navigator.clipboard?.read) {
       setStatus("error", "Clipboard image reading is not available in this browser.");
       render();
@@ -4780,8 +5260,39 @@
     if (action === "toggle-sort-mode") {
       event.preventDefault();
       if (state.isSaving) return;
-      state.sortMode = !state.sortMode;
-      if (state.sortMode) ensureSortOrderBaseline();
+      if (!isGeneratedSortOrderEnabled()) {
+        state.sortMode = false;
+        state.expandedSortMode = false;
+        clearSortOrderBaseline();
+        clearTreeDragIndicators();
+        setStatus("info", "Generated Sort Mode is disabled in plugin settings. Use the Sort Name field instead.");
+        render();
+        return;
+      }
+      const nextSortMode = !state.sortMode;
+      if (nextSortMode) {
+        state.sortMode = true;
+        ensureSortOrderBaseline();
+      } else {
+        if (hasPendingSortOrderChanges()) {
+          const hadParentChanges = state.sortPendingParentIds.size > 0;
+          if (hadParentChanges) restoreHierarchyFromCachedTags();
+          state.sortPendingParentIds = new Map();
+          restoreSortOrderFromBaseline();
+        }
+        state.sortMode = false;
+        state.expandedSortMode = false;
+        clearSortOrderBaseline();
+      }
+      clearTreeDragIndicators();
+      setStatus("", "");
+      render();
+      return;
+    }
+    if (action === "toggle-expanded-sort-mode") {
+      event.preventDefault();
+      if (!isGeneratedSortOrderEnabled() || !state.sortMode || state.isSaving) return;
+      state.expandedSortMode = !state.expandedSortMode;
       clearTreeDragIndicators();
       setStatus("", "");
       render();
@@ -4789,13 +5300,13 @@
     }
     if (action === "apply-sort-order") {
       event.preventDefault();
-      if (!state.sortMode || state.isSaving) return;
+      if (!isGeneratedSortOrderEnabled() || !state.sortMode || state.isSaving) return;
       void applyPendingSortOrder();
       return;
     }
     if (action === "discard-sort-order") {
       event.preventDefault();
-      if (!state.sortMode || state.isSaving) return;
+      if (!isGeneratedSortOrderEnabled() || !state.sortMode || state.isSaving) return;
       discardPendingSortOrder();
       return;
     }
@@ -5143,22 +5654,22 @@
     }
     if (action === "reparent-current") {
       event.preventDefault();
-      attachExistingTag("reparent");
+      applyRelationshipAction(action);
       return;
     }
     if (action === "add-additional-parent") {
       event.preventDefault();
-      attachExistingTag("add-parent");
+      applyRelationshipAction(action);
       return;
     }
     if (action === "attach-existing-child") {
       event.preventDefault();
-      attachExistingTag("child");
+      applyRelationshipAction(action);
       return;
     }
     if (action === "attach-existing-sibling") {
       event.preventDefault();
-      attachExistingTag("sibling");
+      applyRelationshipAction(action);
     }
   }
 
@@ -5667,7 +6178,7 @@
     );
   }
 
-  async function createRelatedTag(mode) {
+  async function createRelatedTag(mode, options = {}) {
     if (state.isSaving || !state.selectedTagId) return;
     const sourceRecord = state.tagMap.get(state.selectedTagId);
     if (!sourceRecord) return;
@@ -5689,11 +6200,14 @@
 
     const isParent = mode === "parent";
     const isChild = mode === "child";
-    const name = (isParent
-      ? state.parentCreateName
-      : isChild
-      ? state.childCreateName
-      : state.siblingCreateName
+    const parentMode = options.parentMode === "add-parent" ? "add-parent" : "reparent";
+    const name = String(
+      options.name ||
+        (isParent
+          ? state.parentCreateName || state.reparentQuery
+          : isChild
+          ? state.childCreateName || state.attachChildQuery
+          : state.siblingCreateName || state.attachSiblingQuery)
     ).trim();
     if (!name) return;
 
@@ -5714,17 +6228,26 @@
       }
 
       if (isParent) {
-        await assignTagParents(sourceRecord.id, [newId]);
+        const nextParentIds =
+          parentMode === "add-parent"
+            ? Array.from(new Set([...(sourceRecord.parentIds || []).map(String), String(newId)]))
+            : [newId];
+        await assignTagParents(sourceRecord.id, nextParentIds);
       }
 
       if (isParent) {
         state.parentCreateName = "";
+        state.reparentQuery = "";
+        state.reparentTargetId = "";
       } else if (isChild) {
         state.childCreateName = "";
+        state.attachChildQuery = "";
         state.expandedIds.add(sourceRecord.id);
         saveSet(EXPANDED_STORAGE_KEY, state.expandedIds);
       } else {
         state.siblingCreateName = "";
+        state.attachSiblingQuery = "";
+        state.attachSiblingTargetId = "";
       }
 
       invalidateTags();
@@ -5733,9 +6256,13 @@
         if (!created) return false;
         if (isParent) {
           const updatedSource = state.tagMap.get(String(sourceRecord.id));
+          const expectedParentIds =
+            parentMode === "add-parent"
+              ? Array.from(new Set([...(sourceRecord.parentIds || []).map(String), String(newId)]))
+              : [String(newId)];
           return (
             created.parentIds.join("|") === sourceRecord.parentIds.join("|") &&
-            updatedSource?.parentIds?.join("|") === String(newId)
+            updatedSource?.parentIds?.join("|") === expectedParentIds.join("|")
           );
         }
         return created.parentIds.join("|") === parentIds.map(String).join("|");
@@ -5755,16 +6282,94 @@
     }
   }
 
-  function isDescendantTag(ancestorId, possibleDescendantId, visited = new Set()) {
-    const ancestor = state.tagMap.get(String(ancestorId));
+  function isDescendantTag(ancestorId, possibleDescendantId, tagMap = state.tagMap, visited = new Set()) {
+    const ancestor = tagMap.get(String(ancestorId));
     if (!ancestor || visited.has(String(ancestorId))) return false;
     const nextVisited = new Set(visited);
     nextVisited.add(String(ancestorId));
     return (ancestor.childIds || []).some((childId) => {
       const child = String(childId);
       if (child === String(possibleDescendantId)) return true;
-      return isDescendantTag(child, possibleDescendantId, nextVisited);
+      return isDescendantTag(child, possibleDescendantId, tagMap, nextVisited);
     });
+  }
+
+  function resolveTypedRelationshipTarget(mode) {
+    const sourceId = String(state.selectedTagId || "");
+    if (mode === "parent") {
+      const existing = state.reparentTargetId
+        ? state.tagMap.get(String(state.reparentTargetId))
+        : findTagByExactName(state.reparentQuery, [sourceId]);
+      if (existing) {
+        state.reparentTargetId = String(existing.id);
+        state.reparentQuery = existing.name || state.reparentQuery;
+      }
+      return {
+        existingId: existing ? String(existing.id) : "",
+        name: String(state.reparentQuery || "").trim(),
+      };
+    }
+    if (mode === "child") {
+      const selectedIds = (state.attachChildTargetIds || []).map(String).filter(Boolean);
+      const existing = selectedIds.length
+        ? null
+        : findTagByExactName(state.attachChildQuery, [sourceId, ...selectedIds]);
+      if (existing) {
+        state.attachChildTargetIds = [String(existing.id)];
+        state.attachChildQuery = "";
+      }
+      return {
+        existingId: selectedIds.length ? selectedIds[0] : existing ? String(existing.id) : "",
+        name: String(state.attachChildQuery || "").trim(),
+      };
+    }
+    const existing = state.attachSiblingTargetId
+      ? state.tagMap.get(String(state.attachSiblingTargetId))
+      : findTagByExactName(state.attachSiblingQuery, [sourceId]);
+    if (existing) {
+      state.attachSiblingTargetId = String(existing.id);
+      state.attachSiblingQuery = existing.name || state.attachSiblingQuery;
+    }
+    return {
+      existingId: existing ? String(existing.id) : "",
+      name: String(state.attachSiblingQuery || "").trim(),
+    };
+  }
+
+  async function applyRelationshipAction(action) {
+    if (state.isSaving || !state.selectedTagId) return;
+    const relationshipAction = String(action || "");
+    const mode =
+      relationshipAction === "reparent-current" || relationshipAction === "add-additional-parent"
+        ? "parent"
+        : relationshipAction === "attach-existing-child"
+        ? "child"
+        : relationshipAction === "attach-existing-sibling"
+        ? "sibling"
+        : "";
+    if (!mode) return;
+
+    const target = resolveTypedRelationshipTarget(mode);
+    if (target.existingId) {
+      if (relationshipAction === "reparent-current") return attachExistingTag("reparent");
+      if (relationshipAction === "add-additional-parent") return attachExistingTag("add-parent");
+      if (relationshipAction === "attach-existing-child") return attachExistingTag("child");
+      if (relationshipAction === "attach-existing-sibling") return attachExistingTag("sibling");
+    }
+
+    if (!target.name) return;
+    if (relationshipAction === "reparent-current") {
+      return createRelatedTag("parent", { name: target.name, parentMode: "reparent" });
+    }
+    if (relationshipAction === "add-additional-parent") {
+      return createRelatedTag("parent", { name: target.name, parentMode: "add-parent" });
+    }
+    if (relationshipAction === "attach-existing-child") {
+      return createRelatedTag("child", { name: target.name });
+    }
+    if (relationshipAction === "attach-existing-sibling") {
+      return createRelatedTag("sibling", { name: target.name });
+    }
   }
 
   async function attachExistingTag(mode) {
@@ -5788,7 +6393,7 @@
     }
 
     const targetIds =
-      mode === "reparent"
+      mode === "reparent" || mode === "add-parent"
         ? [String(state.reparentTargetId || "")]
         : mode === "child"
         ? (state.attachChildTargetIds || []).map(String)
@@ -5916,6 +6521,11 @@
       state.tagMap = hierarchy.tagMap;
       state.searchIndex = hierarchy.searchIndex;
       clearSortOrderBaseline();
+      if (!config.enableGeneratedSortOrder) {
+        state.sortMode = false;
+        state.expandedSortMode = false;
+        resetTreeDragState();
+      }
       state.batchSelectedTagIds = (state.batchSelectedTagIds || [])
         .map(String)
         .filter((id) => state.tagMap.has(id));
