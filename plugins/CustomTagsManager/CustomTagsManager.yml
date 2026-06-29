@@ -1,6 +1,6 @@
 name: Custom Tags Manager
 description: Standalone hierarchical custom tags manager for editing and creating tags
-version: 0.4.0
+version: 0.4.1
 url: https://github.com/RollainKraus/stash-plugins
 
 settings:
@@ -8,6 +8,10 @@ settings:
     displayName: Tree Expansion Behavior
     type: STRING
     description: "expand_all, collapse_all, or remember (Default: remember)"
+  c_enableGeneratedSortOrder:
+    displayName: Enable Generated Sort Order
+    type: BOOLEAN
+    description: "When enabled, Sort Mode can drag/reorder tags and write generated sort names. Disable to use only the manual Sort Name field."
 
 ui:
   javascript:
