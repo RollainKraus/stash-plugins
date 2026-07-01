@@ -6,6 +6,8 @@
   const FALLBACK_GROUP_ID = "kmv-performer-tags-overhaul-host";
   const LAYOUT_CHANGED_EVENT = "performer-page-layout-changed";
   const ROUTE_RETRY_DELAYS = [0, 150, 400, 900, 1600];
+  const PINNED_SECTION_STATES_STORAGE_KEY =
+    "PerformerTagsOverhaul:pinnedSectionStates:v1";
 
   const state = {
     currentPerformer: null,
@@ -26,11 +28,14 @@
     observerTimer: null,
     lastMiddleClickTagId: null,
     lastMiddleClickAt: 0,
+    pinnedSectionStates: null,
     uiState: {
       entityKey: null,
       mode: null,
       groupStates: new Map(),
       subgroupStates: new Map(),
+      userGroupStates: new Set(),
+      userSubgroupStates: new Set(),
     },
   };
 
@@ -197,6 +202,13 @@
 
   function shouldOptimizeFormatting(cfg) {
     return getConfigBoolean(cfg.a_optimizeFormatting, true);
+  }
+
+  function shouldShowDirectChildTagContainer(cfg) {
+    return getConfigBoolean(
+      cfg.a_showDirectChildTagContainer ?? cfg.showDirectChildTagContainer,
+      true
+    );
   }
 
   function getBlacklistedTagNames(value) {
@@ -414,28 +426,95 @@
         mode: null,
         groupStates: new Map(),
         subgroupStates: new Map(),
+        userGroupStates: new Set(),
+        userSubgroupStates: new Set(),
       };
     }
     return state.uiState;
   }
 
-  function isSectionRememberedOpen(kind, id) {
+  function getSectionStateKey(id, mode) {
+    return `${mode || state.currentMode || "display"}:${String(id)}`;
+  }
+
+  function getPinnedSectionKey(kind, id) {
+    return `${kind}:${String(id)}`;
+  }
+
+  function getPinnedSectionStates() {
+    if (state.pinnedSectionStates) return state.pinnedSectionStates;
+
+    state.pinnedSectionStates = new Map();
+    try {
+      const raw = window.localStorage?.getItem(PINNED_SECTION_STATES_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      if (parsed && typeof parsed === "object") {
+        Object.entries(parsed).forEach(([key, value]) => {
+          if (typeof value === "boolean") state.pinnedSectionStates.set(key, value);
+        });
+      }
+    } catch (err) {
+      console.warn("[PerformerTagsOverhaul] pinned section state load failed", err);
+    }
+
+    return state.pinnedSectionStates;
+  }
+
+  function savePinnedSectionStates() {
+    try {
+      const data = Object.fromEntries(getPinnedSectionStates());
+      window.localStorage?.setItem(
+        PINNED_SECTION_STATES_STORAGE_KEY,
+        JSON.stringify(data)
+      );
+    } catch (err) {
+      console.warn("[PerformerTagsOverhaul] pinned section state save failed", err);
+    }
+  }
+
+  function getPinnedSectionState(kind, id) {
+    const key = getPinnedSectionKey(kind, id);
+    const pinnedStates = getPinnedSectionStates();
+    return pinnedStates.has(key) ? pinnedStates.get(key) : null;
+  }
+
+  function isSectionPinned(kind, id) {
+    return getPinnedSectionState(kind, id) !== null;
+  }
+
+  function setPinnedSectionState(kind, id, isOpen) {
+    getPinnedSectionStates().set(getPinnedSectionKey(kind, id), !!isOpen);
+    savePinnedSectionStates();
+  }
+
+  function clearPinnedSectionState(kind, id) {
+    getPinnedSectionStates().delete(getPinnedSectionKey(kind, id));
+    savePinnedSectionStates();
+  }
+
+  function isSectionRememberedOpen(kind, id, mode) {
     const uiState = getCurrentUiState();
     if (!uiState) return null;
     const collection =
       kind === "group" ? uiState.groupStates : uiState.subgroupStates;
-    const normalizedId = String(id);
-    if (!collection.has(normalizedId)) return null;
-    return collection.get(normalizedId);
+    const userCollection =
+      kind === "group" ? uiState.userGroupStates : uiState.userSubgroupStates;
+    const stateKey = getSectionStateKey(id, mode);
+    if (!userCollection.has(stateKey)) return null;
+    if (!collection.has(stateKey)) return null;
+    return collection.get(stateKey);
   }
 
-  function rememberSectionState(kind, id, isOpen) {
+  function rememberSectionState(kind, id, isOpen, mode, source = "default") {
     const uiState = getCurrentUiState();
     if (!uiState) return;
     const collection =
       kind === "group" ? uiState.groupStates : uiState.subgroupStates;
-    const normalizedId = String(id);
-    collection.set(normalizedId, !!isOpen);
+    const userCollection =
+      kind === "group" ? uiState.userGroupStates : uiState.userSubgroupStates;
+    const stateKey = getSectionStateKey(id, mode);
+    collection.set(stateKey, !!isOpen);
+    if (source === "user") userCollection.add(stateKey);
   }
 
   function rememberMode(mode) {
@@ -900,41 +979,14 @@
     return total;
   }
 
-  function groupHasSelectedTags(group) {
-    if (group.parent.id !== "__ungrouped__" && state.selectedTagIds.has(group.parent.id)) {
-      return true;
-    }
+  function getInitialSectionOpenState(kind, id, mode) {
+    const pinned = getPinnedSectionState(kind, id);
+    if (pinned !== null) return pinned;
 
-    return group.items.some((item) => {
-      if (item.type === "leaf") return state.selectedTagIds.has(item.id);
-      if (item.type === "subgroup") {
-        if (state.selectedTagIds.has(item.id)) return true;
-        return item.children.some((child) => state.selectedTagIds.has(child.id));
-      }
-      return false;
-    });
-  }
-
-  function subgroupHasSelectedTags(subgroup) {
-    if (state.selectedTagIds.has(subgroup.id)) return true;
-    return subgroup.children.some((child) => state.selectedTagIds.has(child.id));
-  }
-
-  function shouldSectionStartOpen(cfg, containsSelection) {
-    if (getConfigBoolean(cfg.a_defaultExpanded ?? cfg.defaultExpanded, true)) {
-      return true;
-    }
-    if (getConfigBoolean(cfg.a_autoExpandIfSelected ?? cfg.autoExpandIfSelected, true)) {
-      return containsSelection;
-    }
-    return false;
-  }
-
-  function getInitialSectionOpenState(kind, id, cfg, containsSelection) {
-    const remembered = isSectionRememberedOpen(kind, id);
+    const remembered = isSectionRememberedOpen(kind, id, mode);
     if (remembered !== null) return remembered;
-    const startsOpen = shouldSectionStartOpen(cfg, containsSelection);
-    rememberSectionState(kind, id, startsOpen);
+    const startsOpen = true;
+    rememberSectionState(kind, id, startsOpen, mode);
     return startsOpen;
   }
 
@@ -964,6 +1016,61 @@
     button.textContent = "▾";
 
     return button;
+  }
+
+  function updatePinButtonState(button, pinned) {
+    button.classList.toggle("is-pinned", pinned);
+    button.setAttribute("aria-pressed", pinned ? "true" : "false");
+    button.title = pinned
+      ? "Unpin this section's open or closed state"
+      : "Pin this section's current open or closed state across performers";
+    button.setAttribute(
+      "aria-label",
+      pinned ? "Unpin section state" : "Pin section state"
+    );
+  }
+
+  function createPinButton(kind, id) {
+    if (!id || String(id).startsWith("__")) return null;
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "performer-tags-overhaul__pin-toggle";
+    button.setAttribute("data-pto-pin-kind", kind);
+    button.setAttribute("data-pto-pin-id", id);
+    button.textContent = "📌";
+    updatePinButtonState(button, isSectionPinned(kind, id));
+    return button;
+  }
+
+  function updatePinButtons(kind, id) {
+    document
+      .querySelectorAll(
+        `[data-pto-pin-kind="${CSS.escape(kind)}"][data-pto-pin-id="${CSS.escape(
+          String(id)
+        )}"]`
+      )
+      .forEach((button) => {
+        updatePinButtonState(button, isSectionPinned(kind, id));
+      });
+  }
+
+  function togglePinnedSectionState(button) {
+    const kind = button.getAttribute("data-pto-pin-kind");
+    const id = button.getAttribute("data-pto-pin-id");
+    if (!kind || !id) return;
+
+    if (isSectionPinned(kind, id)) {
+      clearPinnedSectionState(kind, id);
+      updatePinButtons(kind, id);
+      return;
+    }
+
+    const section = button.closest(
+      ".performer-tags-overhaul__subgroup, .performer-tags-overhaul__group"
+    );
+    setPinnedSectionState(kind, id, !!section?.classList.contains("is-open"));
+    updatePinButtons(kind, id);
   }
 
   function updateSelectableState(element, selected) {
@@ -1152,20 +1259,28 @@
     left.appendChild(meta);
     header.appendChild(left);
 
+    const pinButton = createPinButton("subgroup", subgroup.id);
     if (mode === "edit") {
       const actions = document.createElement("div");
       actions.className = "performer-tags-overhaul__subgroup-actions";
       actions.appendChild(createParentToggleButton(subgroup.id));
+      if (pinButton) actions.appendChild(pinButton);
       if (shouldShowCollapseButtons(cfg)) {
         actions.appendChild(
           createCollapseButton(section, "performer-tags-overhaul__subgroup-toggle")
         );
       }
       header.appendChild(actions);
-    } else if (shouldShowCollapseButtons(cfg)) {
-      header.appendChild(
-        createCollapseButton(section, "performer-tags-overhaul__subgroup-toggle")
-      );
+    } else if (pinButton || shouldShowCollapseButtons(cfg)) {
+      const actions = document.createElement("div");
+      actions.className = "performer-tags-overhaul__subgroup-actions";
+      if (pinButton) actions.appendChild(pinButton);
+      if (shouldShowCollapseButtons(cfg)) {
+        actions.appendChild(
+          createCollapseButton(section, "performer-tags-overhaul__subgroup-toggle")
+        );
+      }
+      header.appendChild(actions);
     }
 
     const body = document.createElement("div");
@@ -1181,8 +1296,7 @@
     const startsOpen = getInitialSectionOpenState(
       "subgroup",
       subgroup.id,
-      cfg,
-      subgroupHasSelectedTags(subgroup)
+      mode
     );
     section.classList.toggle("is-open", startsOpen);
 
@@ -1194,8 +1308,17 @@
         rememberSectionState(
           "subgroup",
           subgroup.id,
-          section.classList.contains("is-open")
+          section.classList.contains("is-open"),
+          mode,
+          "user"
         );
+        if (isSectionPinned("subgroup", subgroup.id)) {
+          setPinnedSectionState(
+            "subgroup",
+            subgroup.id,
+            section.classList.contains("is-open")
+          );
+        }
       }
     });
 
@@ -1246,20 +1369,28 @@
     left.appendChild(meta);
     header.appendChild(left);
 
+    const groupPinButton = createPinButton("group", group.parent.id);
     if (mode === "edit" && group.parent.id !== "__ungrouped__") {
       const actions = document.createElement("div");
       actions.className = "performer-tags-overhaul__group-actions";
       actions.appendChild(createParentToggleButton(group.parent.id));
+      if (groupPinButton) actions.appendChild(groupPinButton);
       if (shouldShowCollapseButtons(cfg)) {
         actions.appendChild(
           createCollapseButton(section, "performer-tags-overhaul__group-toggle")
         );
       }
       header.appendChild(actions);
-    } else if (shouldShowCollapseButtons(cfg)) {
-      header.appendChild(
-        createCollapseButton(section, "performer-tags-overhaul__group-toggle")
-      );
+    } else if (groupPinButton || shouldShowCollapseButtons(cfg)) {
+      const actions = document.createElement("div");
+      actions.className = "performer-tags-overhaul__group-actions";
+      if (groupPinButton) actions.appendChild(groupPinButton);
+      if (shouldShowCollapseButtons(cfg)) {
+        actions.appendChild(
+          createCollapseButton(section, "performer-tags-overhaul__group-toggle")
+        );
+      }
+      header.appendChild(actions);
     }
 
     const body = document.createElement("div");
@@ -1269,55 +1400,60 @@
     subgroupGrid.className = "performer-tags-overhaul__subgroup-grid";
 
     const rootLeafItems = group.items.filter((item) => item.type === "leaf");
+    const subgroupItems = group.items.filter((item) => item.type === "subgroup");
     if (rootLeafItems.length) {
-      const rootCard = document.createElement("section");
-      rootCard.className =
-        "performer-tags-overhaul__subgroup performer-tags-overhaul__subgroup--root";
-      rootCard.classList.add("is-open");
-      if (isStrictLeafLayout(cfg, mode)) {
-        rootCard.classList.add("performer-tags-overhaul__subgroup--strict");
-      }
-
-      const rootHeader = document.createElement("div");
-      rootHeader.className =
-        "performer-tags-overhaul__subgroup-header performer-tags-overhaul__subgroup-header--static";
-
-      const rootTitle = document.createElement("span");
-      rootTitle.className = "performer-tags-overhaul__subgroup-title";
-      rootTitle.textContent = group.parent.id === "__ungrouped__" ? "Tags" : "General";
-      rootHeader.appendChild(rootTitle);
-
-      const rootBody = document.createElement("div");
-      rootBody.className = "performer-tags-overhaul__subgroup-body";
-
       const rootLeafWrap = createLeafWrap(cfg, mode);
+      rootLeafWrap.classList.add("performer-tags-overhaul__leaf-wrap--direct");
       applyLeafWrapLayout(rootLeafWrap, cfg, mode, rootLeafItems.length);
 
       rootLeafItems.forEach((child) => {
         rootLeafWrap.appendChild(createTagDisplay(child, cfg, mode));
       });
 
-      rootBody.appendChild(rootLeafWrap);
-      rootCard.appendChild(rootHeader);
-      rootCard.appendChild(rootBody);
-      subgroupGrid.appendChild(rootCard);
+      if (shouldShowDirectChildTagContainer(cfg)) {
+        const rootCard = document.createElement("section");
+        rootCard.className =
+          "performer-tags-overhaul__subgroup performer-tags-overhaul__subgroup--root";
+        rootCard.classList.add("is-open");
+        if (isStrictLeafLayout(cfg, mode)) {
+          rootCard.classList.add("performer-tags-overhaul__subgroup--strict");
+        }
+
+        const rootHeader = document.createElement("div");
+        rootHeader.className =
+          "performer-tags-overhaul__subgroup-header performer-tags-overhaul__subgroup-header--static";
+
+        const rootTitle = document.createElement("span");
+        rootTitle.className = "performer-tags-overhaul__subgroup-title";
+        rootTitle.textContent =
+          group.parent.id === "__ungrouped__" ? "Tags" : group.parent.name;
+        rootHeader.appendChild(rootTitle);
+
+        const rootBody = document.createElement("div");
+        rootBody.className = "performer-tags-overhaul__subgroup-body";
+        rootBody.appendChild(rootLeafWrap);
+        rootCard.appendChild(rootHeader);
+        rootCard.appendChild(rootBody);
+        subgroupGrid.appendChild(rootCard);
+      } else {
+        subgroupGrid.appendChild(rootLeafWrap);
+      }
     }
 
-    group.items.forEach((item) => {
-      if (item.type === "subgroup") {
-        subgroupGrid.appendChild(createSubgroupSection(item, cfg, mode));
-      }
+    subgroupItems.forEach((item) => {
+      subgroupGrid.appendChild(createSubgroupSection(item, cfg, mode));
     });
 
-    body.appendChild(subgroupGrid);
+    if (subgroupGrid.childElementCount) {
+      body.appendChild(subgroupGrid);
+    }
     section.appendChild(header);
     section.appendChild(body);
 
     const startsOpen = getInitialSectionOpenState(
       "group",
       group.parent.id,
-      cfg,
-      groupHasSelectedTags(group)
+      mode
     );
     section.classList.toggle("is-open", startsOpen);
 
@@ -1329,8 +1465,17 @@
         rememberSectionState(
           "group",
           group.parent.id,
-          section.classList.contains("is-open")
+          section.classList.contains("is-open"),
+          mode,
+          "user"
         );
+        if (isSectionPinned("group", group.parent.id)) {
+          setPinnedSectionState(
+            "group",
+            group.parent.id,
+            section.classList.contains("is-open")
+          );
+        }
       }
     });
 
@@ -1653,6 +1798,14 @@
 
   function attachPanelEventDelegation(panel) {
     panel.addEventListener("click", (event) => {
+      const pinButton = event.target.closest("[data-pto-pin-kind][data-pto-pin-id]");
+      if (pinButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        togglePinnedSectionState(pinButton);
+        return;
+      }
+
       const toggleButton = event.target.closest("[data-pto-toggle-section]");
       if (toggleButton) {
         event.preventDefault();
@@ -1670,7 +1823,16 @@
               ? section.getAttribute("data-pto-subgroup-id")
               : section.getAttribute("data-pto-group-id");
           if (id) {
-            rememberSectionState(kind, id, section.classList.contains("is-open"));
+            rememberSectionState(
+              kind,
+              id,
+              section.classList.contains("is-open"),
+              state.currentMode,
+              "user"
+            );
+            if (isSectionPinned(kind, id)) {
+              setPinnedSectionState(kind, id, section.classList.contains("is-open"));
+            }
           }
           notifyLayoutChanged();
         }
