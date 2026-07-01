@@ -1,6 +1,6 @@
 name: O Stickers
 description: Randomly overlays O-count stickers or emoji on scene, image, studio, performer, and group cards.
-version: 1.4.2
+version: 1.4.7
 ui:
   css:
     - OStickers.css
