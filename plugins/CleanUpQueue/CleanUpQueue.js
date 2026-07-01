@@ -1764,6 +1764,27 @@
         if (resolved?.id) performers.push(resolved);
       }
       const oCounter = Math.max(0, Math.round(Number(draft.oCounter) || 0));
+      if (item.type === "images") {
+        const patch = {
+          date: String(draft.date || "").trim() || null,
+          details: String(draft.details || "").trim(),
+          rating100: ratingNumber,
+          organized: !!draft.organized,
+          urls,
+          studio_id: studio?.id ? String(studio.id) : null,
+          performer_ids: Array.from(new Set(performers.map((item) => String(item.id)))),
+          tag_ids: Array.from(new Set(tags.map((item) => String(item.id)))),
+        };
+        setStatus("Saving image metadata...");
+        await updateImageMetadata(item.id, patch);
+        state.completedCount += 1;
+        state.completedIds.add(item.id);
+        state.skippedIds.delete(item.id);
+        setStatus(`Saved edits for ${item.title}.`);
+        advanceQueue();
+        return;
+      }
+
       const patch = {
         title: String(draft.title || "").trim() || item.title || "Untitled",
         code: String(draft.code || "").trim(),
@@ -1787,11 +1808,7 @@
       }
 
       setStatus("Saving edited metadata...");
-      if (item.type === "images") {
-        await updateImageMetadata(item.id, patch);
-      } else {
-        await updateSceneMetadata(item.id, patch);
-      }
+      await updateSceneMetadata(item.id, patch);
       state.completedCount += 1;
       state.completedIds.add(item.id);
       state.skippedIds.delete(item.id);
@@ -2388,10 +2405,16 @@
     return `
       <div class="cleanup-queue__details cleanup-queue__editor">
         <h3>Edit metadata</h3>
-        <label class="cleanup-queue__field">
-          <span>Title</span>
-          <input type="text" data-draft-field="title" value="${escapeHtml(draft?.title || "")}" autocomplete="off">
-        </label>
+        ${
+          isScene
+            ? `
+              <label class="cleanup-queue__field">
+                <span>Title</span>
+                <input type="text" data-draft-field="title" value="${escapeHtml(draft?.title || "")}" autocomplete="off">
+              </label>
+            `
+            : ""
+        }
         <div class="cleanup-queue__field-grid">
           <label class="cleanup-queue__field">
             <span>Date</span>
@@ -2401,10 +2424,12 @@
             <span>Rating</span>
             <input type="number" min="0" max="10" step="0.1" data-draft-field="rating" value="${escapeHtml(draft?.rating || "")}" placeholder="0-10">
           </label>
-          <label class="cleanup-queue__field">
-            <span>O Count</span>
-            <input type="number" min="0" step="1" data-draft-field="oCounter" value="${escapeHtml(draft?.oCounter || "0")}">
-          </label>
+          ${isScene ? `
+            <label class="cleanup-queue__field">
+              <span>O Count</span>
+              <input type="number" min="0" step="1" data-draft-field="oCounter" value="${escapeHtml(draft?.oCounter || "0")}">
+            </label>
+          ` : ""}
           <label class="cleanup-queue__check-field">
             <input type="checkbox" data-draft-checkbox="organized" ${draft?.organized ? "checked" : ""}>
             <span>Organized</span>
@@ -2450,10 +2475,12 @@
 
         <div class="cleanup-queue__secondary-fields">
           <div class="cleanup-queue__field-grid cleanup-queue__field-grid--two">
-            <label class="cleanup-queue__field">
-              <span>Code</span>
-              <input type="text" data-draft-field="code" value="${escapeHtml(draft?.code || "")}" autocomplete="off">
-            </label>
+            ${isScene ? `
+              <label class="cleanup-queue__field">
+                <span>Code</span>
+                <input type="text" data-draft-field="code" value="${escapeHtml(draft?.code || "")}" autocomplete="off">
+              </label>
+            ` : ""}
             ${isScene ? `
               <label class="cleanup-queue__field">
                 <span>Director</span>
@@ -3244,6 +3271,9 @@
     closePanel();
     if (state.observer) state.observer.disconnect();
     window.clearTimeout(state.studioSearchTimer);
+    window.clearTimeout(state.performerSearchTimer);
+    window.clearTimeout(state.tagSearchTimer);
+    Object.values(state.scopeSearchTimers || {}).forEach((timer) => window.clearTimeout(timer));
     window.clearTimeout(state.routeTimer);
     window.clearTimeout(state.fallbackTimer);
     document.removeEventListener("keydown", handlePanelHotkey, true);
