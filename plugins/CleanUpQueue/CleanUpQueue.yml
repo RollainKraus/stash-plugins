@@ -1,6 +1,6 @@
 name: Clean Up Queue
 description: Focused queue workflow for fixing missing metadata across scenes, images, performers, and studios.
-version: 0.1.0
+version: 0.1.2
 url: https://github.com/RollainKraus/stash-plugins
 ui:
   javascript:
