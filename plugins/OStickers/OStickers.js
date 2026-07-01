@@ -36,6 +36,8 @@
   const CONTENT_CARD_CLASS_SELECTOR = ".scene-card, .image-card, .performer-card, .studio-card, .group-card, .movie-card";
   const GENERIC_CARD_SELECTOR = ".card";
   const METADATA_CACHE_TTL_MS = 30000;
+  const DEFAULT_ASSET_COUNT = 60;
+  const DIRECT_BATCH_SIZE = 30;
   const MODES = new Set(["repeat", "incremental", "single", "thresholds"]);
   const IMAGE_MODES = new Set(["random", "fixed"]);
   const ANIMATIONS = new Set(["none", "float", "wiggle", "pulse", "rain"]);
@@ -69,8 +71,9 @@
     metadataCache: new Map(),
     observer: null,
     refreshTimer: 0,
-    assetCount: null,
+    assetCount: DEFAULT_ASSET_COUNT,
     assetProbePromise: null,
+    assetProbeComplete: false,
     assetWarningShown: false,
     suppressObserverUntil: 0,
     enabled: getStoredEnabled(),
@@ -162,19 +165,28 @@
 
   async function ensureAssetCount() {
     if (getStickerType() !== "image") return 0;
+    probeAssetCountInBackground();
     if (Number.isInteger(state.assetCount)) return state.assetCount;
-    if (state.assetProbePromise) return state.assetProbePromise;
+    return DEFAULT_ASSET_COUNT;
+  }
 
-    state.assetProbePromise = detectAssetCount()
-      .then((count) => {
-        state.assetCount = count;
-        return count;
-      })
-      .finally(() => {
-        state.assetProbePromise = null;
-      });
-
-    return state.assetProbePromise;
+  function probeAssetCountInBackground() {
+    if (state.assetProbeComplete || state.assetProbePromise) return;
+    window.setTimeout(() => {
+      if (state.assetProbeComplete || state.assetProbePromise || getStickerType() !== "image") return;
+      state.assetProbePromise = detectAssetCount()
+        .then((count) => {
+          state.assetProbeComplete = true;
+          if (count > 0 && count !== state.assetCount) {
+            state.assetCount = count;
+            scheduleRefresh();
+          }
+          return count;
+        })
+        .finally(() => {
+          state.assetProbePromise = null;
+        });
+    }, 1200);
   }
 
   async function detectAssetCount() {
@@ -200,7 +212,7 @@
       };
       image.onload = () => finish(true);
       image.onerror = () => finish(false);
-      image.src = `/plugin/${PLUGIN_ID}/assets/${index}.png?probe=${Date.now()}-${index}`;
+      image.src = `/plugin/${PLUGIN_ID}/assets/${index}.png`;
     });
   }
 
@@ -366,10 +378,87 @@
     return Math.max(0, Math.round(parsed));
   }
 
+  function parseOCountText(value) {
+    const text = String(value ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text || text.length > 80) return null;
+
+    const patterns = [
+      /\bo[\s_-]*count\b\s*[:#-]?\s*(\d+)/i,
+      /\b(\d+)\s*o(?:'s|s)?\b/i,
+      /\bo(?:'s|s)?\s*[:#-]?\s*(\d+)\b/i,
+      /\u{1F4A6}\s*(\d+)\b/u,
+      /\b(\d+)\s*\u{1F4A6}/u,
+    ];
+
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match) return normalizeCount(match[1]);
+    }
+
+    return null;
+  }
+
+  function getDatasetOCount(card) {
+    const datasetKeys = [
+      "oCounter",
+      "oCount",
+      "ocounter",
+      "ocount",
+      "o_counter",
+    ];
+    for (const key of datasetKeys) {
+      const value = card.dataset?.[key];
+      if (value != null && value !== "") return normalizeCount(value);
+    }
+    const attributeKeys = ["data-o-counter", "data-o-count", "data-ocounter", "data-ocount", "data-o_counter"];
+    for (const key of attributeKeys) {
+      const value = card.getAttribute?.(key);
+      if (value != null && value !== "") return normalizeCount(value);
+    }
+    return null;
+  }
+
+  function getDomOCount(card) {
+    const datasetCount = getDatasetOCount(card);
+    if (datasetCount != null) return datasetCount;
+
+    const selectors = [
+      "[title*='O Count' i]",
+      "[aria-label*='O Count' i]",
+      "[title*='O count' i]",
+      "[aria-label*='O count' i]",
+      ".badge",
+      ".badge-info",
+      ".badge-secondary",
+      ".card-count",
+      ".card-counts *",
+      ".card-section span",
+      "span",
+      "button",
+    ].join(", ");
+    const elements = Array.from(card.querySelectorAll(selectors)).slice(0, 120);
+
+    for (const element of elements) {
+      const pieces = [
+        element.getAttribute("title"),
+        element.getAttribute("aria-label"),
+        element.textContent,
+      ].filter(Boolean);
+      for (const piece of pieces) {
+        const parsed = parseOCountText(piece);
+        if (parsed != null) return parsed;
+      }
+    }
+
+    return null;
+  }
+
   async function fetchMetadata(info) {
     if (!info?.type || !info?.id) return null;
-    const cached = state.metadataCache.get(info.cacheKey);
-    if (cached && Date.now() - cached.createdAt < METADATA_CACHE_TTL_MS) return cached.promise;
+    const cached = getCachedMetadata(info);
+    if (cached) return cached;
 
     const promise = fetchMetadataInner(info)
       .catch((err) => {
@@ -380,6 +469,20 @@
 
     state.metadataCache.set(info.cacheKey, { createdAt: Date.now(), promise });
     return promise;
+  }
+
+  function getCachedMetadata(info) {
+    const cached = state.metadataCache.get(info?.cacheKey);
+    if (cached && Date.now() - cached.createdAt < METADATA_CACHE_TTL_MS) return cached.promise;
+    return null;
+  }
+
+  function setCachedMetadata(info, metadata) {
+    if (!info?.cacheKey) return;
+    state.metadataCache.set(info.cacheKey, {
+      createdAt: Date.now(),
+      promise: Promise.resolve(metadata),
+    });
   }
 
   async function fetchMetadataInner(info) {
@@ -428,6 +531,46 @@
     }
 
     return { oCount: 0 };
+  }
+
+  function getDirectMetadataField(type) {
+    if (type === "scene") return "findScene";
+    if (type === "image") return "findImage";
+    return "";
+  }
+
+  async function fetchDirectOCounts(type, ids) {
+    const fieldName = getDirectMetadataField(type);
+    const uniqueIds = uniqueValues(ids.map((id) => String(id)));
+    const counts = new Map();
+    if (!fieldName || !uniqueIds.length) return counts;
+
+    for (let offset = 0; offset < uniqueIds.length; offset += DIRECT_BATCH_SIZE) {
+      const chunk = uniqueIds.slice(offset, offset + DIRECT_BATCH_SIZE);
+      const variableDefs = chunk.map((_id, index) => `$id${index}: ID!`).join(", ");
+      const fields = chunk.map((_id, index) => `
+        item${index}: ${fieldName}(id: $id${index}) {
+          id
+          o_counter
+        }
+      `).join("\n");
+      const variables = Object.fromEntries(chunk.map((id, index) => [`id${index}`, id]));
+
+      try {
+        const data = await gql(`
+          query OStickersDirectOCounts(${variableDefs}) {
+            ${fields}
+          }
+        `, variables);
+        chunk.forEach((id, index) => {
+          counts.set(id, normalizeCount(data?.[`item${index}`]?.o_counter));
+        });
+      } catch (err) {
+        console.warn("[OStickers] Batched O-count lookup failed", type, err);
+      }
+    }
+
+    return counts;
   }
 
   async function fetchGroupOCount(id) {
@@ -665,23 +808,56 @@
 
   function clearRenderedCards() {
     document.querySelectorAll(".ostickers-layer").forEach((layer) => layer.remove());
-    document.querySelectorAll(".ostickers-card").forEach((card) =>
-      card.classList.remove("ostickers-card", "ostickers-card--hide-on-hover")
-    );
+    document.querySelectorAll(".ostickers-card").forEach((card) => {
+      card.classList.remove("ostickers-card", "ostickers-card--hide-on-hover");
+      delete card.dataset.ostickersSignature;
+    });
   }
 
   function suppressObserver(ms = 250) {
     state.suppressObserverUntil = Math.max(state.suppressObserverUntil, Date.now() + ms);
   }
 
+  function getRenderSignature(info, stickers, rect) {
+    const visualConfig = [
+      state.config.mode,
+      state.config.imageMode,
+      state.config.sizePercent,
+      state.config.opacity,
+      state.config.animation,
+      state.config.animationSpeedMs,
+      state.config.allowOverflow,
+      state.config.hideOnHover,
+      state.config.maxOverflowPercent,
+      state.config.renderAreaWidth,
+      state.config.renderAreaHeight,
+      state.config.thresholds,
+      state.config.emoji,
+      Math.round(rect.width),
+      Math.round(rect.height),
+    ].join("|");
+    return `${info.cacheKey}|${stickers.map((sticker) => sticker.key).join(",")}|${hashString(visualConfig)}`;
+  }
+
+  function removeCardLayer(card) {
+    card.querySelector(":scope > .ostickers-layer")?.remove();
+    card.classList.remove("ostickers-card", "ostickers-card--hide-on-hover");
+    delete card.dataset.ostickersSignature;
+  }
+
   async function enhanceCards() {
     suppressObserver();
-    clearRenderedCards();
 
-    if (!state.enabled) return;
+    if (!state.enabled) {
+      clearRenderedCards();
+      return;
+    }
 
     const context = getActiveDecorationContext();
-    if (context.mode === "disabled") return;
+    if (context.mode === "disabled") {
+      clearRenderedCards();
+      return;
+    }
 
     if (getStickerType() === "image") {
       const assetCount = await ensureAssetCount();
@@ -695,22 +871,71 @@
     }
 
     const enabledTypes = getEnabledContentTypes();
-    if (context.mode === "browse" && !enabledTypes.has(context.browseType)) return;
+    if (context.mode === "browse" && !enabledTypes.has(context.browseType)) {
+      clearRenderedCards();
+      return;
+    }
     const cards = Array.from(document.querySelectorAll(CARD_SELECTOR));
     const uniqueCards = uniqueValues(cards.map(getStickerCardElement).filter(Boolean));
+    const cardRecords = [];
+    const directIdsByType = { scene: [], image: [] };
 
     for (const card of uniqueCards) {
       const info = getCardInfo(card);
       if (!info || !enabledTypes.has(info.type)) continue;
       if (context.mode === "browse" && info.type !== context.browseType) continue;
+      const domOCount = getDomOCount(card);
+      const cachedMetadata = domOCount == null ? getCachedMetadata(info) : null;
 
-      const metadata = await fetchMetadata(info);
-      if (!metadata?.oCount) continue;
+      if (domOCount != null) {
+        const metadata = { oCount: domOCount };
+        setCachedMetadata(info, metadata);
+        cardRecords.push({ card, info, metadata });
+        continue;
+      }
 
-      const stickers = buildStickerModels(info, metadata);
-      if (!stickers.length) continue;
+      if (cachedMetadata) {
+        cardRecords.push({ card, info, metadataPromise: cachedMetadata });
+        continue;
+      }
 
-      renderCard(card, info, stickers);
+      if (getDirectMetadataField(info.type)) {
+        directIdsByType[info.type].push(info.id);
+        cardRecords.push({ card, info, needsDirectBatch: true });
+        continue;
+      }
+
+      cardRecords.push({ card, info });
+    }
+
+    const directCountsByType = {
+      scene: await fetchDirectOCounts("scene", directIdsByType.scene),
+      image: await fetchDirectOCounts("image", directIdsByType.image),
+    };
+
+    for (const record of cardRecords) {
+      let metadata = record.metadata || null;
+      if (!metadata && record.metadataPromise) metadata = await record.metadataPromise;
+      if (!metadata && record.needsDirectBatch) {
+        const directCounts = directCountsByType[record.info.type];
+        if (directCounts?.has(record.info.id)) {
+          metadata = { oCount: directCounts.get(record.info.id) };
+          setCachedMetadata(record.info, metadata);
+        }
+      }
+      if (!metadata) metadata = await fetchMetadata(record.info);
+      if (!metadata?.oCount) {
+        removeCardLayer(record.card);
+        continue;
+      }
+
+      const stickers = buildStickerModels(record.info, metadata);
+      if (!stickers.length) {
+        removeCardLayer(record.card);
+        continue;
+      }
+
+      renderCard(record.card, record.info, stickers);
     }
 
     suppressObserver();
@@ -752,9 +977,17 @@
   function renderCard(card, info, stickers) {
     const rect = card.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
+    const signature = getRenderSignature(info, stickers, rect);
+    if (card.dataset.ostickersSignature === signature && card.querySelector(":scope > .ostickers-layer")) {
+      card.classList.add("ostickers-card");
+      card.classList.toggle("ostickers-card--hide-on-hover", !!state.config.hideOnHover);
+      return;
+    }
 
+    card.querySelector(":scope > .ostickers-layer")?.remove();
     card.classList.add("ostickers-card");
     card.classList.toggle("ostickers-card--hide-on-hover", !!state.config.hideOnHover);
+    card.dataset.ostickersSignature = signature;
 
     const layer = document.createElement("div");
     layer.className = "ostickers-layer";
