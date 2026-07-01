@@ -1,0 +1,87 @@
+.saved-filter-nav-menu-host {
+  position: relative;
+}
+
+.saved-filter-nav-menu-host.has-saved-filter-nav-menu > a::after {
+  content: "";
+  display: inline-block;
+  margin-left: 0.32rem;
+  vertical-align: 0.12em;
+  border-top: 0.32em solid currentColor;
+  border-right: 0.28em solid transparent;
+  border-left: 0.28em solid transparent;
+  opacity: 0.72;
+}
+
+.saved-filter-nav-menu {
+  --sfnm-bg: var(--bs-dropdown-bg, var(--bs-body-bg, #22272f));
+  --sfnm-border: var(--bs-dropdown-border-color, rgba(255, 255, 255, 0.16));
+  --sfnm-text: var(--bs-dropdown-link-color, var(--bs-body-color, #f3f5f8));
+  --sfnm-muted: var(--bs-secondary-color, rgba(230, 236, 246, 0.66));
+  --sfnm-hover-bg: var(--bs-dropdown-link-hover-bg, rgba(255, 255, 255, 0.08));
+  --sfnm-hover-text: var(--bs-dropdown-link-hover-color, var(--sfnm-text));
+  position: absolute;
+  z-index: 1080;
+  top: calc(100% - 0.1rem);
+  left: 0;
+  display: none;
+  min-width: 13rem;
+  max-width: min(22rem, calc(100vw - 1.5rem));
+  max-height: min(70vh, 34rem);
+  overflow: auto;
+  padding: 0.38rem;
+  border: 1px solid var(--sfnm-border);
+  border-radius: 0.45rem;
+  background: var(--sfnm-bg);
+  box-shadow: 0 0.75rem 1.8rem rgba(0, 0, 0, 0.32);
+}
+
+.saved-filter-nav-menu-host:hover > .saved-filter-nav-menu,
+.saved-filter-nav-menu-host:focus-within > .saved-filter-nav-menu {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.saved-filter-nav-menu__header {
+  padding: 0.34rem 0.48rem 0.28rem;
+  color: var(--sfnm-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.saved-filter-nav-menu__item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 2rem;
+  padding: 0.42rem 0.52rem;
+  border-radius: 0.35rem;
+  color: var(--sfnm-text);
+  cursor: pointer;
+  font-size: 0.86rem;
+  line-height: 1.25;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saved-filter-nav-menu__item:hover,
+.saved-filter-nav-menu__item:focus-visible {
+  color: var(--sfnm-hover-text);
+  background: var(--sfnm-hover-bg);
+  text-decoration: none;
+  outline: none;
+}
+
+@media (max-width: 700px) {
+  .saved-filter-nav-menu {
+    left: auto;
+    right: 0;
+    min-width: 12rem;
+  }
+}

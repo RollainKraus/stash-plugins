@@ -1,0 +1,10 @@
+name: Saved Filter Nav Menus
+description: Adds hover dropdowns of saved filters to Stash header content links
+version: 0.1.0
+url: https://github.com/RollainKraus/stash-plugins
+
+ui:
+  javascript:
+    - SavedFilterNavMenus.js
+  css:
+    - SavedFilterNavMenus.css
