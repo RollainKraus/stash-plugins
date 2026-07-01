@@ -288,6 +288,7 @@
 
 .performer-tags-overhaul__group-toggle,
 .performer-tags-overhaul__subgroup-toggle,
+.performer-tags-overhaul__pin-toggle,
 .performer-tags-overhaul__parent-toggle {
   border: 1px solid rgba(255, 255, 255, 0.18);
   background: var(--pto-panel-surface-03);
@@ -295,11 +296,31 @@
 }
 
 .performer-tags-overhaul__group-toggle,
-.performer-tags-overhaul__subgroup-toggle {
+.performer-tags-overhaul__subgroup-toggle,
+.performer-tags-overhaul__pin-toggle {
   min-width: 1.85rem;
   min-height: 1.85rem;
   border-radius: 999px;
   padding: 0;
+}
+
+.performer-tags-overhaul__pin-toggle {
+  opacity: 0.38;
+  filter: grayscale(1);
+}
+
+.performer-tags-overhaul__pin-toggle.is-pinned {
+  opacity: 0.62;
+  filter: grayscale(0.35);
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: none;
+}
+
+.performer-tags-overhaul__pin-toggle:hover,
+.performer-tags-overhaul__pin-toggle:focus-visible {
+  opacity: 1;
+  filter: none;
+  border-color: var(--pto-selected-border-color);
 }
 
 .performer-tags-overhaul__parent-toggle {
@@ -486,6 +507,7 @@
 
 .performer-tags-overhaul--saving .performer-tags-overhaul__tag,
 .performer-tags-overhaul--saving .performer-tags-overhaul__parent-toggle,
+.performer-tags-overhaul--saving .performer-tags-overhaul__pin-toggle,
 .performer-tags-overhaul--saving .performer-tags-overhaul__search-result-main,
 .performer-tags-overhaul--saving .performer-tags-overhaul__search-result-toggle {
   pointer-events: none;
@@ -502,7 +524,6 @@
     align-self: flex-start;
   }
 }
-
 
 @media (max-width: 700px) {
   .performer-tags-overhaul__leaf-wrap[data-display-mode="image"],
@@ -524,7 +545,4 @@
   .performer-tags-overhaul__leaf-wrap[data-display-mode="imageAndText"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-}
-
-@media (max-width: 900px) {
 }
