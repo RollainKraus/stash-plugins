@@ -1,6 +1,6 @@
 name: Performer Tags Overhaul
 description: Hierarchical tag browser for performer details with display and edit modes
-version: 0.1.0
+version: 0.1.4
 url: https://github.com/RollainKraus/stash-plugins
 
 settings:
@@ -8,16 +8,6 @@ settings:
     displayName: Default Mode
     type: STRING
     description: "display or edit (Default: display)"
-
-  a_defaultExpanded:
-    displayName: Default Expanded (Only affects Edit Mode)
-    type: BOOLEAN
-    description: "Expand all parent and subgroup sections by default (Default: true)"
-
-  a_autoExpandIfSelected:
-    displayName: Auto Expand If Selected
-    type: BOOLEAN
-    description: "Auto-expand groups containing selected tags (Default: true)"
 
   a_duplicateMultiParentTags:
     displayName: Duplicate Multi-Parent Tags (Only affects Edit Mode)
@@ -28,6 +18,11 @@ settings:
     displayName: Optimize Formatting
     type: BOOLEAN
     description: "Plugin automatically reformats tags into a compact layout which may override your preferred settings (Default: true)"
+
+  a_showDirectChildTagContainer:
+    displayName: Show Direct Child Tag Container
+    type: BOOLEAN
+    description: "Show a parent-named container/header for direct child tags that do not have their own children (Default: true)"
 
   a_parentTagBlacklist:
     displayName: Blacklist Display Tags
