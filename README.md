@@ -17,6 +17,7 @@
 - [Clean Up Queue](#Clean-Up-Queue)
 - [Content Banners](#Content-Banners)
 - [Stash Mini GUI](#Stash-Mini-GUI)
+- [Saved Filter Nav Menus](#Saved-Filter-Nav-Menus)
 
 ## Installation
 
@@ -478,6 +479,14 @@ scene previews are clickable to open the scene in a new tab
 Small companion app for browsing content while content is full screened. 
 
 No new features of functions, just a simple and customizable phone like GUI to quickly browse content on the same window. 
+
+# Saved Filter Nav Menus
+Adds on-hover drop down menus to the navigation header buttons using saved stash filters
+
+<h2>Preview</h2>
+<p>
+  <img src="/pluginPreviews/SavedFilterNavMenusPreview.png">
+</p>
 
 ## License
 
