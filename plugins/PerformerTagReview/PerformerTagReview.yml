@@ -1,0 +1,29 @@
+name: Performer Tag Review
+description: Adds a floating performer-page tag review window with a review queue for auditing content tags and applying selected performer tags to attached content.
+version: 0.11.34
+ui:
+  javascript:
+    - PerformerTagReview.js
+  css:
+    - PerformerTagReview.css
+settings:
+  contentTypes:
+    displayName: Content Types
+    description: Comma-separated content types to scan and update. Supported values are scenes, images, galleries. Default scenes,images,galleries.
+    type: STRING
+  pageSize:
+    displayName: Page Size
+    description: Number of attached content items to fetch per GraphQL page. Default 200.
+    type: NUMBER
+  reviewedTagId:
+    displayName: Reviewed Tag ID
+    description: Optional Stash tag ID used to persist reviewed performers. Marking a performer reviewed applies this tag, and performers with this tag are treated as reviewed. Recommended for keeping review state across browsers or cleared browser data.
+    type: STRING
+  summaryTagLimit:
+    displayName: Tag Summary Limit
+    description: Maximum number of tags shown in the tag summary. Use 0 to show all. Default 100.
+    type: NUMBER
+  tagBlacklist:
+    displayName: Tag Blacklist
+    description: Comma-separated tag IDs or exact names to hide from Performer Tag Review. Use ! before a tag to hide the tag and all descendants, for example Metadata, !Features.
+    type: STRING
