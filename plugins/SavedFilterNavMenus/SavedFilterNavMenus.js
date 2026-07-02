@@ -7,6 +7,7 @@
   const PLUGIN_ID = "SavedFilterNavMenus";
   const MENU_CLASS = "saved-filter-nav-menu";
   const HOST_CLASS = "saved-filter-nav-menu-host";
+  const CLICK_CLOSED_CLASS = "is-saved-filter-nav-click-closed";
   const REFRESH_DELAY_MS = 120;
 
   const CONTENT_LINKS = [
@@ -41,14 +42,6 @@
         }
         return json.data || {};
       });
-  }
-
-  function escapeHtml(value) {
-    return String(value ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
   }
 
   function normalizeFilters(filters) {
@@ -195,6 +188,39 @@
     );
   }
 
+  function blurActiveElement() {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+  }
+
+  function closeMenuUntilPointerLeaves(host) {
+    if (!(host instanceof HTMLElement)) return;
+    host.classList.add(CLICK_CLOSED_CLASS);
+    blurActiveElement();
+  }
+
+  function bindHostCloseHandlers(host, anchor) {
+    if (!host.dataset.savedFilterNavCloseBound) {
+      host.dataset.savedFilterNavCloseBound = "true";
+      host.addEventListener("mouseleave", () => {
+        host.classList.remove(CLICK_CLOSED_CLASS);
+      });
+    }
+
+    if (anchor instanceof HTMLAnchorElement && !anchor.dataset.savedFilterNavAnchorCloseBound) {
+      anchor.dataset.savedFilterNavAnchorCloseBound = "true";
+      anchor.addEventListener("click", () => {
+        closeMenuUntilPointerLeaves(host);
+      });
+    }
+  }
+
+  function closeOpenMenusUntilPointerLeaves() {
+    document.querySelectorAll(`.${HOST_CLASS}`).forEach((host) => {
+      closeMenuUntilPointerLeaves(host);
+    });
+  }
+
   function createMenu(item, filters) {
     const menu = document.createElement("div");
     menu.className = MENU_CLASS;
@@ -213,6 +239,9 @@
       link.setAttribute("role", "menuitem");
       link.title = filter.name;
       link.textContent = filter.name;
+      link.addEventListener("click", () => {
+        closeMenuUntilPointerLeaves(menu.closest(`.${HOST_CLASS}`));
+      });
       menu.appendChild(link);
     });
 
@@ -229,6 +258,7 @@
 
     host.classList.add(HOST_CLASS);
     host.dataset.savedFilterNavMode = item.mode;
+    bindHostCloseHandlers(host, anchor);
 
     if (!filters.length) {
       host.querySelectorAll(`:scope > .${MENU_CLASS}`).forEach((menu) => menu.remove());
@@ -290,7 +320,10 @@
     resumeObserver();
 
     window.addEventListener("popstate", scheduleMount);
-    document.addEventListener("stash:location", scheduleMount);
+    document.addEventListener("stash:location", () => {
+      closeOpenMenusUntilPointerLeaves();
+      scheduleMount();
+    });
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) scheduleMount();
     });
