@@ -18,6 +18,7 @@
 - [Content Banners](#Content-Banners)
 - [Stash Mini GUI](#Stash-Mini-GUI)
 - [Saved Filter Nav Menus](#Saved-Filter-Nav-Menus)
+- [Performer Tag Review](#Performer-Tag-Review)
 
 ## Installation
 
@@ -487,6 +488,9 @@ Adds on-hover drop down menus to the navigation header buttons using saved stash
 <p>
   <img src="/pluginPreviews/SavedFilterNavMenusPreview.png">
 </p>
+
+# Performer Tag Review
+A floating panel to help tag performers and sync tags across content with that performer. Opened via a button on performer pages. 
 
 ## License
 
