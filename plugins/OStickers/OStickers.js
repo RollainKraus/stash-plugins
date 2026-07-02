@@ -3,9 +3,7 @@
 
   const PLUGIN_ID = "OStickers";
   const ROUTE_EVENT = "ostickers:navigation";
-  const OCOUNT_CHANGE_EVENT = "ostickers:ocount-change";
   const ENABLED_STORAGE_KEY = "ostickers:enabled";
-  const PERSISTENT_METADATA_CACHE_KEY = "ostickers:metadata-cache:v1";
   const TOGGLE_BUTTON_CLASS = "ostickers-toggle-button";
   const DEFAULT_EMOJI = "\u{1F4A6}";
   const DATA_CARD_SELECTOR = [
@@ -35,12 +33,16 @@
     CARD_LINK_SELECTOR,
   ].join(", ");
   const CONTENT_TYPES = new Set(["scene", "image", "performer", "studio", "group"]);
+  const CARD_TYPE_DEFINITIONS = [
+    { type: "scene", selector: ".scene-card", datasetKeys: ["sceneId"], hrefPrefixes: ["/scenes/"] },
+    { type: "image", selector: ".image-card", datasetKeys: ["imageId"], hrefPrefixes: ["/images/"] },
+    { type: "performer", selector: ".performer-card", datasetKeys: ["performerId"], hrefPrefixes: ["/performers/"] },
+    { type: "studio", selector: ".studio-card", datasetKeys: ["studioId"], hrefPrefixes: ["/studios/"] },
+    { type: "group", selector: ".group-card, .movie-card", datasetKeys: ["groupId", "movieId"], hrefPrefixes: ["/groups/", "/movies/"] },
+  ];
   const CONTENT_CARD_CLASS_SELECTOR = ".scene-card, .image-card, .performer-card, .studio-card, .group-card, .movie-card";
   const GENERIC_CARD_SELECTOR = ".card";
-  const METADATA_CACHE_TTL_MS = 30000;
-  const PERSISTENT_METADATA_CACHE_MAX_ENTRIES = 5000;
   const DEFAULT_ASSET_COUNT = 60;
-  const DIRECT_BATCH_SIZE = 30;
   const MODES = new Set(["repeat", "incremental", "single", "thresholds"]);
   const IMAGE_MODES = new Set(["random", "fixed"]);
   const ANIMATIONS = new Set(["none", "float", "wiggle", "pulse", "rain"]);
@@ -64,7 +66,6 @@
     renderAreaHeight: "0,100",
     thresholds: "1,5,10,25,50",
     contentTypes: "image,scene,studio,performer,group",
-    localCacheMinutes: 120,
     showOnHomePage: false,
     showOnOtherPages: false,
     showToggleButton: true,
@@ -72,12 +73,6 @@
 
   const state = {
     config: { ...DEFAULTS },
-    metadataCache: new Map(),
-    persistentMetadataCache: new Map(),
-    persistentMetadataCacheLoaded: false,
-    persistentMetadataCacheSaveTimer: 0,
-    oCountInvalidationTimer: 0,
-    lastOCountInvalidationReason: "",
     observer: null,
     refreshTimer: 0,
     assetCount: DEFAULT_ASSET_COUNT,
@@ -94,9 +89,6 @@
     const previous = window.__ostickersRuntime;
     if (previous?.observer) previous.observer.disconnect();
     if (previous?.refreshTimer) window.clearTimeout(previous.refreshTimer);
-    if (previous?.persistentMetadataCacheSaveTimer) window.clearTimeout(previous.persistentMetadataCacheSaveTimer);
-    if (previous?.oCountInvalidationTimer) window.clearTimeout(previous.oCountInvalidationTimer);
-    if (previous?.oCountChangeEventListener) window.removeEventListener(OCOUNT_CHANGE_EVENT, previous.oCountChangeEventListener);
     window.__ostickersRuntime = state;
   }
 
@@ -257,7 +249,6 @@
         renderAreaHeight: getConfigString(raw.renderAreaHeight, DEFAULTS.renderAreaHeight),
         thresholds: getConfigString(raw.thresholds, DEFAULTS.thresholds),
         contentTypes: getConfigString(raw.contentTypes, DEFAULTS.contentTypes),
-        localCacheMinutes: getConfigNumber(raw.localCacheMinutes, DEFAULTS.localCacheMinutes, 0, 10080),
         showOnHomePage: getConfigBoolean(raw.showOnHomePage, DEFAULTS.showOnHomePage),
         showOnOtherPages: getConfigBoolean(raw.showOnOtherPages, DEFAULTS.showOnOtherPages),
         showToggleButton: getConfigBoolean(raw.showToggleButton, DEFAULTS.showToggleButton),
@@ -342,22 +333,56 @@
   function getCardInfo(card) {
     if (!(card instanceof HTMLElement)) return null;
 
-    const candidates = [
-      { type: "scene", id: card.dataset.sceneId || findIdFromHref(card, "/scenes/") },
-      { type: "image", id: card.dataset.imageId || findIdFromHref(card, "/images/") },
-      { type: "performer", id: card.dataset.performerId || findIdFromHref(card, "/performers/") },
-      { type: "studio", id: card.dataset.studioId || findIdFromHref(card, "/studios/") },
-      { type: "group", id: card.dataset.groupId || card.dataset.movieId || findIdFromHref(card, "/groups/") || findIdFromHref(card, "/movies/") },
-    ];
+    const preferredType = getPreferredCardType(card);
+    const orderedTypes = uniqueValues([
+      preferredType,
+      ...CARD_TYPE_DEFINITIONS.map((definition) => definition.type),
+    ]);
 
-    const match = candidates.find((candidate) => candidate.id);
+    const match = orderedTypes
+      .map((type) => {
+        const definition = getCardTypeDefinition(type);
+        return definition ? { type, id: getCardTypeId(card, definition) } : null;
+      })
+      .find((candidate) => candidate?.id);
     if (!match) return null;
 
     return {
       type: match.type,
       id: String(match.id),
-      cacheKey: `${match.type}:${match.id}`,
+      cardKey: `${match.type}:${match.id}`,
     };
+  }
+
+  function getPreferredCardType(card) {
+    const browseType = getActiveBrowseType();
+    if (browseType && cardHasTypeSignal(card, browseType)) return browseType;
+
+    const classMatch = CARD_TYPE_DEFINITIONS.find((definition) => card.matches?.(definition.selector));
+    if (classMatch) return classMatch.type;
+
+    const datasetMatch = CARD_TYPE_DEFINITIONS.find((definition) => definition.datasetKeys.some((key) => card.dataset?.[key]));
+    return datasetMatch?.type || browseType;
+  }
+
+  function cardHasTypeSignal(card, type) {
+    const definition = getCardTypeDefinition(type);
+    if (!definition) return false;
+    return Boolean(
+      card.matches?.(definition.selector)
+      || definition.datasetKeys.some((key) => card.dataset?.[key])
+      || definition.hrefPrefixes.some((prefix) => findIdFromHref(card, prefix))
+    );
+  }
+
+  function getCardTypeDefinition(type) {
+    return CARD_TYPE_DEFINITIONS.find((definition) => definition.type === type) || null;
+  }
+
+  function getCardTypeId(card, definition) {
+    const datasetValue = definition.datasetKeys.map((key) => card.dataset?.[key]).find(Boolean);
+    if (datasetValue) return datasetValue;
+    return definition.hrefPrefixes.map((prefix) => findIdFromHref(card, prefix)).find(Boolean) || null;
   }
 
   function getActiveBrowseType() {
@@ -393,36 +418,56 @@
     return Math.max(0, Math.round(parsed));
   }
 
-  function parseOCountText(value) {
-    const text = String(value ?? "")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!text || text.length > 80) return null;
+  function getCardOCount(card) {
+    const datasetCount = getDatasetOCount(card);
+    if (datasetCount != null) return datasetCount;
 
-    const patterns = [
-      /\bo[\s_-]*count\b\s*[:#-]?\s*(\d+)/i,
-      /\b(\d+)\s*o(?:'s|s)?\b/i,
-      /\bo(?:'s|s)?\s*[:#-]?\s*(\d+)\b/i,
-      /\u{1F4A6}\s*(\d+)\b/u,
-      /\b(\d+)\s*\u{1F4A6}/u,
-    ];
+    const selectors = [
+      "[title*='O Count' i]",
+      "[aria-label*='O Count' i]",
+      "[title*='O counter' i]",
+      "[aria-label*='O counter' i]",
+      "[title*='Orgasm' i]",
+      "[aria-label*='Orgasm' i]",
+      "[class*='o-count' i]",
+      "[class*='ocount' i]",
+      "[class*='count' i]",
+      "[class*='counter' i]",
+      "[class*='stat' i]",
+      "svg[data-icon='tint']",
+      "svg[data-icon='droplet']",
+      "svg[data-icon='water']",
+      "i.fa-tint",
+      "i.fa-droplet",
+      "i.fa-water",
+      ".fa-tint",
+      ".fa-droplet",
+      ".fa-water",
+      ".badge",
+      ".badge-info",
+      ".badge-secondary",
+      ".card-count",
+      ".card-counts *",
+    ].join(", ");
+    const elements = uniqueValues(Array.from(card.querySelectorAll(selectors))
+      .map((element) => getOCountCandidateElement(card, element)))
+      .slice(0, 80);
 
-    for (const pattern of patterns) {
-      const match = text.match(pattern);
-      if (match) return normalizeCount(match[1]);
+    for (const element of elements) {
+      const parsed = getElementOCount(element);
+      if (parsed != null) return parsed;
     }
 
-    return null;
+    return parseDropletOCount(card.textContent || "");
+  }
+
+  function getOCountCandidateElement(card, element) {
+    const parent = element.closest?.(".badge, .badge-info, .badge-secondary, .card-count, .card-counts > *, .card-section span, .card-section button");
+    return parent instanceof HTMLElement && card.contains(parent) ? parent : element;
   }
 
   function getDatasetOCount(card) {
-    const datasetKeys = [
-      "oCounter",
-      "oCount",
-      "ocounter",
-      "ocount",
-      "o_counter",
-    ];
+    const datasetKeys = ["oCounter", "oCount", "ocounter", "ocount", "o_counter"];
     for (const key of datasetKeys) {
       const value = card.dataset?.[key];
       if (value != null && value !== "") return normalizeCount(value);
@@ -435,555 +480,189 @@
     return null;
   }
 
-  function getDomOCount(card) {
-    const datasetCount = getDatasetOCount(card);
-    if (datasetCount != null) return datasetCount;
+  function getElementOCount(element) {
+    const labels = getElementLabels(element);
+    const text = getElementVisibleText(element);
+    const labelledCount = parseLabelledOCount(`${labels} ${text}`);
+    if (labelledCount != null) return labelledCount;
 
-    const selectors = [
-      "[title*='O Count' i]",
-      "[aria-label*='O Count' i]",
-      "[title*='O count' i]",
-      "[aria-label*='O count' i]",
-      ".badge",
-      ".badge-info",
-      ".badge-secondary",
-      ".card-count",
-      ".card-counts *",
-      ".card-section span",
-      "span",
-      "button",
-    ].join(", ");
-    const elements = Array.from(card.querySelectorAll(selectors)).slice(0, 120);
-
-    for (const element of elements) {
-      const pieces = [
-        element.getAttribute("title"),
-        element.getAttribute("aria-label"),
-        element.textContent,
-      ].filter(Boolean);
-      for (const piece of pieces) {
-        const parsed = parseOCountText(piece);
-        if (parsed != null) return parsed;
-      }
+    if (hasOCountLabel(labels) || hasOCountGlyph(labels) || hasOCountIcon(element)) {
+      const plainCount = parsePlainCount(text)
+        ?? parseOIconClusterCount(element)
+        ?? parsePlainCount(getElementNeighborhoodText(element));
+      if (plainCount != null) return plainCount;
     }
 
     return null;
   }
 
-  async function fetchMetadata(info) {
-    if (!info?.type || !info?.id) return null;
-    const cached = getCachedMetadata(info);
-    if (cached) return cached;
-
-    const promise = fetchMetadataInner(info)
-      .then((metadata) => {
-        if (metadata) setCachedMetadata(info, metadata);
-        return metadata;
-      })
-      .catch((err) => {
-        console.warn("[OStickers] Metadata load failed", info.cacheKey, err);
-        state.metadataCache.delete(info.cacheKey);
-        return null;
-      });
-
-    state.metadataCache.set(info.cacheKey, { createdAt: Date.now(), promise });
-    return promise;
+  function getElementNeighborhoodText(element) {
+    const parts = [
+      getElementVisibleText(element),
+      getElementVisibleText(element.parentElement),
+      getElementVisibleText(element.previousElementSibling),
+      getElementVisibleText(element.nextElementSibling),
+    ];
+    return parts.filter(Boolean).join(" ");
   }
 
-  function getCachedMetadata(info) {
-    if (!info?.cacheKey) return null;
-    const cached = state.metadataCache.get(info.cacheKey);
-    if (cached && Date.now() - cached.createdAt < METADATA_CACHE_TTL_MS) return cached.promise;
-    if (cached) state.metadataCache.delete(info.cacheKey);
+  function parseOIconClusterCount(element) {
+    const clusters = uniqueValues([
+      element.closest?.(".badge, .badge-info, .badge-secondary, .card-count, .card-counts > *, .card-section span, .card-section button, [class*='count' i], [class*='stat' i]"),
+      element.parentElement,
+      element.parentElement?.parentElement,
+    ]).filter((cluster) => cluster instanceof HTMLElement);
 
-    const persistentMetadata = getPersistentCachedMetadata(info);
-    if (persistentMetadata) {
-      const promise = Promise.resolve(persistentMetadata);
-      state.metadataCache.set(info.cacheKey, { createdAt: Date.now(), promise });
-      return promise;
+    for (const cluster of clusters) {
+      const clusterLabels = getElementLabels(cluster);
+      if (!hasOCountLabel(clusterLabels) && !hasOCountGlyph(clusterLabels) && !hasOCountIcon(cluster)) continue;
+
+      const clusterText = getElementVisibleText(cluster);
+      const labelled = parseLabelledOCount(`${clusterLabels} ${clusterText}`);
+      if (labelled != null) return labelled;
+
+      const plain = parsePlainCount(clusterText);
+      if (plain != null) return plain;
     }
 
-    return null;
+    const siblingCount = parseAdjacentNodeCount(element) ?? parseAdjacentNodeCount(element.parentElement);
+    return siblingCount;
   }
 
-  function setCachedMetadata(info, metadata) {
-    if (!info?.cacheKey || !metadata) return;
-    const normalizedMetadata = normalizeMetadata(metadata);
-    state.metadataCache.set(info.cacheKey, {
-      createdAt: Date.now(),
-      promise: Promise.resolve(normalizedMetadata),
-    });
-    setPersistentCachedMetadata(info, normalizedMetadata);
-  }
-
-  function normalizeMetadata(metadata) {
-    return { oCount: normalizeCount(metadata?.oCount) };
-  }
-
-  function isPersistentMetadataCacheEnabled() {
-    return Number(state.config.localCacheMinutes) > 0;
-  }
-
-  function getPersistentMetadataCacheTtlMs() {
-    return Math.max(0, Number(state.config.localCacheMinutes) || 0) * 60 * 1000;
-  }
-
-  function ensurePersistentMetadataCacheLoaded() {
-    if (state.persistentMetadataCacheLoaded) return;
-    state.persistentMetadataCacheLoaded = true;
-    state.persistentMetadataCache.clear();
-    if (!isPersistentMetadataCacheEnabled()) return;
-
-    try {
-      const raw = window.localStorage?.getItem(PERSISTENT_METADATA_CACHE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
-      const now = Date.now();
-      const ttlMs = getPersistentMetadataCacheTtlMs();
-      let cacheChanged = false;
-
-      for (const [cacheKey, entry] of entries) {
-        if (!cacheKey || !entry || !Number.isFinite(Number(entry.createdAt))) {
-          cacheChanged = true;
-          continue;
-        }
-        if (ttlMs && now - Number(entry.createdAt) > ttlMs) {
-          cacheChanged = true;
-          continue;
-        }
-        state.persistentMetadataCache.set(String(cacheKey), {
-          createdAt: Number(entry.createdAt),
-          metadata: normalizeMetadata(entry.metadata),
-        });
-      }
-
-      if (state.persistentMetadataCache.size !== entries.length) cacheChanged = true;
-      const sizeBeforePrune = state.persistentMetadataCache.size;
-      prunePersistentMetadataCache(false);
-      if (state.persistentMetadataCache.size !== sizeBeforePrune) cacheChanged = true;
-      if (cacheChanged) schedulePersistentMetadataCacheSave();
-    } catch (err) {
-      console.warn("[OStickers] Local metadata cache could not be loaded", err);
-    }
-  }
-
-  function getPersistentCachedMetadata(info) {
-    if (!info?.cacheKey || !isPersistentMetadataCacheEnabled()) return null;
-    ensurePersistentMetadataCacheLoaded();
-    const entry = state.persistentMetadataCache.get(info.cacheKey);
-    if (!entry) return null;
-
-    const ttlMs = getPersistentMetadataCacheTtlMs();
-    if (ttlMs && Date.now() - entry.createdAt > ttlMs) {
-      state.persistentMetadataCache.delete(info.cacheKey);
-      schedulePersistentMetadataCacheSave();
-      return null;
-    }
-
-    return normalizeMetadata(entry.metadata);
-  }
-
-  function setPersistentCachedMetadata(info, metadata) {
-    if (!info?.cacheKey || !isPersistentMetadataCacheEnabled()) return;
-    ensurePersistentMetadataCacheLoaded();
-    state.persistentMetadataCache.set(info.cacheKey, {
-      createdAt: Date.now(),
-      metadata: normalizeMetadata(metadata),
-    });
-    prunePersistentMetadataCache(false);
-    schedulePersistentMetadataCacheSave();
-  }
-
-  function prunePersistentMetadataCache(shouldSave = true) {
-    if (!isPersistentMetadataCacheEnabled()) return;
-    const ttlMs = getPersistentMetadataCacheTtlMs();
-    const now = Date.now();
-
-    for (const [cacheKey, entry] of state.persistentMetadataCache.entries()) {
-      if (!entry || !Number.isFinite(Number(entry.createdAt)) || (ttlMs && now - Number(entry.createdAt) > ttlMs)) {
-        state.persistentMetadataCache.delete(cacheKey);
-      }
-    }
-
-    if (state.persistentMetadataCache.size > PERSISTENT_METADATA_CACHE_MAX_ENTRIES) {
-      const sorted = Array.from(state.persistentMetadataCache.entries())
-        .sort((left, right) => Number(right[1]?.createdAt || 0) - Number(left[1]?.createdAt || 0));
-      state.persistentMetadataCache = new Map(sorted.slice(0, PERSISTENT_METADATA_CACHE_MAX_ENTRIES));
-    }
-
-    if (shouldSave) schedulePersistentMetadataCacheSave();
-  }
-
-  function schedulePersistentMetadataCacheSave() {
-    if (!isPersistentMetadataCacheEnabled() || !state.persistentMetadataCacheLoaded) return;
-    if (state.persistentMetadataCacheSaveTimer) window.clearTimeout(state.persistentMetadataCacheSaveTimer);
-    state.persistentMetadataCacheSaveTimer = window.setTimeout(writePersistentMetadataCache, 250);
-  }
-
-  function writePersistentMetadataCache() {
-    state.persistentMetadataCacheSaveTimer = 0;
-    if (!isPersistentMetadataCacheEnabled()) return;
-    try {
-      const entries = Array.from(state.persistentMetadataCache.entries()).map(([cacheKey, entry]) => [
-        cacheKey,
-        {
-          createdAt: Number(entry.createdAt) || Date.now(),
-          metadata: normalizeMetadata(entry.metadata),
-        },
-      ]);
-      window.localStorage?.setItem(PERSISTENT_METADATA_CACHE_KEY, JSON.stringify({ version: 1, entries }));
-    } catch (err) {
-      console.warn("[OStickers] Local metadata cache could not be saved", err);
-    }
-  }
-
-  function clearMetadataCaches(reason = "unknown") {
-    state.metadataCache.clear();
-    state.persistentMetadataCache.clear();
-    state.persistentMetadataCacheLoaded = true;
-    if (state.persistentMetadataCacheSaveTimer) {
-      window.clearTimeout(state.persistentMetadataCacheSaveTimer);
-      state.persistentMetadataCacheSaveTimer = 0;
-    }
-
-    try {
-      window.localStorage?.removeItem(PERSISTENT_METADATA_CACHE_KEY);
-    } catch (err) {
-      console.warn("[OStickers] Local metadata cache could not be cleared", err);
-    }
-
-    console.debug("[OStickers] O-count change detected; metadata cache cleared.", reason);
-  }
-
-  function handleOCountChange(reason = "graphql mutation") {
-    state.lastOCountInvalidationReason = reason;
-    if (state.oCountInvalidationTimer) window.clearTimeout(state.oCountInvalidationTimer);
-    state.oCountInvalidationTimer = window.setTimeout(() => {
-      state.oCountInvalidationTimer = 0;
-      clearMetadataCaches(state.lastOCountInvalidationReason || reason);
-      scheduleRefresh();
-    }, 120);
-  }
-
-  function installOCountMutationWatcher() {
-    window.__ostickersOCountChangeHandler = handleOCountChange;
-
-    if (!state.oCountChangeEventListener) {
-      state.oCountChangeEventListener = () => {
-        if (typeof window.__ostickersOCountChangeHandler === "function") {
-          window.__ostickersOCountChangeHandler("event");
-        }
-      };
-      window.addEventListener(OCOUNT_CHANGE_EVENT, state.oCountChangeEventListener);
-    }
-
-    if (window.__ostickersFetchWatcherInstalled) return;
-    const originalFetch = window.fetch;
-    if (typeof originalFetch !== "function") return;
-
-    window.__ostickersFetchWatcherInstalled = true;
-    window.__ostickersOriginalFetch = originalFetch;
-    window.fetch = function ostickersWatchedFetch(input, init) {
-      const shouldInvalidate = isLikelyOCountMutationRequest(input, init);
-      const result = originalFetch.apply(this, arguments);
-
-      if (shouldInvalidate) {
-        Promise.resolve(result)
-          .then((response) => {
-            if (!response || response.ok) window.dispatchEvent(new Event(OCOUNT_CHANGE_EVENT));
-          })
-          .catch(() => {
-            // Failed mutations should not invalidate a useful cache.
-          });
-      }
-
-      return result;
-    };
-  }
-
-  function isLikelyOCountMutationRequest(input, init) {
-    try {
-      const url = getRequestUrl(input);
-      if (!url || !url.includes("/graphql")) return false;
-      const body = getRequestBody(input, init);
-      if (!body) return false;
-      const operations = parseGraphQLRequestBody(body);
-      return operations.some(isLikelyOCountMutation);
-    } catch (err) {
-      return false;
-    }
-  }
-
-  function getRequestUrl(input) {
-    if (typeof input === "string") return input;
-    if (input instanceof URL) return input.href;
-    return input?.url || "";
-  }
-
-  function getRequestBody(input, init) {
-    if (typeof init?.body === "string") return init.body;
-    if (typeof input?.body === "string") return input.body;
-    return "";
-  }
-
-  function parseGraphQLRequestBody(body) {
-    const parsed = JSON.parse(body);
-    return Array.isArray(parsed) ? parsed : [parsed];
-  }
-
-  function isLikelyOCountMutation(operation) {
-    const query = String(operation?.query || "");
-    if (!/\bmutation\b/i.test(query)) return false;
-    const normalized = query.replace(/\s+/g, " ");
-    return /(?:o[_\s-]*(?:counter|count)|increment[_\s-]*o|decrement[_\s-]*o|update[_\s-]*o)/i.test(normalized);
-  }
-
-  async function fetchMetadataInner(info) {
-    if (info.type === "scene") {
-      const data = await gql(`
-        query OStickersScene($id: ID!) {
-          findScene(id: $id) {
-            id
-            o_counter
-          }
-        }
-      `, { id: info.id });
-      return { oCount: normalizeCount(data?.findScene?.o_counter) };
-    }
-
-    if (info.type === "image") {
-      const data = await gql(`
-        query OStickersImage($id: ID!) {
-          findImage(id: $id) {
-            id
-            o_counter
-          }
-        }
-      `, { id: info.id });
-      return { oCount: normalizeCount(data?.findImage?.o_counter) };
-    }
-
-    if (info.type === "performer") {
-      const [sceneOCount, imageOCount] = await Promise.all([
-        fetchAggregateOCount("performerScene", info.id),
-        fetchAggregateOCount("performerImage", info.id),
-      ]);
-      return { oCount: sceneOCount + imageOCount };
-    }
-
-    if (info.type === "studio") {
-      const [sceneOCount, imageOCount] = await Promise.all([
-        fetchAggregateOCount("studioScene", info.id),
-        fetchAggregateOCount("studioImage", info.id),
-      ]);
-      return { oCount: sceneOCount + imageOCount };
-    }
-
-    if (info.type === "group") {
-      return { oCount: await fetchGroupOCount(info.id) };
-    }
-
-    return { oCount: 0 };
-  }
-
-  function getDirectMetadataField(type) {
-    if (type === "scene") return "findScene";
-    if (type === "image") return "findImage";
-    return "";
-  }
-
-  async function fetchDirectOCounts(type, ids) {
-    const fieldName = getDirectMetadataField(type);
-    const uniqueIds = uniqueValues(ids.map((id) => String(id)));
-    const counts = new Map();
-    if (!fieldName || !uniqueIds.length) return counts;
-
-    for (let offset = 0; offset < uniqueIds.length; offset += DIRECT_BATCH_SIZE) {
-      const chunk = uniqueIds.slice(offset, offset + DIRECT_BATCH_SIZE);
-      const variableDefs = chunk.map((_id, index) => `$id${index}: ID!`).join(", ");
-      const fields = chunk.map((_id, index) => `
-        item${index}: ${fieldName}(id: $id${index}) {
-          id
-          o_counter
-        }
-      `).join("\n");
-      const variables = Object.fromEntries(chunk.map((id, index) => [`id${index}`, id]));
-
-      try {
-        const data = await gql(`
-          query OStickersDirectOCounts(${variableDefs}) {
-            ${fields}
-          }
-        `, variables);
-        chunk.forEach((id, index) => {
-          counts.set(id, normalizeCount(data?.[`item${index}`]?.o_counter));
-        });
-      } catch (err) {
-        console.warn("[OStickers] Batched O-count lookup failed", type, err);
-      }
-    }
-
-    return counts;
-  }
-
-  async function fetchGroupOCount(id) {
-    const attempts = [
-      () => fetchAggregateOCount("groupScene", id, true),
-      () => fetchAggregateOCount("movieScene", id, true),
-      () => fetchGroupEntityOCount("findGroup", id),
-      () => fetchGroupEntityOCount("findMovie", id),
+  function parseAdjacentNodeCount(element) {
+    if (!(element instanceof HTMLElement)) return null;
+    const nearbyNodes = [
+      element.previousSibling,
+      element.nextSibling,
+      element.previousElementSibling,
+      element.nextElementSibling,
     ];
 
-    for (const attempt of attempts) {
-      const count = await attempt();
-      if (count > 0) return count;
+    for (const node of nearbyNodes) {
+      const parsed = parsePlainCount(getNodeVisibleText(node));
+      if (parsed != null) return parsed;
     }
 
-    return 0;
+    return null;
   }
 
-  async function fetchGroupEntityOCount(fieldName, id) {
+  function getNodeVisibleText(node) {
+    if (!node) return "";
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
+    if (node instanceof HTMLElement) return getElementVisibleText(node);
+    return "";
+  }
+
+  function getElementLabels(element) {
+    const labels = [
+      element.getAttribute("title"),
+      element.getAttribute("aria-label"),
+      element.getAttribute("data-original-title"),
+      element.className,
+      getPseudoContent(element),
+    ];
+    element.querySelectorAll("[title], [aria-label], [data-original-title], svg, i, .fa, .svg-inline--fa").forEach((child) => {
+      labels.push(
+        child.getAttribute("title"),
+        child.getAttribute("aria-label"),
+        child.getAttribute("data-original-title"),
+        child.getAttribute("data-icon"),
+        child.className,
+        getPseudoContent(child),
+        child.querySelector("title")?.textContent
+      );
+    });
+    return labels.filter(Boolean).join(" ");
+  }
+
+  function getElementVisibleText(element) {
+    if (!(element instanceof HTMLElement)) return "";
+    const clone = element.cloneNode(true);
+    clone.querySelectorAll("svg, i, .fa, .svg-inline--fa, title").forEach((node) => node.remove());
+    return clone.textContent || element.textContent || "";
+  }
+
+  function getPseudoContent(element) {
+    if (!(element instanceof Element)) return "";
     try {
-      const data = await gql(`
-        query OStickersGroupEntityOCount($id: ID!) {
-          ${fieldName}(id: $id) {
-            id
-            scenes {
-              o_counter
-            }
-          }
-        }
-      `, { id: String(id) });
-      return sumOCount(data?.[fieldName]?.scenes);
+      return ["::before", "::after"]
+        .map((pseudo) => window.getComputedStyle(element, pseudo)?.content || "")
+        .map((content) => content.replace(/^['"]|['"]$/g, ""))
+        .filter((content) => content && content !== "none" && content !== "normal")
+        .join(" ");
     } catch (err) {
-      return 0;
+      return "";
     }
   }
 
-  async function fetchPagedSceneOCount(sceneFilter) {
-    let page = 1;
-    const pageSize = 250;
-    let total = 0;
+  function hasOCountIcon(element) {
+    const iconSelector = [
+      "svg[data-icon='tint']",
+      "svg[data-icon='droplet']",
+      "svg[data-icon='water']",
+      "svg[data-icon='faucet-drip']",
+      "i.fa-tint",
+      "i.fa-droplet",
+      "i.fa-water",
+      ".fa-tint",
+      ".fa-droplet",
+      ".fa-water",
+    ].join(", ");
+    return element.matches?.(iconSelector)
+      || Boolean(element.querySelector?.(iconSelector))
+      || hasOCountGlyph(getPseudoContent(element))
+      || Array.from(element.querySelectorAll?.("*") || []).slice(0, 20).some((child) => hasOCountGlyph(getPseudoContent(child)));
+  }
 
-    while (true) {
-      const data = await gql(`
-        query OStickersPagedSceneOCount($sceneFilter: SceneFilterType, $filter: FindFilterType) {
-          findScenes(scene_filter: $sceneFilter, filter: $filter) {
-            scenes {
-              o_counter
-            }
-          }
-        }
-      `, {
-        sceneFilter,
-        filter: { page, per_page: pageSize, sort: "id", direction: "ASC" },
-      });
-      const scenes = data?.findScenes?.scenes || [];
-      total += sumOCount(scenes);
-      if (scenes.length < pageSize) break;
-      page += 1;
+  function hasOCountLabel(value) {
+    return /\bo[\s_-]*(?:count|counter)\b|\bocount\b|\borgasm/i.test(String(value || ""));
+  }
+
+  function hasOCountGlyph(value) {
+    return /💦|\uf043/i.test(String(value || ""));
+  }
+
+  function parseLabelledOCount(value) {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > 120) return null;
+    const patterns = [
+      /\bo[\s_-]*(?:count|counter)\b\s*[:#-]?\s*(\d+)/i,
+      /\b(\d+)\s*o(?:'s|s)?\b/i,
+      /\bo(?:'s|s)?\s*[:#-]?\s*(\d+)\b/i,
+      /\u{1F4A6}\s*(\d+)\b/u,
+      /\b(\d+)\s*\u{1F4A6}/u,
+    ];
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match) return normalizeCount(match[1]);
     }
-
-    return total;
+    return null;
   }
 
-  async function fetchPagedImageOCount(imageFilter) {
-    let page = 1;
-    const pageSize = 250;
-    let total = 0;
-
-    while (true) {
-      const data = await gql(`
-        query OStickersPagedImageOCount($imageFilter: ImageFilterType, $filter: FindFilterType) {
-          findImages(image_filter: $imageFilter, filter: $filter) {
-            images {
-              o_counter
-            }
-          }
-        }
-      `, {
-        imageFilter,
-        filter: { page, per_page: pageSize, sort: "id", direction: "ASC" },
-      });
-      const images = data?.findImages?.images || [];
-      total += sumOCount(images);
-      if (images.length < pageSize) break;
-      page += 1;
+  function parseDropletOCount(value) {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    const patterns = [
+      /\u{1F4A6}\s*(\d+)\b/u,
+      /\b(\d+)\s*\u{1F4A6}/u,
+    ];
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match) return normalizeCount(match[1]);
     }
-
-    return total;
+    return null;
   }
 
-  async function fetchAggregateOCount(kind, id, quiet = false) {
-    try {
-      if (kind === "performerScene") {
-        return fetchPagedSceneOCount({
-            performers: {
-              value: [String(id)],
-              modifier: "INCLUDES_ALL",
-            },
-        });
-      }
-
-      if (kind === "performerImage") {
-        return fetchPagedImageOCount({
-            performers: {
-              value: [String(id)],
-              excludes: [],
-              modifier: "INCLUDES_ALL",
-            },
-        });
-      }
-
-      if (kind === "studioScene") {
-        return fetchPagedSceneOCount({
-            studios: {
-              value: [String(id)],
-              modifier: "INCLUDES_ALL",
-            },
-        });
-      }
-
-      if (kind === "studioImage") {
-        return fetchPagedImageOCount({
-            studios: {
-              value: [String(id)],
-              excludes: [],
-              modifier: "INCLUDES_ALL",
-            },
-        });
-      }
-
-      if (kind === "groupScene") {
-        return fetchPagedSceneOCount({
-            groups: {
-              value: [String(id)],
-              modifier: "INCLUDES_ALL",
-            },
-        });
-      }
-
-      if (kind === "movieScene") {
-        return fetchPagedSceneOCount({
-            movies: {
-              value: [String(id)],
-              modifier: "INCLUDES_ALL",
-            },
-        });
-      }
-    } catch (err) {
-      if (!quiet) console.warn("[OStickers] Aggregate O-count lookup failed", kind, id, err);
-    }
-    return 0;
+  function parsePlainCount(value) {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > 80) return null;
+    if (/^\d+$/.test(text)) return normalizeCount(text);
+    const numbers = text.match(/\d+/g) || [];
+    if (numbers.length !== 1) return null;
+    return normalizeCount(numbers[0]);
   }
 
-  function sumOCount(items) {
-    return (items || []).reduce((total, item) => total + normalizeCount(item?.o_counter), 0);
-  }
-
-  function buildStickerModels(info, metadata) {
-    const oCount = normalizeCount(metadata?.oCount);
+  function buildStickerModels(info, cardOCount) {
+    const oCount = normalizeCount(cardOCount);
     if (!oCount) return [];
 
     const mode = state.config.mode;
@@ -1009,9 +688,9 @@
     const models = [];
     for (let index = 1; index <= count; index += 1) {
       models.push({
-        key: `${info.cacheKey}:${mode}:${oCount}:${index}`,
-        imageIndex: stickerType === "image" ? resolveImageIndex(mode, oCount, index, info.cacheKey) : null,
-        emoji: stickerType === "emoji" ? resolveEmoji(emojis, mode, oCount, index, info.cacheKey) : DEFAULT_EMOJI,
+        key: `${info.cardKey}:${mode}:${oCount}:${index}`,
+        imageIndex: stickerType === "image" ? resolveImageIndex(mode, oCount, index, info.cardKey) : null,
+        emoji: stickerType === "emoji" ? resolveEmoji(emojis, mode, oCount, index, info.cardKey) : DEFAULT_EMOJI,
       });
     }
     return models;
@@ -1078,7 +757,7 @@
       Math.round(rect.width),
       Math.round(rect.height),
     ].join("|");
-    return `${info.cacheKey}|${stickers.map((sticker) => sticker.key).join(",")}|${hashString(visualConfig)}`;
+    return `${info.cardKey}|${stickers.map((sticker) => sticker.key).join(",")}|${hashString(visualConfig)}`;
   }
 
   function removeCardLayer(card) {
@@ -1137,62 +816,24 @@
     }
     const cards = Array.from(document.querySelectorAll(CARD_SELECTOR));
     const uniqueCards = uniqueValues(cards.map(getStickerCardElement).filter(Boolean));
-    const cardRecords = [];
-    const directIdsByType = { scene: [], image: [] };
 
     for (const card of uniqueCards) {
       const info = getCardInfo(card);
       if (!info || !enabledTypes.has(info.type)) continue;
       if (context.mode === "browse" && info.type !== context.browseType) continue;
-      const domOCount = getDomOCount(card);
-      const domMetadata = domOCount > 0 ? { oCount: domOCount } : null;
-      const cachedMetadata = getCachedMetadata(info);
-      if (cachedMetadata) {
-        cardRecords.push({ card, info, domMetadata, metadataPromise: cachedMetadata });
+      const oCount = getCardOCount(card);
+      if (!oCount) {
+        removeCardLayer(card);
         continue;
       }
 
-      if (getDirectMetadataField(info.type)) {
-        directIdsByType[info.type].push(info.id);
-        cardRecords.push({ card, info, domMetadata, needsDirectBatch: true });
-        continue;
-      }
-
-      cardRecords.push({ card, info, domMetadata });
-    }
-
-    const directCountsByType = {
-      scene: await fetchDirectOCounts("scene", directIdsByType.scene),
-      image: await fetchDirectOCounts("image", directIdsByType.image),
-    };
-
-    for (const record of cardRecords) {
-      let metadata = record.metadata || null;
-      if (!metadata && record.metadataPromise) metadata = await record.metadataPromise;
-      if (metadata && record.domMetadata && record.domMetadata.oCount > normalizeCount(metadata.oCount)) {
-        metadata = record.domMetadata;
-      }
-      if (!metadata && record.needsDirectBatch) {
-        const directCounts = directCountsByType[record.info.type];
-        if (directCounts?.has(record.info.id)) {
-          metadata = { oCount: directCounts.get(record.info.id) };
-          setCachedMetadata(record.info, metadata);
-        }
-      }
-      if (!metadata) metadata = await fetchMetadata(record.info);
-      if (!metadata && record.domMetadata) metadata = record.domMetadata;
-      if (!metadata?.oCount) {
-        removeCardLayer(record.card);
-        continue;
-      }
-
-      const stickers = buildStickerModels(record.info, metadata);
+      const stickers = buildStickerModels(info, oCount);
       if (!stickers.length) {
-        removeCardLayer(record.card);
+        removeCardLayer(card);
         continue;
       }
 
-      renderCard(record.card, record.info, stickers);
+      renderCard(card, info, stickers);
     }
 
     suppressObserver();
@@ -1201,10 +842,7 @@
   function getStickerCardElement(node) {
     if (!(node instanceof HTMLElement)) return null;
 
-    if (node.matches(CONTENT_CARD_CLASS_SELECTOR)) return node;
     const contentCard = node.closest(CONTENT_CARD_CLASS_SELECTOR);
-    if (contentCard instanceof HTMLElement) return contentCard;
-
     const genericCard = node.matches(GENERIC_CARD_SELECTOR)
       ? node
       : node.closest(GENERIC_CARD_SELECTOR);
@@ -1215,6 +853,9 @@
     ) {
       return genericCard;
     }
+
+    if (node.matches(CONTENT_CARD_CLASS_SELECTOR)) return node;
+    if (contentCard instanceof HTMLElement) return contentCard;
 
     if ((node.matches(DATA_CARD_SELECTOR) || node.matches(CARD_LINK_SELECTOR)) && isReasonableCardElement(node)) return node;
     return null;
@@ -1272,7 +913,7 @@
   function getPlacement(info, rect, stickerSizePx, index, priorPlacements = []) {
     const halfWidthPercent = (stickerSizePx / rect.width) * 50;
     const halfHeightPercent = (stickerSizePx / rect.height) * 50;
-    const seed = hashString(`${info.cacheKey}:${index + 1}`);
+    const seed = hashString(`${info.cardKey}:${index + 1}`);
     const isRain = state.config.animation === "rain";
     const xRange = parsePercentRange(state.config.renderAreaWidth, [0, 100]);
     const yRange = parsePercentRange(state.config.renderAreaHeight, [0, 100]);
@@ -1413,11 +1054,10 @@
     button.onclick = () => {
       state.enabled = !state.enabled;
       setStoredEnabled(state.enabled);
+      clearRenderedCards();
       updateToggleButton();
       if (state.enabled) {
         scheduleRefresh();
-      } else {
-        clearRenderedCards();
       }
     };
 
@@ -1477,7 +1117,6 @@
     registerRuntime();
     await loadConfig();
     installRouteHooks();
-    installOCountMutationWatcher();
     scheduleToggleButtonSetup();
     state.observer = new MutationObserver(() => {
       if (Date.now() < state.suppressObserverUntil) return;
