@@ -1,6 +1,6 @@
 name: O Stickers
 description: Randomly overlays O-count stickers or emoji on scene, image, studio, performer, and group cards.
-version: 1.4.7
+version: 1.4.13
 ui:
   css:
     - OStickers.css
@@ -73,6 +73,10 @@ settings:
     displayName: Content Types
     type: STRING
     description: Comma separated card types to decorate. Supports image,scene,studio,performer,group. Default image,scene,studio,performer,group.
+  localCacheMinutes:
+    displayName: Local Cache Minutes
+    type: NUMBER
+    description: How long resolved O-count metadata is cached in browser localStorage across page loads. Use 0 to disable. Default 120.
   showOnHomePage:
     displayName: Show On Home Page
     type: BOOLEAN
