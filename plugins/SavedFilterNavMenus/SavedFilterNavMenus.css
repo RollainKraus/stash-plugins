@@ -42,6 +42,10 @@
   gap: 0.12rem;
 }
 
+.saved-filter-nav-menu-host.is-saved-filter-nav-click-closed > .saved-filter-nav-menu {
+  display: none;
+}
+
 .saved-filter-nav-menu__header {
   padding: 0.34rem 0.48rem 0.28rem;
   color: var(--sfnm-muted);
