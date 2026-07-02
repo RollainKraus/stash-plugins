@@ -3,7 +3,9 @@
 
   const PLUGIN_ID = "OStickers";
   const ROUTE_EVENT = "ostickers:navigation";
+  const OCOUNT_CHANGE_EVENT = "ostickers:ocount-change";
   const ENABLED_STORAGE_KEY = "ostickers:enabled";
+  const PERSISTENT_METADATA_CACHE_KEY = "ostickers:metadata-cache:v1";
   const TOGGLE_BUTTON_CLASS = "ostickers-toggle-button";
   const DEFAULT_EMOJI = "\u{1F4A6}";
   const DATA_CARD_SELECTOR = [
@@ -36,6 +38,7 @@
   const CONTENT_CARD_CLASS_SELECTOR = ".scene-card, .image-card, .performer-card, .studio-card, .group-card, .movie-card";
   const GENERIC_CARD_SELECTOR = ".card";
   const METADATA_CACHE_TTL_MS = 30000;
+  const PERSISTENT_METADATA_CACHE_MAX_ENTRIES = 5000;
   const DEFAULT_ASSET_COUNT = 60;
   const DIRECT_BATCH_SIZE = 30;
   const MODES = new Set(["repeat", "incremental", "single", "thresholds"]);
@@ -61,6 +64,7 @@
     renderAreaHeight: "0,100",
     thresholds: "1,5,10,25,50",
     contentTypes: "image,scene,studio,performer,group",
+    localCacheMinutes: 120,
     showOnHomePage: false,
     showOnOtherPages: false,
     showToggleButton: true,
@@ -69,12 +73,19 @@
   const state = {
     config: { ...DEFAULTS },
     metadataCache: new Map(),
+    persistentMetadataCache: new Map(),
+    persistentMetadataCacheLoaded: false,
+    persistentMetadataCacheSaveTimer: 0,
+    oCountInvalidationTimer: 0,
+    lastOCountInvalidationReason: "",
     observer: null,
     refreshTimer: 0,
     assetCount: DEFAULT_ASSET_COUNT,
     assetProbePromise: null,
     assetProbeComplete: false,
     assetWarningShown: false,
+    enhanceRunning: false,
+    refreshQueued: false,
     suppressObserverUntil: 0,
     enabled: getStoredEnabled(),
   };
@@ -83,6 +94,9 @@
     const previous = window.__ostickersRuntime;
     if (previous?.observer) previous.observer.disconnect();
     if (previous?.refreshTimer) window.clearTimeout(previous.refreshTimer);
+    if (previous?.persistentMetadataCacheSaveTimer) window.clearTimeout(previous.persistentMetadataCacheSaveTimer);
+    if (previous?.oCountInvalidationTimer) window.clearTimeout(previous.oCountInvalidationTimer);
+    if (previous?.oCountChangeEventListener) window.removeEventListener(OCOUNT_CHANGE_EVENT, previous.oCountChangeEventListener);
     window.__ostickersRuntime = state;
   }
 
@@ -243,6 +257,7 @@
         renderAreaHeight: getConfigString(raw.renderAreaHeight, DEFAULTS.renderAreaHeight),
         thresholds: getConfigString(raw.thresholds, DEFAULTS.thresholds),
         contentTypes: getConfigString(raw.contentTypes, DEFAULTS.contentTypes),
+        localCacheMinutes: getConfigNumber(raw.localCacheMinutes, DEFAULTS.localCacheMinutes, 0, 10080),
         showOnHomePage: getConfigBoolean(raw.showOnHomePage, DEFAULTS.showOnHomePage),
         showOnOtherPages: getConfigBoolean(raw.showOnOtherPages, DEFAULTS.showOnOtherPages),
         showToggleButton: getConfigBoolean(raw.showToggleButton, DEFAULTS.showToggleButton),
@@ -461,6 +476,10 @@
     if (cached) return cached;
 
     const promise = fetchMetadataInner(info)
+      .then((metadata) => {
+        if (metadata) setCachedMetadata(info, metadata);
+        return metadata;
+      })
       .catch((err) => {
         console.warn("[OStickers] Metadata load failed", info.cacheKey, err);
         state.metadataCache.delete(info.cacheKey);
@@ -472,17 +491,252 @@
   }
 
   function getCachedMetadata(info) {
-    const cached = state.metadataCache.get(info?.cacheKey);
+    if (!info?.cacheKey) return null;
+    const cached = state.metadataCache.get(info.cacheKey);
     if (cached && Date.now() - cached.createdAt < METADATA_CACHE_TTL_MS) return cached.promise;
+    if (cached) state.metadataCache.delete(info.cacheKey);
+
+    const persistentMetadata = getPersistentCachedMetadata(info);
+    if (persistentMetadata) {
+      const promise = Promise.resolve(persistentMetadata);
+      state.metadataCache.set(info.cacheKey, { createdAt: Date.now(), promise });
+      return promise;
+    }
+
     return null;
   }
 
   function setCachedMetadata(info, metadata) {
-    if (!info?.cacheKey) return;
+    if (!info?.cacheKey || !metadata) return;
+    const normalizedMetadata = normalizeMetadata(metadata);
     state.metadataCache.set(info.cacheKey, {
       createdAt: Date.now(),
-      promise: Promise.resolve(metadata),
+      promise: Promise.resolve(normalizedMetadata),
     });
+    setPersistentCachedMetadata(info, normalizedMetadata);
+  }
+
+  function normalizeMetadata(metadata) {
+    return { oCount: normalizeCount(metadata?.oCount) };
+  }
+
+  function isPersistentMetadataCacheEnabled() {
+    return Number(state.config.localCacheMinutes) > 0;
+  }
+
+  function getPersistentMetadataCacheTtlMs() {
+    return Math.max(0, Number(state.config.localCacheMinutes) || 0) * 60 * 1000;
+  }
+
+  function ensurePersistentMetadataCacheLoaded() {
+    if (state.persistentMetadataCacheLoaded) return;
+    state.persistentMetadataCacheLoaded = true;
+    state.persistentMetadataCache.clear();
+    if (!isPersistentMetadataCacheEnabled()) return;
+
+    try {
+      const raw = window.localStorage?.getItem(PERSISTENT_METADATA_CACHE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+      const now = Date.now();
+      const ttlMs = getPersistentMetadataCacheTtlMs();
+      let cacheChanged = false;
+
+      for (const [cacheKey, entry] of entries) {
+        if (!cacheKey || !entry || !Number.isFinite(Number(entry.createdAt))) {
+          cacheChanged = true;
+          continue;
+        }
+        if (ttlMs && now - Number(entry.createdAt) > ttlMs) {
+          cacheChanged = true;
+          continue;
+        }
+        state.persistentMetadataCache.set(String(cacheKey), {
+          createdAt: Number(entry.createdAt),
+          metadata: normalizeMetadata(entry.metadata),
+        });
+      }
+
+      if (state.persistentMetadataCache.size !== entries.length) cacheChanged = true;
+      const sizeBeforePrune = state.persistentMetadataCache.size;
+      prunePersistentMetadataCache(false);
+      if (state.persistentMetadataCache.size !== sizeBeforePrune) cacheChanged = true;
+      if (cacheChanged) schedulePersistentMetadataCacheSave();
+    } catch (err) {
+      console.warn("[OStickers] Local metadata cache could not be loaded", err);
+    }
+  }
+
+  function getPersistentCachedMetadata(info) {
+    if (!info?.cacheKey || !isPersistentMetadataCacheEnabled()) return null;
+    ensurePersistentMetadataCacheLoaded();
+    const entry = state.persistentMetadataCache.get(info.cacheKey);
+    if (!entry) return null;
+
+    const ttlMs = getPersistentMetadataCacheTtlMs();
+    if (ttlMs && Date.now() - entry.createdAt > ttlMs) {
+      state.persistentMetadataCache.delete(info.cacheKey);
+      schedulePersistentMetadataCacheSave();
+      return null;
+    }
+
+    return normalizeMetadata(entry.metadata);
+  }
+
+  function setPersistentCachedMetadata(info, metadata) {
+    if (!info?.cacheKey || !isPersistentMetadataCacheEnabled()) return;
+    ensurePersistentMetadataCacheLoaded();
+    state.persistentMetadataCache.set(info.cacheKey, {
+      createdAt: Date.now(),
+      metadata: normalizeMetadata(metadata),
+    });
+    prunePersistentMetadataCache(false);
+    schedulePersistentMetadataCacheSave();
+  }
+
+  function prunePersistentMetadataCache(shouldSave = true) {
+    if (!isPersistentMetadataCacheEnabled()) return;
+    const ttlMs = getPersistentMetadataCacheTtlMs();
+    const now = Date.now();
+
+    for (const [cacheKey, entry] of state.persistentMetadataCache.entries()) {
+      if (!entry || !Number.isFinite(Number(entry.createdAt)) || (ttlMs && now - Number(entry.createdAt) > ttlMs)) {
+        state.persistentMetadataCache.delete(cacheKey);
+      }
+    }
+
+    if (state.persistentMetadataCache.size > PERSISTENT_METADATA_CACHE_MAX_ENTRIES) {
+      const sorted = Array.from(state.persistentMetadataCache.entries())
+        .sort((left, right) => Number(right[1]?.createdAt || 0) - Number(left[1]?.createdAt || 0));
+      state.persistentMetadataCache = new Map(sorted.slice(0, PERSISTENT_METADATA_CACHE_MAX_ENTRIES));
+    }
+
+    if (shouldSave) schedulePersistentMetadataCacheSave();
+  }
+
+  function schedulePersistentMetadataCacheSave() {
+    if (!isPersistentMetadataCacheEnabled() || !state.persistentMetadataCacheLoaded) return;
+    if (state.persistentMetadataCacheSaveTimer) window.clearTimeout(state.persistentMetadataCacheSaveTimer);
+    state.persistentMetadataCacheSaveTimer = window.setTimeout(writePersistentMetadataCache, 250);
+  }
+
+  function writePersistentMetadataCache() {
+    state.persistentMetadataCacheSaveTimer = 0;
+    if (!isPersistentMetadataCacheEnabled()) return;
+    try {
+      const entries = Array.from(state.persistentMetadataCache.entries()).map(([cacheKey, entry]) => [
+        cacheKey,
+        {
+          createdAt: Number(entry.createdAt) || Date.now(),
+          metadata: normalizeMetadata(entry.metadata),
+        },
+      ]);
+      window.localStorage?.setItem(PERSISTENT_METADATA_CACHE_KEY, JSON.stringify({ version: 1, entries }));
+    } catch (err) {
+      console.warn("[OStickers] Local metadata cache could not be saved", err);
+    }
+  }
+
+  function clearMetadataCaches(reason = "unknown") {
+    state.metadataCache.clear();
+    state.persistentMetadataCache.clear();
+    state.persistentMetadataCacheLoaded = true;
+    if (state.persistentMetadataCacheSaveTimer) {
+      window.clearTimeout(state.persistentMetadataCacheSaveTimer);
+      state.persistentMetadataCacheSaveTimer = 0;
+    }
+
+    try {
+      window.localStorage?.removeItem(PERSISTENT_METADATA_CACHE_KEY);
+    } catch (err) {
+      console.warn("[OStickers] Local metadata cache could not be cleared", err);
+    }
+
+    console.debug("[OStickers] O-count change detected; metadata cache cleared.", reason);
+  }
+
+  function handleOCountChange(reason = "graphql mutation") {
+    state.lastOCountInvalidationReason = reason;
+    if (state.oCountInvalidationTimer) window.clearTimeout(state.oCountInvalidationTimer);
+    state.oCountInvalidationTimer = window.setTimeout(() => {
+      state.oCountInvalidationTimer = 0;
+      clearMetadataCaches(state.lastOCountInvalidationReason || reason);
+      scheduleRefresh();
+    }, 120);
+  }
+
+  function installOCountMutationWatcher() {
+    window.__ostickersOCountChangeHandler = handleOCountChange;
+
+    if (!state.oCountChangeEventListener) {
+      state.oCountChangeEventListener = () => {
+        if (typeof window.__ostickersOCountChangeHandler === "function") {
+          window.__ostickersOCountChangeHandler("event");
+        }
+      };
+      window.addEventListener(OCOUNT_CHANGE_EVENT, state.oCountChangeEventListener);
+    }
+
+    if (window.__ostickersFetchWatcherInstalled) return;
+    const originalFetch = window.fetch;
+    if (typeof originalFetch !== "function") return;
+
+    window.__ostickersFetchWatcherInstalled = true;
+    window.__ostickersOriginalFetch = originalFetch;
+    window.fetch = function ostickersWatchedFetch(input, init) {
+      const shouldInvalidate = isLikelyOCountMutationRequest(input, init);
+      const result = originalFetch.apply(this, arguments);
+
+      if (shouldInvalidate) {
+        Promise.resolve(result)
+          .then((response) => {
+            if (!response || response.ok) window.dispatchEvent(new Event(OCOUNT_CHANGE_EVENT));
+          })
+          .catch(() => {
+            // Failed mutations should not invalidate a useful cache.
+          });
+      }
+
+      return result;
+    };
+  }
+
+  function isLikelyOCountMutationRequest(input, init) {
+    try {
+      const url = getRequestUrl(input);
+      if (!url || !url.includes("/graphql")) return false;
+      const body = getRequestBody(input, init);
+      if (!body) return false;
+      const operations = parseGraphQLRequestBody(body);
+      return operations.some(isLikelyOCountMutation);
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function getRequestUrl(input) {
+    if (typeof input === "string") return input;
+    if (input instanceof URL) return input.href;
+    return input?.url || "";
+  }
+
+  function getRequestBody(input, init) {
+    if (typeof init?.body === "string") return init.body;
+    if (typeof input?.body === "string") return input.body;
+    return "";
+  }
+
+  function parseGraphQLRequestBody(body) {
+    const parsed = JSON.parse(body);
+    return Array.isArray(parsed) ? parsed : [parsed];
+  }
+
+  function isLikelyOCountMutation(operation) {
+    const query = String(operation?.query || "");
+    if (!/\bmutation\b/i.test(query)) return false;
+    const normalized = query.replace(/\s+/g, " ");
+    return /(?:o[_\s-]*(?:counter|count)|increment[_\s-]*o|decrement[_\s-]*o|update[_\s-]*o)/i.test(normalized);
   }
 
   async function fetchMetadataInner(info) {
@@ -607,128 +861,116 @@
     }
   }
 
+  async function fetchPagedSceneOCount(sceneFilter) {
+    let page = 1;
+    const pageSize = 250;
+    let total = 0;
+
+    while (true) {
+      const data = await gql(`
+        query OStickersPagedSceneOCount($sceneFilter: SceneFilterType, $filter: FindFilterType) {
+          findScenes(scene_filter: $sceneFilter, filter: $filter) {
+            scenes {
+              o_counter
+            }
+          }
+        }
+      `, {
+        sceneFilter,
+        filter: { page, per_page: pageSize, sort: "id", direction: "ASC" },
+      });
+      const scenes = data?.findScenes?.scenes || [];
+      total += sumOCount(scenes);
+      if (scenes.length < pageSize) break;
+      page += 1;
+    }
+
+    return total;
+  }
+
+  async function fetchPagedImageOCount(imageFilter) {
+    let page = 1;
+    const pageSize = 250;
+    let total = 0;
+
+    while (true) {
+      const data = await gql(`
+        query OStickersPagedImageOCount($imageFilter: ImageFilterType, $filter: FindFilterType) {
+          findImages(image_filter: $imageFilter, filter: $filter) {
+            images {
+              o_counter
+            }
+          }
+        }
+      `, {
+        imageFilter,
+        filter: { page, per_page: pageSize, sort: "id", direction: "ASC" },
+      });
+      const images = data?.findImages?.images || [];
+      total += sumOCount(images);
+      if (images.length < pageSize) break;
+      page += 1;
+    }
+
+    return total;
+  }
+
   async function fetchAggregateOCount(kind, id, quiet = false) {
     try {
       if (kind === "performerScene") {
-        const data = await gql(`
-          query OStickersPerformerSceneOCount($sceneFilter: SceneFilterType) {
-            findScenes(scene_filter: $sceneFilter, filter: { per_page: -1 }) {
-              scenes {
-                o_counter
-              }
-            }
-          }
-        `, {
-          sceneFilter: {
+        return fetchPagedSceneOCount({
             performers: {
               value: [String(id)],
               modifier: "INCLUDES_ALL",
             },
-          },
         });
-        return sumOCount(data?.findScenes?.scenes);
       }
 
       if (kind === "performerImage") {
-        const data = await gql(`
-          query OStickersPerformerImageOCount($imageFilter: ImageFilterType) {
-            findImages(image_filter: $imageFilter, filter: { per_page: -1 }) {
-              images {
-                o_counter
-              }
-            }
-          }
-        `, {
-          imageFilter: {
+        return fetchPagedImageOCount({
             performers: {
               value: [String(id)],
               excludes: [],
               modifier: "INCLUDES_ALL",
             },
-          },
         });
-        return sumOCount(data?.findImages?.images);
       }
 
       if (kind === "studioScene") {
-        const data = await gql(`
-          query OStickersStudioSceneOCount($sceneFilter: SceneFilterType) {
-            findScenes(scene_filter: $sceneFilter, filter: { per_page: -1 }) {
-              scenes {
-                o_counter
-              }
-            }
-          }
-        `, {
-          sceneFilter: {
+        return fetchPagedSceneOCount({
             studios: {
               value: [String(id)],
               modifier: "INCLUDES_ALL",
             },
-          },
         });
-        return sumOCount(data?.findScenes?.scenes);
       }
 
       if (kind === "studioImage") {
-        const data = await gql(`
-          query OStickersStudioImageOCount($imageFilter: ImageFilterType) {
-            findImages(image_filter: $imageFilter, filter: { per_page: -1 }) {
-              images {
-                o_counter
-              }
-            }
-          }
-        `, {
-          imageFilter: {
+        return fetchPagedImageOCount({
             studios: {
               value: [String(id)],
               excludes: [],
               modifier: "INCLUDES_ALL",
             },
-          },
         });
-        return sumOCount(data?.findImages?.images);
       }
 
       if (kind === "groupScene") {
-        const data = await gql(`
-          query OStickersGroupSceneOCount($sceneFilter: SceneFilterType) {
-            findScenes(scene_filter: $sceneFilter, filter: { per_page: -1 }) {
-              scenes {
-                o_counter
-              }
-            }
-          }
-        `, {
-          sceneFilter: {
+        return fetchPagedSceneOCount({
             groups: {
               value: [String(id)],
               modifier: "INCLUDES_ALL",
             },
-          },
         });
-        return sumOCount(data?.findScenes?.scenes);
       }
 
       if (kind === "movieScene") {
-        const data = await gql(`
-          query OStickersMovieSceneOCount($sceneFilter: SceneFilterType) {
-            findScenes(scene_filter: $sceneFilter, filter: { per_page: -1 }) {
-              scenes {
-                o_counter
-              }
-            }
-          }
-        `, {
-          sceneFilter: {
+        return fetchPagedSceneOCount({
             movies: {
               value: [String(id)],
               modifier: "INCLUDES_ALL",
             },
-          },
         });
-        return sumOCount(data?.findScenes?.scenes);
       }
     } catch (err) {
       if (!quiet) console.warn("[OStickers] Aggregate O-count lookup failed", kind, id, err);
@@ -846,6 +1088,24 @@
   }
 
   async function enhanceCards() {
+    if (state.enhanceRunning) {
+      state.refreshQueued = true;
+      return;
+    }
+
+    state.enhanceRunning = true;
+    try {
+      await enhanceCardsInner();
+    } finally {
+      state.enhanceRunning = false;
+      if (state.refreshQueued) {
+        state.refreshQueued = false;
+        scheduleRefresh();
+      }
+    }
+  }
+
+  async function enhanceCardsInner() {
     suppressObserver();
 
     if (!state.enabled) {
@@ -885,27 +1145,20 @@
       if (!info || !enabledTypes.has(info.type)) continue;
       if (context.mode === "browse" && info.type !== context.browseType) continue;
       const domOCount = getDomOCount(card);
-      const cachedMetadata = domOCount == null ? getCachedMetadata(info) : null;
-
-      if (domOCount != null) {
-        const metadata = { oCount: domOCount };
-        setCachedMetadata(info, metadata);
-        cardRecords.push({ card, info, metadata });
-        continue;
-      }
-
+      const domMetadata = domOCount > 0 ? { oCount: domOCount } : null;
+      const cachedMetadata = getCachedMetadata(info);
       if (cachedMetadata) {
-        cardRecords.push({ card, info, metadataPromise: cachedMetadata });
+        cardRecords.push({ card, info, domMetadata, metadataPromise: cachedMetadata });
         continue;
       }
 
       if (getDirectMetadataField(info.type)) {
         directIdsByType[info.type].push(info.id);
-        cardRecords.push({ card, info, needsDirectBatch: true });
+        cardRecords.push({ card, info, domMetadata, needsDirectBatch: true });
         continue;
       }
 
-      cardRecords.push({ card, info });
+      cardRecords.push({ card, info, domMetadata });
     }
 
     const directCountsByType = {
@@ -916,6 +1169,9 @@
     for (const record of cardRecords) {
       let metadata = record.metadata || null;
       if (!metadata && record.metadataPromise) metadata = await record.metadataPromise;
+      if (metadata && record.domMetadata && record.domMetadata.oCount > normalizeCount(metadata.oCount)) {
+        metadata = record.domMetadata;
+      }
       if (!metadata && record.needsDirectBatch) {
         const directCounts = directCountsByType[record.info.type];
         if (directCounts?.has(record.info.id)) {
@@ -924,6 +1180,7 @@
         }
       }
       if (!metadata) metadata = await fetchMetadata(record.info);
+      if (!metadata && record.domMetadata) metadata = record.domMetadata;
       if (!metadata?.oCount) {
         removeCardLayer(record.card);
         continue;
@@ -1220,6 +1477,7 @@
     registerRuntime();
     await loadConfig();
     installRouteHooks();
+    installOCountMutationWatcher();
     scheduleToggleButtonSetup();
     state.observer = new MutationObserver(() => {
       if (Date.now() < state.suppressObserverUntil) return;
