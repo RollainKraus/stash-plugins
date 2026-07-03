@@ -521,6 +521,12 @@
   color: rgba(255, 255, 255, 0.94);
 }
 
+.studio-dashboard__section-action.is-active {
+  border-color: rgba(93, 214, 142, 0.72);
+  background: rgba(93, 214, 142, 0.24);
+  color: rgba(255, 255, 255, 0.94);
+}
+
 .studio-dashboard__section-action-link,
 .studio-dashboard__section-action-link:hover {
   text-decoration: none;
@@ -1371,18 +1377,21 @@ a.studio-dashboard__attention-heading:hover {
 }
 
 .studio-dashboard__demographic-controls {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.45rem;
   margin-top: 0.85rem;
 }
 
 .studio-dashboard__demographic-controls button {
-  width: 100%;
+  flex: 1 1 7.5rem;
+  width: auto;
+  min-width: 7.5rem;
   min-height: 1.9rem;
   padding: 0.25rem 0.55rem;
   background: rgba(255, 255, 255, 0.08);
   font-size: calc(var(--studio-dashboard-content-font-size) * 0.85);
+  white-space: nowrap;
 }
 
 .studio-dashboard__demographic-controls button:disabled {
