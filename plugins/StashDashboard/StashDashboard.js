@@ -387,7 +387,10 @@
   }
 
   function getDashboardSurfaceColor() {
-    return getConfigString(getSetting("z05DashboardSurfaceBackgroundColor"), "#000000");
+    return sanitizeDashboardCssValue(
+      getConfigString(getSetting("z05DashboardSurfaceBackgroundColor"), "#000000"),
+      "#000000"
+    );
   }
 
   function getDashboardSurfaceOpacity() {
@@ -798,13 +801,28 @@
 
   function observeTagGridLayout(grid) {
     if (!(grid instanceof HTMLElement)) return;
+    if (grid.stashDashboardResizeObserver?.disconnect) {
+      grid.stashDashboardResizeObserver.disconnect();
+    }
+    if (grid.stashDashboardResizeHandler) {
+      window.removeEventListener("resize", grid.stashDashboardResizeHandler);
+      grid.stashDashboardResizeHandler = null;
+    }
     updateTagGridLayout(grid);
     if (typeof ResizeObserver !== "undefined") {
       const observer = new ResizeObserver(() => updateTagGridLayout(grid));
       observer.observe(grid);
       grid.stashDashboardResizeObserver = observer;
     } else {
-      window.addEventListener("resize", () => updateTagGridLayout(grid));
+      grid.stashDashboardResizeHandler = () => {
+        if (!grid.isConnected) {
+          window.removeEventListener("resize", grid.stashDashboardResizeHandler);
+          grid.stashDashboardResizeHandler = null;
+          return;
+        }
+        updateTagGridLayout(grid);
+      };
+      window.addEventListener("resize", grid.stashDashboardResizeHandler);
     }
   }
 
