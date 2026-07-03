@@ -3,6 +3,8 @@
 
   const PLUGIN_ID = "StudioDashboard";
   const DASHBOARD_COLLAPSED_SECTIONS_KEY = "StudioDashboard.collapsedSections";
+  const DASHBOARD_HIDE_UNKNOWN_PERFORMER_CHARTS_KEY = "StudioDashboard.hideUnknownPerformerCharts";
+  const DASHBOARD_HIDE_UNKNOWN_SCENE_CHARTS_KEY = "StudioDashboard.hideUnknownSceneCharts";
   const DEFAULT_PERFORMER_CARD_ASPECT_RATIO = "2 / 3";
   const POWER_USER_OPTIONS = {
     // Power-user theme hook: change this value if your performer card art uses a custom ratio.
@@ -247,7 +249,10 @@
   }
 
   function getDashboardSurfaceColor() {
-    return getConfigString(getSetting("z05DashboardSurfaceBackgroundColor", "dashboardSurfaceBackgroundColor"), "#000000");
+    return sanitizeDashboardCssValue(
+      getConfigString(getSetting("z05DashboardSurfaceBackgroundColor", "dashboardSurfaceBackgroundColor"), "#000000"),
+      "#000000"
+    );
   }
 
   function getDashboardSurfaceOpacity() {
@@ -315,6 +320,28 @@
     const value = Number(getSetting("c06PieChartSliceMax", "pieChartSliceMax") ?? 0);
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.round(value));
+  }
+
+  function getHideUnknownChartSlices(kind) {
+    const key = kind === "scene"
+      ? DASHBOARD_HIDE_UNKNOWN_SCENE_CHARTS_KEY
+      : DASHBOARD_HIDE_UNKNOWN_PERFORMER_CHARTS_KEY;
+    try {
+      return getConfigBoolean(window.localStorage.getItem(key), false);
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function setHideUnknownChartSlices(kind, value) {
+    const key = kind === "scene"
+      ? DASHBOARD_HIDE_UNKNOWN_SCENE_CHARTS_KEY
+      : DASHBOARD_HIDE_UNKNOWN_PERFORMER_CHARTS_KEY;
+    try {
+      window.localStorage.setItem(key, value ? "true" : "false");
+    } catch (err) {
+      // Ignore storage failures; the current render will still update.
+    }
   }
 
   function getDemographicTooltipImageHeight() {
@@ -1736,13 +1763,28 @@
 
   function observeTagGridLayout(grid) {
     if (!(grid instanceof HTMLElement)) return;
+    if (grid.studioDashboardResizeObserver?.disconnect) {
+      grid.studioDashboardResizeObserver.disconnect();
+    }
+    if (grid.studioDashboardResizeHandler) {
+      window.removeEventListener("resize", grid.studioDashboardResizeHandler);
+      grid.studioDashboardResizeHandler = null;
+    }
     updateTagGridLayout(grid);
     if (typeof ResizeObserver !== "undefined") {
       const observer = new ResizeObserver(() => updateTagGridLayout(grid));
       observer.observe(grid);
       grid.studioDashboardResizeObserver = observer;
     } else {
-      window.addEventListener("resize", () => updateTagGridLayout(grid));
+      grid.studioDashboardResizeHandler = () => {
+        if (!grid.isConnected) {
+          window.removeEventListener("resize", grid.studioDashboardResizeHandler);
+          grid.studioDashboardResizeHandler = null;
+          return;
+        }
+        updateTagGridLayout(grid);
+      };
+      window.addEventListener("resize", grid.studioDashboardResizeHandler);
     }
   }
 
@@ -3081,6 +3123,25 @@
     section.appendChild(grid);
   }
 
+  function createHideUnknownChartsToggle(kind, onChange) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "studio-dashboard__section-action";
+    button.textContent = "Hide Unknown";
+    button.classList.toggle("is-active", getHideUnknownChartSlices(kind));
+    button.setAttribute("aria-pressed", getHideUnknownChartSlices(kind) ? "true" : "false");
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const next = !getHideUnknownChartSlices(kind);
+      setHideUnknownChartSlices(kind, next);
+      button.classList.toggle("is-active", next);
+      button.setAttribute("aria-pressed", next ? "true" : "false");
+      if (typeof onChange === "function") onChange(next);
+    });
+    return button;
+  }
+
   function renderPerformerDemographics(container, stats) {
     const demographics = stats?.performerDemographics;
     const hasCountries = Array.isArray(demographics?.countries) && demographics.countries.length;
@@ -3093,10 +3154,16 @@
     });
     if (!hasCountries && !hasAges && !hasRatings && !hasCustomPie && !demographics?.ageUnknown) return;
 
-    const section = createPageSection(container, "PERFORMER DEMOGRAPHICS");
+    const section = createPageSection(container, "PERFORMER DEMOGRAPHICS", {
+      actions: [createHideUnknownChartsToggle("performer", () => {
+        const dashboard = container.closest(".studio-dashboard__page-dashboard");
+        if (dashboard instanceof HTMLElement) renderStudioPageDashboard(dashboard, stats);
+      })],
+    });
     const grid = document.createElement("div");
     grid.className = "studio-dashboard__demographics";
     section.appendChild(grid);
+    const hideUnknown = getHideUnknownChartSlices("performer");
 
     renderDemographicChart(grid, {
       title: "Nationality",
@@ -3105,6 +3172,7 @@
       unit: "performers",
       type: "country",
       studio: stats.studio,
+      hideUnknown,
     });
 
     renderDemographicChart(grid, {
@@ -3114,6 +3182,7 @@
       unit: "appearances",
       type: "age",
       studio: stats.studio,
+      hideUnknown,
     });
 
     renderDemographicChart(grid, {
@@ -3123,6 +3192,7 @@
       unit: "performers",
       type: "performer-rating",
       studio: stats.studio,
+      hideUnknown,
     });
 
     customPies.forEach((chart, index) => {
@@ -3134,6 +3204,7 @@
         unit: "performers",
         type: "custom-performer",
         studio: stats.studio,
+        hideUnknown,
       });
     });
   }
@@ -3152,10 +3223,16 @@
     const hasSceneDurations = Array.isArray(sceneDurations.items) && sceneDurations.items.length;
     if (!visibleCharts.length && !hasSceneRatings && !hasSceneResolutions && !hasSceneDurations) return;
 
-    const section = createPageSection(container, "SCENE CHARTS");
+    const section = createPageSection(container, "SCENE CHARTS", {
+      actions: [createHideUnknownChartsToggle("scene", () => {
+        const dashboard = container.closest(".studio-dashboard__page-dashboard");
+        if (dashboard instanceof HTMLElement) renderStudioPageDashboard(dashboard, stats);
+      })],
+    });
     const grid = document.createElement("div");
     grid.className = "studio-dashboard__demographics";
     section.appendChild(grid);
+    const hideUnknown = getHideUnknownChartSlices("scene");
 
     if (hasSceneRatings) {
       renderDemographicChart(grid, {
@@ -3165,6 +3242,7 @@
         unit: "scenes",
         type: "scene-rating",
         studio: stats.studio,
+        hideUnknown,
       });
     }
 
@@ -3177,6 +3255,7 @@
         type: "scene-resolution",
         studio: stats.studio,
         footer: "Stash supports filtering by one resolution at a time.",
+        hideUnknown,
       });
     }
 
@@ -3188,6 +3267,7 @@
         unit: "scenes",
         type: "scene-duration",
         studio: stats.studio,
+        hideUnknown,
       });
     }
 
@@ -3200,20 +3280,23 @@
         unit: "scenes",
         type: "custom-scene",
         studio: stats.studio,
+        hideUnknown,
       });
     });
   }
 
-  function renderDemographicChart(container, { title, subtitle, items, subcharts, unit, type, studio, footer }) {
+  function renderDemographicChart(container, { title, subtitle, items, subcharts, unit, type, studio, footer, hideUnknown = false }) {
     const hasSubcharts = Array.isArray(subcharts) && subcharts.length;
     let nextItemIndex = 0;
     const displayItems = hasSubcharts
       ? []
-      : getDemographicDisplayItems(items || [], type).map((item) => ({ ...item, sourceIndex: nextItemIndex++ }));
+      : prepareDemographicItemsForDisplay(getDemographicDisplayItems(items || [], type), hideUnknown)
+        .map((item) => ({ ...item, sourceIndex: nextItemIndex++ }));
     const displaySubcharts = hasSubcharts
       ? subcharts.map((subchart) => ({
         ...subchart,
-        items: (subchart.items || []).map((item) => ({ ...item, sourceIndex: nextItemIndex++ })),
+        items: prepareDemographicItemsForDisplay(subchart.items || [], hideUnknown)
+          .map((item) => ({ ...item, sourceIndex: nextItemIndex++ })),
       }))
       : [];
     const allDisplayItems = hasSubcharts ? displaySubcharts.flatMap((subchart) => subchart.items || []) : displayItems;
@@ -3305,12 +3388,16 @@
       controls.innerHTML = `
         <button type="button" data-demo-action="go" disabled>Go to scenes</button>
         <button type="button" data-demo-action="update" disabled>Update chart</button>
+        <button type="button" data-demo-action="reset">Reset</button>
       `;
       controls.querySelector("[data-demo-action='go']")?.addEventListener("click", () => {
         openDemographicScenes(studio, type, allDisplayItems, Array.from(chart.querySelectorAll(".studio-dashboard__demographic-row")));
       });
       controls.querySelector("[data-demo-action='update']")?.addEventListener("click", () => {
         updateDemographicChartView(chart);
+      });
+      controls.querySelector("[data-demo-action='reset']")?.addEventListener("click", () => {
+        resetDemographicChartView(chart);
       });
       chart.appendChild(controls);
       updateDemographicGoState(chart);
@@ -3381,6 +3468,15 @@
   function getDemographicDisplayItems(items, type) {
     if (type !== "country") return items;
     return getPieItems(items);
+  }
+
+  function prepareDemographicItemsForDisplay(items, hideUnknown = false) {
+    const visible = (items || []).filter((item) => !hideUnknown || !isUnknownDemographicItem(item));
+    const total = visible.reduce((sum, item) => sum + Number(item.count || 0), 0);
+    return visible.map((item) => ({
+      ...item,
+      percent: formatPercent(Number(item.count || 0), total),
+    }));
   }
 
   function renderDemographicPie(container, items, unit, type) {
@@ -3754,6 +3850,12 @@
     chart.querySelectorAll(".studio-dashboard__demographic-row").forEach((row) => {
       syncDemographicSliceSelection(chart, row.dataset.itemIndex || "", row.dataset.filterMode || "");
     });
+  }
+
+  function resetDemographicChartView(chart) {
+    if (!(chart instanceof HTMLElement)) return;
+    chart.querySelectorAll(".studio-dashboard__demographic-row").forEach((row) => setDemographicSelection(row, ""));
+    updateDemographicChartView(chart);
   }
 
   function openDemographicScenes(studio, type, items, rows) {
