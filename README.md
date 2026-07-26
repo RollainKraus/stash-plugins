@@ -8,6 +8,7 @@
 - [Tag Sidebar](#Tag-Sidebar)
 - [Custom Tags Manager](#Custom-Tags-Manager)
 - [Organize Images By Performer](#Organize-Images-By-Performer)
+- [Organize Scenes By Studio](#Organize-Scenes-By-Studio)
 - [Visage](#Visage)
 - [Stash Quick Actions Panel](#Stash-Quick-Actions-Panel)
 - [Background Images Slideshow](#Background-Images-Slideshow)
@@ -340,6 +341,19 @@ Uses stash metadata to move images with attached performers into performer folde
 <p>
   <img src="/pluginPreviews/OrganizeImagesByPerformerTasksPreview.png" alt="OrganizeImagesByPerformer settings" width="600">
 </p>
+
+# Organize Scenes By Studio
+
+Uses stash metadata to move scenes into studio folders in a set directory.
+
+** Be careful when using this: If you are already satisfied with your local scene organization then this is not for you.
+
+*** Also this plugin moves local files so you will have to rescan after each run to update new directories or else scenes may become detached.
+
+- Set directories for Source and Destination folders (example '...To Sort' and '...Sorted')
+- Nested or Standalone: Nested means substudios are created within their parent studios. Standalone means every studio gets its own folder regardless of parent/sub-studio hierarchies
+- Can be limited to organized scenes only
+- Preview: Creates a log file to preview where scenes will be moved to
 
 # Visage
 
