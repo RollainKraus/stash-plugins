@@ -1,0 +1,34 @@
+name: Organize Scenes By Studio
+description: Organize inbox scene files into studio folders using attached scene studio metadata.
+version: 0.1.0-alpha
+url: https://github.com/RollainKraus/stash-plugins
+exec:
+  - python
+  - "{pluginDir}/OrganizeScenesByStudio.py"
+interface: raw
+settings:
+  sourceDirectory:
+    displayName: Source Directory
+    description: Only scene files currently stored in this directory tree will be considered for sorting.
+    type: STRING
+  destinationDirectory:
+    displayName: Destination Directory
+    description: Studio folders will be created here for sorted scene files. Sub-studios are nested inside parent studio folders.
+    type: STRING
+  parentSubStudioMode:
+    displayName: Parent/Sub-Studio Mode
+    description: Enter 'nested' to place sub-studios inside parent studio folders, or 'standalone' to create one folder per assigned studio regardless of hierarchy.
+    type: STRING
+  onlyOrganizedScenes:
+    displayName: Only Organized Scenes
+    description: Only move scene files when the scene is marked organized in Stash.
+    type: BOOLEAN
+tasks:
+  - name: Preview Scene Organization
+    description: Preview how inbox scene files would be organized by studio without changing any files. The full preview is written to the plugin log file.
+    defaultArgs:
+      mode: preview
+  - name: Organize Scenes
+    description: Organize inbox scene files into studio and sub-studio folders.
+    defaultArgs:
+      mode: organize
