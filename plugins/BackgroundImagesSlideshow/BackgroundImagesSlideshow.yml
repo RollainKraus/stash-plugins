@@ -1,6 +1,6 @@
 name: "Background Images Slideshow"
 description: "Fork of Background Images, credit goes to original uploader. Displays background images with optional slideshow."
-version: 1.1.0
+version: 1.1.1
 ui:
   css:
     - BackgroundImagesSlideshow.css
