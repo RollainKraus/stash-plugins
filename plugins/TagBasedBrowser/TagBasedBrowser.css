@@ -74,6 +74,32 @@
   gap: 1rem;
 }
 
+.tag-browser__refresh-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 2.2rem;
+  margin-top: 0.75rem;
+  padding: 0.42rem 0.7rem;
+  border: 1px solid var(--tag-browser-border);
+  border-radius: 0.7rem;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+}
+
+.tag-browser__refresh-button:hover,
+.tag-browser__refresh-button:focus-visible {
+  border-color: var(--tag-browser-border-strong);
+  background: rgba(255, 255, 255, 0.1);
+  outline: none;
+}
+
+.tag-browser__refresh-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .tag-browser__sidebar-header-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(10rem, 1fr));
@@ -124,7 +150,7 @@
   border-radius: 0.55rem;
   background: transparent;
   color: inherit;
-  font-size: clamp(0.72rem, 0.72rem + 0.18vw, 0.88rem);
+  font-size: 0.82rem;
   line-height: 1.15;
   white-space: nowrap;
   text-align: center;
@@ -788,6 +814,29 @@
   padding: 0.75rem 0.8rem;
 }
 
+.tag-browser__card-description {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--tag-browser-muted);
+  font-size: 0.82rem;
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.tag-browser__scene-file-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.6rem;
+  color: var(--tag-browser-muted);
+  font-size: 0.76rem;
+  line-height: 1.25;
+}
+
+.tag-browser__scene-file-meta span {
+  white-space: nowrap;
+}
+
 .tag-browser__card-footer {
   min-width: 0;
   padding: 0.6rem 0.75rem;
@@ -1017,5 +1066,77 @@
   .tag-browser__sidebar,
   .tag-browser__content {
     min-height: 28rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .tag-browser-page {
+    padding: 0.6rem;
+  }
+
+  .tag-browser__layout {
+    gap: 0.6rem;
+  }
+
+  .tag-browser__sidebar,
+  .tag-browser__content {
+    border-radius: 0.7rem;
+  }
+
+  .tag-browser__sidebar-header,
+  .tag-browser__content-header,
+  .tag-browser__content-toolbar {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  .tag-browser__tabs--header {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 0.2rem;
+    scrollbar-width: thin;
+  }
+
+  .tag-browser__tab {
+    flex: 0 0 auto;
+  }
+
+  .tag-browser__content-toolbar {
+    gap: 0.65rem;
+  }
+
+  .tag-browser__content-toolbar-meta {
+    width: 100%;
+  }
+
+  .tag-browser__sort-control {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    width: 100%;
+  }
+
+  .tag-browser__sort-select {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .tag-browser__sort-button {
+    min-width: 0;
+    padding-left: 0.55rem;
+    padding-right: 0.55rem;
+  }
+
+  .tag-browser__card-size-control {
+    gap: 0.5rem;
+  }
+
+  .tag-browser__content-body {
+    padding: 0.75rem;
+  }
+
+  .tag-browser__pager-button {
+    padding-left: 0.65rem;
+    padding-right: 0.65rem;
   }
 }
