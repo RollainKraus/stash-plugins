@@ -114,6 +114,27 @@
   opacity: 1;
 }
 
+.content-banners-media.is-loading::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: -0.75rem;
+  border: 0.16rem solid rgba(255, 255, 255, 0.28);
+  border-top-color: rgba(255, 255, 255, 0.88);
+  border-radius: 50%;
+  animation: content-banners-spin 800ms linear infinite;
+  pointer-events: none;
+}
+
+@keyframes content-banners-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .content-banners-media img,
 .content-banners-media video {
   display: block;
@@ -282,4 +303,44 @@
   font-size: 0.78rem;
   font-weight: 850;
   text-align: center;
+}
+
+@media (max-width: 640px) {
+  .content-banners-target {
+    min-height: 14rem;
+  }
+
+  .content-banners-controls {
+    top: auto !important;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    left: 0.5rem !important;
+    max-width: none;
+    justify-content: center;
+    border-radius: 0.75rem;
+  }
+
+  .content-banners-control--handle {
+    flex: 1 0 100%;
+  }
+
+  .content-banners-control {
+    min-width: 0;
+    flex: 1 1 2.15rem;
+  }
+
+  .content-banners-control--primary {
+    flex: 1.2 1 3rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .content-banners-media,
+  .content-banners-title {
+    transition: none;
+  }
+
+  .content-banners-media.is-loading::after {
+    animation: none;
+  }
 }
