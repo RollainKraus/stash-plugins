@@ -14,6 +14,11 @@
   const DEFAULT_BANNER_SATURATION = 1;
   const DEFAULT_BANNER_BLUR = 0;
   const MAX_BANNER_BLUR_PX = 16;
+  const HEADER_RETRY_DELAY_MS = 250;
+  const MAX_HEADER_RETRIES = 40;
+  const CONFIG_CACHE_TTL_MS = 30000;
+  const SCENE_POOL_CACHE_TTL_MS = 60000;
+  const SCENE_POOL_CACHE_MAX_ENTRIES = 24;
   const DEFAULTS = {
     bannerContentTypes: "studio:2,performer:2,groups:2,tag:2",
     bannerMode: "mixed",
@@ -37,19 +42,35 @@
     panelIndexes: [],
     rotationTimer: 0,
     refreshTimer: 0,
+    headerRetryTimer: 0,
+    headerRetryCount: 0,
+    headerRetryPageKey: "",
     routeToken: 0,
+    requestController: null,
+    configLoadedAt: 0,
+    scenePoolCache: new Map(),
+    failedMedia: new Set(),
     controls: null,
     controlsResizeListener: null,
+    visibilityListener: null,
+    motionMediaQuery: null,
+    motionListener: null,
+    viewportObserver: null,
+    domObserver: null,
+    isDocumentVisible: true,
+    isInViewport: true,
+    prefersReducedMotion: false,
     isPaused: false,
     speedMultiplier: 1,
   };
 
-  function gql(query, variables = {}) {
+  function gql(query, variables = {}, signal) {
     return fetch("/graphql", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
       body: JSON.stringify({ query, variables }),
+      signal,
     })
       .then((res) => {
         if (!res.ok) throw new Error(`GraphQL HTTP ${res.status}`);
@@ -59,6 +80,10 @@
         if (json.errors?.length) throw new Error(json.errors.map((err) => err.message).join("; "));
         return json.data;
       });
+  }
+
+  function isAbortError(error) {
+    return error?.name === "AbortError";
   }
 
   function getConfigBoolean(value, fallback) {
@@ -166,7 +191,8 @@
     };
   }
 
-  async function loadConfig() {
+  async function loadConfig(signal) {
+    if (Date.now() - state.configLoadedAt < CONFIG_CACHE_TTL_MS) return;
     try {
       const data = await gql(`
         query ContentBannersConfig {
@@ -174,12 +200,15 @@
             plugins
           }
         }
-      `);
+      `, {}, signal);
       const raw = data?.configuration?.plugins?.[PLUGIN_ID] || {};
       state.config = normalizeConfig({ ...DEFAULTS, ...raw });
+      state.configLoadedAt = Date.now();
     } catch (error) {
+      if (error?.name === "AbortError") throw error;
       console.warn("[ContentBanners] Could not load settings.", error);
       state.config = normalizeConfig(DEFAULTS);
+      state.configLoadedAt = Date.now();
     }
   }
 
@@ -247,16 +276,73 @@
     return Array.from(state.layer?.querySelectorAll(".content-banners-media video") || []);
   }
 
+  function canPlayBannerMedia() {
+    return !state.isPaused && state.isDocumentVisible && state.isInViewport;
+  }
+
   function syncPlaybackState() {
     getBannerVideos().forEach((video) => {
       video.playbackRate = state.speedMultiplier;
-      if (state.isPaused) {
+      const isActive = video.closest(".content-banners-media")?.classList.contains("is-active");
+      if (!isActive || !canPlayBannerMedia()) {
         video.pause();
       } else {
         video.play().catch(() => {});
       }
     });
     updateControlsState();
+  }
+
+  function observeBannerTarget(target) {
+    state.viewportObserver?.disconnect();
+    state.viewportObserver = null;
+    state.isInViewport = true;
+    if (typeof IntersectionObserver !== "function") return;
+
+    state.viewportObserver = new IntersectionObserver(([entry]) => {
+      state.isInViewport = entry?.isIntersecting !== false;
+      syncPlaybackState();
+      if (canPlayBannerMedia()) scheduleRotation();
+      else window.clearTimeout(state.rotationTimer);
+    });
+    state.viewportObserver.observe(target);
+  }
+
+  function installRuntimeObservers() {
+    state.isDocumentVisible = document.visibilityState !== "hidden";
+    if (!state.visibilityListener) {
+      state.visibilityListener = () => {
+        state.isDocumentVisible = document.visibilityState !== "hidden";
+        syncPlaybackState();
+        if (canPlayBannerMedia()) scheduleRotation();
+        else window.clearTimeout(state.rotationTimer);
+      };
+      document.addEventListener("visibilitychange", state.visibilityListener);
+    }
+
+    if (!state.motionMediaQuery && typeof window.matchMedia === "function") {
+      state.motionMediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+      state.prefersReducedMotion = state.motionMediaQuery.matches;
+      state.motionListener = (event) => {
+        state.prefersReducedMotion = event.matches;
+        if (state.target) applyCssVars(state.target);
+      };
+      if (state.motionMediaQuery.addEventListener) {
+        state.motionMediaQuery.addEventListener("change", state.motionListener);
+      } else {
+        state.motionMediaQuery.addListener?.(state.motionListener);
+      }
+    }
+
+    if (!state.domObserver && typeof MutationObserver === "function" && document.body) {
+      state.domObserver = new MutationObserver(() => {
+        if (!getCurrentPage()) return;
+        const target = getTargetHeader();
+        if (!target || (target === state.target && state.target?.isConnected)) return;
+        scheduleRefresh();
+      });
+      state.domObserver.observe(document.body, { childList: true, subtree: true });
+    }
   }
 
   function updateControlsState() {
@@ -281,6 +367,16 @@
     const y = clamp(stored?.y ?? defaultY, 8, Math.max(8, window.innerHeight - rect.height - 8));
     state.controls.style.left = `${x}px`;
     state.controls.style.top = `${y}px`;
+  }
+
+  function moveControlsBy(deltaX, deltaY) {
+    if (!state.controls) return;
+    const rect = state.controls.getBoundingClientRect();
+    const x = clamp(rect.left + deltaX, 8, Math.max(8, window.innerWidth - rect.width - 8));
+    const y = clamp(rect.top + deltaY, 8, Math.max(8, window.innerHeight - rect.height - 8));
+    state.controls.style.left = `${x}px`;
+    state.controls.style.top = `${y}px`;
+    saveControlsPosition(x, y);
   }
 
   function installControlsDrag(handle) {
@@ -318,6 +414,19 @@
 
     handle.addEventListener("pointerup", endDrag);
     handle.addEventListener("pointercancel", endDrag);
+    handle.addEventListener("keydown", (event) => {
+      const distance = event.shiftKey ? 40 : 8;
+      const deltas = {
+        ArrowLeft: [-distance, 0],
+        ArrowRight: [distance, 0],
+        ArrowUp: [0, -distance],
+        ArrowDown: [0, distance],
+      };
+      const delta = deltas[event.key];
+      if (!delta) return;
+      event.preventDefault();
+      moveControlsBy(delta[0], delta[1]);
+    });
   }
 
   function setSpeedStep(direction) {
@@ -340,17 +449,40 @@
         } catch (_error) {
           // Some preview videos briefly reject seeking while metadata is still loading.
         }
-      });
+    });
+  }
+
+  function getAvailableItemIndexes() {
+    return state.items.reduce((indexes, item, index) => {
+      if (getMediaUrl(item)) indexes.push(index);
+      return indexes;
+    }, []);
+  }
+
+  function getPanelIndexes(cursor, availableIndexes = getAvailableItemIndexes()) {
+    if (!availableIndexes.length) return [];
+    const panelCount = state.layer?.querySelectorAll(".content-banners-panel").length || 1;
+    const start = ((cursor % availableIndexes.length) + availableIndexes.length) % availableIndexes.length;
+    return Array.from(
+      { length: panelCount },
+      (_panel, panelIndex) => availableIndexes[(start + panelIndex) % availableIndexes.length]
+    );
   }
 
   function showItemStep(direction, reschedule = true) {
-    if (state.items.length <= 1) return;
-    const step = Math.max(1, state.panelIndexes.length || 1);
-    state.panelIndexes = state.panelIndexes.map((index) => {
-      const next = index + direction * step;
-      return ((next % state.items.length) + state.items.length) % state.items.length;
-    });
-    state.index = state.panelIndexes[0] || 0;
+    const availableIndexes = getAvailableItemIndexes();
+    if (availableIndexes.length <= 1) {
+      if (!availableIndexes.length) showEmpty("No usable banner media found.");
+      return;
+    }
+    if (!state.items.length) {
+      showEmpty("No usable banner media found.");
+      return;
+    }
+    const foundPosition = availableIndexes.indexOf(state.panelIndexes[0]);
+    const currentPosition = foundPosition >= 0 ? foundPosition : direction > 0 ? -1 : 0;
+    state.index = (currentPosition + direction + availableIndexes.length) % availableIndexes.length;
+    state.panelIndexes = getPanelIndexes(state.index, availableIndexes);
     showCurrentItems();
     if (reschedule && !state.isPaused) scheduleRotation();
   }
@@ -386,7 +518,7 @@
       <button class="content-banners-control" type="button" data-content-banners-action="seek-forward" aria-label="Skip preview 1 second" title="Skip 1 second">+1s</button>
       <button class="content-banners-control" type="button" data-content-banners-action="next" aria-label="Next banner" title="Next">Next</button>
       <button class="content-banners-control" type="button" data-content-banners-action="slower" aria-label="Decrease banner speed" title="Slower">-</button>
-      <span class="content-banners-speed" data-content-banners-speed>1x</span>
+      <span class="content-banners-speed" data-content-banners-speed aria-live="polite">1x</span>
       <button class="content-banners-control" type="button" data-content-banners-action="faster" aria-label="Increase banner speed" title="Faster">+</button>
     `;
 
@@ -424,8 +556,15 @@
   function clearBanner() {
     window.clearTimeout(state.rotationTimer);
     window.clearTimeout(state.refreshTimer);
+    window.clearTimeout(state.headerRetryTimer);
     state.rotationTimer = 0;
     state.refreshTimer = 0;
+    state.headerRetryTimer = 0;
+    state.headerRetryCount = 0;
+    state.headerRetryPageKey = "";
+    state.viewportObserver?.disconnect();
+    state.viewportObserver = null;
+    state.isInViewport = true;
     if (state.target) {
       state.target.classList.remove("content-banners-target");
       state.target.style.removeProperty("--content-banners-transition");
@@ -445,6 +584,7 @@
     state.items = [];
     state.index = 0;
     state.panelIndexes = [];
+    state.failedMedia = new Set();
   }
 
   function ensureLayer(target, page) {
@@ -492,12 +632,14 @@
     target.prepend(layer, titleLayer);
     state.layer = layer;
     state.titleLayer = titleLayer;
+    observeBannerTarget(target);
     return layer;
   }
 
   function applyCssVars(target) {
     const blurPx = state.config.blur * MAX_BANNER_BLUR_PX;
-    target.style.setProperty("--content-banners-transition", `${state.config.transitionMs}ms`);
+    const transitionMs = state.prefersReducedMotion ? 0 : state.config.transitionMs;
+    target.style.setProperty("--content-banners-transition", `${transitionMs}ms`);
     target.style.setProperty("--content-banners-brightness", String(state.config.brightness));
     target.style.setProperty("--content-banners-saturation", String(state.config.saturation));
     target.style.setProperty("--content-banners-blur", `${blurPx}px`);
@@ -525,7 +667,46 @@
     return true;
   }
 
-  async function loadItemsForMode(page, mode) {
+  function itemHasBannerMedia(scene) {
+    if (state.config.bannerMode === "preview") return Boolean(scene.preview);
+    if (state.config.bannerMode === "screenshot") return Boolean(scene.screenshot);
+    return Boolean(scene.preview || scene.screenshot);
+  }
+
+  function getScenePoolCacheKey(page, mode) {
+    return [
+      page.type,
+      page.id,
+      mode,
+      state.config.bannerMode,
+      state.config.resultLimit,
+    ].join(":");
+  }
+
+  function getCachedScenePool(key) {
+    const entry = state.scenePoolCache.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.cachedAt > SCENE_POOL_CACHE_TTL_MS) {
+      state.scenePoolCache.delete(key);
+      return null;
+    }
+    return entry.items.slice();
+  }
+
+  function setCachedScenePool(key, items) {
+    state.scenePoolCache.set(key, { cachedAt: Date.now(), items: items.slice() });
+    while (state.scenePoolCache.size > SCENE_POOL_CACHE_MAX_ENTRIES) {
+      const oldestKey = state.scenePoolCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      state.scenePoolCache.delete(oldestKey);
+    }
+  }
+
+  async function loadItemsForMode(page, mode, signal) {
+    const cacheKey = getScenePoolCacheKey(page, mode);
+    const cachedItems = getCachedScenePool(cacheKey);
+    if (cachedItems) return cachedItems;
+
     const data = await gql(`
       query ContentBannersScenes($filter: FindFilterType, $sceneFilter: SceneFilterType) {
         findScenes(filter: $filter, scene_filter: $sceneFilter) {
@@ -545,9 +726,9 @@
     `, {
       filter: getFindFilterForSelectionMode(mode),
       sceneFilter: buildSceneFilter(page),
-    });
+    }, signal);
 
-    return (data?.findScenes?.scenes || [])
+    const items = (data?.findScenes?.scenes || [])
       .map((scene) => ({
         id: scene.id,
         title: scene.title || `Scene ${scene.id}`,
@@ -557,18 +738,21 @@
         screenshot: scene.paths?.screenshot || "",
         preview: scene.paths?.preview || "",
       }))
-      .filter((scene) => (scene.screenshot || scene.preview) && itemFitsSelectionMode(scene, mode));
+      .filter((scene) => itemHasBannerMedia(scene) && itemFitsSelectionMode(scene, mode));
+    setCachedScenePool(cacheKey, items);
+    return items.slice();
   }
 
-  async function loadItems(page) {
+  async function loadItems(page, signal) {
     const mode = state.config.selectionMode;
-    if (mode === "random") return loadItemsForMode(page, "random");
+    if (mode === "random") return loadItemsForMode(page, "random", signal);
     try {
-      const items = await loadItemsForMode(page, mode);
-      return items.length ? items : loadItemsForMode(page, "random");
+      const items = await loadItemsForMode(page, mode, signal);
+      return items.length ? items : loadItemsForMode(page, "random", signal);
     } catch (error) {
+      if (isAbortError(error)) throw error;
       console.warn(`[ContentBanners] Could not load ${mode} banners, falling back to random.`, error);
-      return loadItemsForMode(page, "random");
+      return loadItemsForMode(page, "random", signal);
     }
   }
 
@@ -590,10 +774,32 @@
   }
 
   function getMediaType(item) {
-    if (state.config.bannerMode === "screenshot") return "image";
-    if (state.config.bannerMode === "preview" && item.preview) return "video";
-    if (state.config.bannerMode === "mixed" && item.preview) return "video";
-    return item.screenshot ? "image" : "";
+    if (
+      state.config.bannerMode === "screenshot" &&
+      item.screenshot &&
+      !state.failedMedia.has(item.screenshot)
+    ) {
+      return "image";
+    }
+    if (
+      state.config.bannerMode === "preview" &&
+      item.preview &&
+      !state.failedMedia.has(item.preview)
+    ) {
+      return "video";
+    }
+    if (
+      state.config.bannerMode === "mixed" &&
+      item.preview &&
+      !state.failedMedia.has(item.preview)
+    ) {
+      return "video";
+    }
+    return state.config.bannerMode === "mixed" &&
+      item.screenshot &&
+      !state.failedMedia.has(item.screenshot)
+      ? "image"
+      : "";
   }
 
   function getMediaUrl(item) {
@@ -607,55 +813,75 @@
     const type = getMediaType(item);
     const url = getMediaUrl(item);
     slot.classList.remove("is-active");
+    slot.classList.remove("is-loading");
     slot.replaceChildren();
 
     if (!type || !url) return false;
+    slot.classList.add("is-loading");
 
     if (type === "video") {
       const video = document.createElement("video");
       video.src = url;
+      if (item.screenshot) video.poster = item.screenshot;
       video.autoplay = true;
       video.muted = true;
       video.loop = true;
       video.playsInline = true;
       video.preload = "metadata";
       video.playbackRate = state.speedMultiplier;
-      video.onerror = () => {
-        if (item.screenshot) {
-          renderImage(slot, item.screenshot);
-          requestAnimationFrame(() => slot.classList.add("is-active"));
-        } else {
-          showNextItem();
-        }
-      };
+      video.onerror = () => handleVideoFailure(slot, item);
+      video.addEventListener("loadeddata", () => slot.classList.remove("is-loading"), { once: true });
       slot.appendChild(video);
-      if (state.isPaused) {
+      if (!slot.classList.contains("is-active") || !canPlayBannerMedia()) {
         video.pause();
       } else {
-        video.play().catch(() => {
-          if (item.screenshot) {
-            renderImage(slot, item.screenshot);
-            requestAnimationFrame(() => slot.classList.add("is-active"));
-          }
-        });
+        video.play().catch(() => handleVideoFailure(slot, item));
       }
     } else {
-      renderImage(slot, url);
+      renderImage(slot, url, item);
     }
 
     return true;
   }
 
-  function renderImage(slot, url) {
+  function renderImage(slot, url, item) {
     slot.replaceChildren();
     const image = document.createElement("img");
     image.src = url;
     image.alt = "";
+    image.decoding = "async";
+    image.addEventListener("load", () => slot.classList.remove("is-loading"), { once: true });
+    image.addEventListener("error", () => handleImageFailure(slot, item, url));
     slot.appendChild(image);
   }
 
   function getSceneUrl(item) {
     return item?.id ? `/scenes/${encodeURIComponent(item.id)}` : "#";
+  }
+
+  function handleVideoFailure(slot, item) {
+    state.failedMedia.add(item.preview);
+    slot.classList.remove("is-loading");
+    if (state.config.bannerMode === "mixed" && item.screenshot) {
+      renderImage(slot, item.screenshot, item);
+      requestAnimationFrame(() => slot.classList.add("is-active"));
+      return;
+    }
+    if (getAvailableItemIndexes().length > 1) {
+      showNextItem();
+    } else {
+      showEmpty("Banner media could not be played.");
+    }
+  }
+
+  function handleImageFailure(slot, item, url) {
+    state.failedMedia.add(url);
+    slot.classList.remove("is-loading");
+    if (getAvailableItemIndexes().length > 1) {
+      showNextItem();
+    } else {
+      showEmpty("Banner image could not be loaded.");
+    }
   }
 
   function showPanelItem(panel, item) {
@@ -669,6 +895,7 @@
     requestAnimationFrame(() => {
       active?.classList.remove("is-active");
       next.classList.add("is-active");
+      syncPlaybackState();
     });
 
     const title = state.titleLayer?.querySelector(`[data-banner-title="${panel.getAttribute("data-banner-panel")}"]`);
@@ -686,8 +913,17 @@
 
     const panels = Array.from(state.layer.querySelectorAll(".content-banners-panel"));
     const bannerCount = panels.length || 1;
-    if (state.panelIndexes.length !== bannerCount) {
-      state.panelIndexes = panels.map((_panel, index) => (state.index + index) % state.items.length);
+    const availableIndexes = getAvailableItemIndexes();
+    if (!availableIndexes.length) {
+      showEmpty("No usable banner media found.");
+      return;
+    }
+    if (
+      state.panelIndexes.length !== bannerCount ||
+      state.panelIndexes.some((index) => !availableIndexes.includes(index))
+    ) {
+      state.index = ((state.index % availableIndexes.length) + availableIndexes.length) % availableIndexes.length;
+      state.panelIndexes = getPanelIndexes(state.index, availableIndexes);
     }
 
     let rendered = 0;
@@ -708,13 +944,15 @@
 
   function scheduleRotation() {
     window.clearTimeout(state.rotationTimer);
-    if (state.isPaused) return;
-    if (state.items.length <= 1) return;
+    if (!canPlayBannerMedia()) return;
+    if (getAvailableItemIndexes().length <= 1) return;
     state.rotationTimer = window.setTimeout(showNextItem, getRotationDelayMs());
   }
 
   function showEmpty(message) {
     if (!state.layer) return;
+    window.clearTimeout(state.rotationTimer);
+    state.rotationTimer = 0;
     removeControls();
     state.layer.querySelectorAll(".content-banners-media").forEach((slot) => {
       slot.classList.remove("is-active");
@@ -738,47 +976,94 @@
 
   async function refreshBanner() {
     const token = ++state.routeToken;
-    await loadConfig();
+    state.requestController?.abort();
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    state.requestController = controller;
 
-    const page = getCurrentPage();
-    if (!page || !getEnabledPageTypes().has(page.type)) {
-      clearBanner();
-      return;
+    try {
+      await loadConfig(controller?.signal);
+
+      const page = getCurrentPage();
+      if (!page || !getEnabledPageTypes().has(page.type)) {
+        clearBanner();
+        return;
+      }
+
+      const pageKey = `${location.pathname}${location.search}${location.hash}`;
+      if (state.headerRetryPageKey !== pageKey) {
+        state.headerRetryPageKey = pageKey;
+        state.headerRetryCount = 0;
+      }
+
+      const target = getTargetHeader();
+      if (!target) {
+        if (state.headerRetryCount >= MAX_HEADER_RETRIES) {
+          console.warn("[ContentBanners] Detail header was not found; stopping retries.");
+          clearBanner();
+          return;
+        }
+        state.headerRetryCount += 1;
+        state.headerRetryTimer = window.setTimeout(() => {
+          state.headerRetryTimer = 0;
+          if (token === state.routeToken) {
+            refreshBanner().catch((error) => {
+              if (!isAbortError(error)) console.warn("[ContentBanners] Refresh failed.", error);
+            });
+          }
+        }, HEADER_RETRY_DELAY_MS);
+        return;
+      }
+      state.headerRetryCount = 0;
+
+      ensureLayer(target, page);
+      applyCssVars(target);
+
+      let items;
+      try {
+        items = await loadItems(page, controller?.signal);
+      } catch (error) {
+        if (!isAbortError(error) && token === state.routeToken) {
+          window.clearTimeout(state.rotationTimer);
+          state.items = [];
+          state.panelIndexes = [];
+          showEmpty("Unable to load banner scenes.");
+        }
+        throw error;
+      }
+      if (token !== state.routeToken) return;
+
+      state.items = items;
+      state.failedMedia = new Set();
+      const availableIndexes = getAvailableItemIndexes();
+      state.index = Math.floor(Math.random() * Math.max(1, availableIndexes.length));
+      state.panelIndexes = getPanelIndexes(state.index, availableIndexes);
+
+      if (!items.length) {
+        showEmpty("No banner media found for this page.");
+        return;
+      }
+
+      showCurrentItems();
+      ensureControls();
+      scheduleRotation();
+    } finally {
+      if (state.requestController === controller) state.requestController = null;
     }
-
-    const target = getTargetHeader();
-    if (!target) {
-      window.setTimeout(() => {
-        if (token === state.routeToken) refreshBanner();
-      }, 250);
-      return;
-    }
-
-    ensureLayer(target, page);
-    applyCssVars(target);
-
-    const items = await loadItems(page);
-    if (token !== state.routeToken) return;
-
-    state.items = items;
-    state.index = Math.floor(Math.random() * Math.max(1, items.length));
-    state.panelIndexes = Array.from({ length: getBannerCountForPage(page.type) }, (_item, index) => (state.index + index) % Math.max(1, items.length));
-
-    if (!items.length) {
-      showEmpty("No scene previews found for this page.");
-      return;
-    }
-
-    showCurrentItems();
-    ensureControls();
-    scheduleRotation();
   }
 
   function scheduleRefresh() {
     window.clearTimeout(state.rotationTimer);
     window.clearTimeout(state.refreshTimer);
+    window.clearTimeout(state.headerRetryTimer);
+    state.headerRetryTimer = 0;
+    state.headerRetryCount = 0;
+    state.headerRetryPageKey = "";
+    state.requestController?.abort();
+    state.requestController = null;
     state.refreshTimer = window.setTimeout(() => {
-      refreshBanner().catch((error) => console.warn("[ContentBanners] Refresh failed.", error));
+      refreshBanner().catch((error) => {
+        if (!isAbortError(error)) console.warn("[ContentBanners] Refresh failed.", error);
+      });
     }, 120);
   }
 
@@ -787,6 +1072,11 @@
     hookState.scheduleRefresh = () => scheduleRefresh();
     window[ROUTE_HOOK_STATE_KEY] = hookState;
 
+    // Preserve a history wrapper created by an older plugin version during hot reload.
+    if (hookState.historyPatched && !hookState.originalHistoryMethods) {
+      hookState.legacyHistoryPatched = true;
+    }
+
     if (!hookState.routeEventListener) {
       hookState.routeEventListener = () => {
         if (typeof hookState.scheduleRefresh === "function") hookState.scheduleRefresh();
@@ -794,16 +1084,24 @@
       window.addEventListener(ROUTE_EVENT, hookState.routeEventListener);
     }
 
-    if (!hookState.historyPatched) {
+    if (!hookState.historyPatched && !hookState.legacyHistoryPatched) {
       hookState.historyPatched = true;
+      hookState.originalHistoryMethods = {};
+      hookState.patchedHistoryMethods = {};
       ["pushState", "replaceState"].forEach((method) => {
         const original = history[method];
-        history[method] = function patchedContentBannersHistoryMethod(...args) {
+        hookState.originalHistoryMethods[method] = original;
+        const patched = function patchedContentBannersHistoryMethod(...args) {
           const result = original.apply(this, args);
           window.dispatchEvent(new Event(ROUTE_EVENT));
           return result;
         };
+        hookState.patchedHistoryMethods[method] = patched;
+        history[method] = patched;
       });
+    }
+
+    if (!hookState.popstateListener) {
       hookState.popstateListener = () => window.dispatchEvent(new Event(ROUTE_EVENT));
       window.addEventListener("popstate", hookState.popstateListener);
     }
@@ -812,11 +1110,42 @@
   function cleanup() {
     window.clearTimeout(state.rotationTimer);
     window.clearTimeout(state.refreshTimer);
+    state.requestController?.abort();
+    state.requestController = null;
+    if (state.visibilityListener) {
+      document.removeEventListener("visibilitychange", state.visibilityListener);
+      state.visibilityListener = null;
+    }
+    if (state.motionMediaQuery && state.motionListener) {
+      if (state.motionMediaQuery.removeEventListener) {
+        state.motionMediaQuery.removeEventListener("change", state.motionListener);
+      } else {
+        state.motionMediaQuery.removeListener?.(state.motionListener);
+      }
+    }
+    state.motionMediaQuery = null;
+    state.motionListener = null;
+    state.domObserver?.disconnect();
+    state.domObserver = null;
     clearBanner();
     const hookState = window[ROUTE_HOOK_STATE_KEY];
     if (hookState?.routeEventListener) {
       window.removeEventListener(ROUTE_EVENT, hookState.routeEventListener);
       hookState.routeEventListener = null;
+    }
+    if (hookState?.popstateListener) {
+      window.removeEventListener("popstate", hookState.popstateListener);
+      hookState.popstateListener = null;
+    }
+    if (hookState?.historyPatched && !hookState.legacyHistoryPatched) {
+      ["pushState", "replaceState"].forEach((method) => {
+        if (history[method] === hookState.patchedHistoryMethods?.[method]) {
+          history[method] = hookState.originalHistoryMethods?.[method];
+        }
+      });
+      hookState.historyPatched = false;
+      hookState.originalHistoryMethods = null;
+      hookState.patchedHistoryMethods = null;
     }
     if (hookState?.scheduleRefresh) hookState.scheduleRefresh = null;
     if (window.__contentBannersCleanup === cleanup) window.__contentBannersCleanup = null;
@@ -828,8 +1157,11 @@
     }
     window.__contentBannersCleanup = cleanup;
     state.speedMultiplier = getStoredSpeedMultiplier();
+    installRuntimeObservers();
     installRouteHooks();
-    refreshBanner().catch((error) => console.warn("[ContentBanners] Startup failed.", error));
+    refreshBanner().catch((error) => {
+      if (!isAbortError(error)) console.warn("[ContentBanners] Startup failed.", error);
+    });
   }
 
   if (document.readyState === "loading") {
