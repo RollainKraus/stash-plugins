@@ -92,6 +92,16 @@
     selectedScrapeIndex: -1,
     scrapeError: "",
     matchingTags: false,
+    searchTokens: {
+      studio: 0,
+      performer: 0,
+      tag: 0,
+      scope: {
+        studios: 0,
+        performers: 0,
+        tags: 0,
+      },
+    },
     studioSearchTimer: 0,
     performerSearchTimer: 0,
     tagSearchTimer: 0,
@@ -482,6 +492,56 @@
     });
   }
 
+  function mergeEntityLists(existing, incoming) {
+    return dedupeEntities([
+      ...(existing || []).map((item) => ({ ...item })),
+      ...(incoming || []).map((item) => ({ ...item })),
+    ]);
+  }
+
+  function normalizeStashIdForInput(value) {
+    const endpoint = String(value?.endpoint || "").trim();
+    const stashId = String(value?.stash_id || value?.stashId || "").trim();
+    return endpoint && stashId ? { endpoint, stash_id: stashId } : null;
+  }
+
+  function mergeStashIdsForInput(existing, incoming) {
+    const seen = new Set();
+    return [...(existing || []), ...(incoming || [])]
+      .map(normalizeStashIdForInput)
+      .filter(Boolean)
+      .filter((stashId) => {
+        const key = `${stashId.endpoint}\n${stashId.stash_id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
+  function addScrapedStashIdPatch(patch, item, remoteSiteId, endpoint) {
+    const stashId = String(remoteSiteId || "").trim();
+    const sourceEndpoint = String(endpoint || "").trim();
+    if (!stashId || !sourceEndpoint) return;
+    patch.stash_ids = mergeStashIdsForInput(item?.stashIds, [{ endpoint: sourceEndpoint, stash_id: stashId }]);
+  }
+
+  function isWorkflowBusy() {
+    return state.loading || state.saving || state.scrapeLoading || state.matchingTags;
+  }
+
+  function cloneDraftForSave(draft) {
+    return draft ? JSON.parse(JSON.stringify(draft)) : null;
+  }
+
+  function invalidateSearches() {
+    state.searchTokens.studio += 1;
+    state.searchTokens.performer += 1;
+    state.searchTokens.tag += 1;
+    Object.keys(state.searchTokens.scope || {}).forEach((kind) => {
+      state.searchTokens.scope[kind] += 1;
+    });
+  }
+
   function getMissingFieldOptions(contentType = state.contentType) {
     const options = MISSING_FIELD_OPTIONS[contentType] || MISSING_FIELD_OPTIONS.scenes;
     if (contentType === "images") return options;
@@ -502,6 +562,7 @@
   }
 
   function clearQueueForSelectionChange() {
+    invalidateSearches();
     state.queueLoadToken += 1;
     state.loading = false;
     state.queue = [];
@@ -940,12 +1001,18 @@
   }
 
   async function loadQueue() {
+    if (state.saving || state.scrapeLoading || state.matchingTags) {
+      setStatus("Finish the current operation before loading a new queue.", true);
+      renderPanel();
+      return;
+    }
     const missingOption = getActiveMissingFieldOption();
     const contentType = state.contentType;
     const contentLabel = CONTENT_TYPES.find((item) => item.value === contentType)?.label || "Scenes";
     const itemLabel = contentLabel.toLowerCase().replace(/s$/, "");
     const loadToken = state.queueLoadToken + 1;
     state.queueLoadToken = loadToken;
+    invalidateSearches();
     state.loading = true;
     state.queue = [];
     state.currentIndex = 0;
@@ -1648,35 +1715,36 @@
       draft.imageUrl = match.image || draft.imageUrl || "";
       if (match.image) clearDraftImageFile(draft);
     }
-    draft.urlsText = (match.urls?.length ? match.urls : match.url ? [match.url] : [])
+    const scrapedUrls = (match.urls?.length ? match.urls : match.url ? [match.url] : [])
       .map((url) => String(url || "").trim())
-      .filter(Boolean)
-      .join("\n");
+      .filter(Boolean);
+    draft.urlsText = Array.from(new Set([...parseUrlsInput(draft.urlsText), ...scrapedUrls])).join("\n");
     if (item.type !== "performers" && item.type !== "studios") {
       draft.studio = match.studio ? { ...match.studio } : draft.studio;
-      draft.performers = dedupeEntities((match.performers || []).map((performer) => ({ ...performer })));
+      draft.performers = mergeEntityLists(draft.performers, match.performers || []);
     }
     draft.remoteSiteId = match.remoteSiteId || "";
     draft.scrapeEndpoint = getSelectedScrapeEndpoint();
     if (!match.hasScrapedTags) {
+      draft.missingTags = [];
       setStatus(`Loaded scrape match into editor: ${match.title || match.name || "selected match"}.`);
       renderPanel();
       return;
     }
 
+    draft.missingTags = [];
     state.matchingTags = true;
     renderPanel();
 
     try {
       setStatus("Matching scraped tags to local tags...");
       const tagMatches = await matchScrapedTags(match.tags || [], draft.scrapeEndpoint);
-      draft.tags = tagMatches.matched;
+      draft.tags = mergeEntityLists(draft.tags, tagMatches.matched);
       draft.missingTags = tagMatches.missing;
       const missingText = tagMatches.missing.length ? ` ${tagMatches.missing.length} unmatched scraped tag${tagMatches.missing.length === 1 ? "" : "s"} need review.` : "";
       setStatus(`Loaded scrape match into editor: ${match.title || match.name || "selected match"}.${missingText}`);
     } catch (err) {
       console.warn("[CleanUpQueue] Scraped tag matching failed", err);
-      draft.tags = [];
       draft.missingTags = dedupeEntities((match.tags || []).map((tag) => ({ ...tag })));
       setStatus("Loaded scrape match, but tag matching failed. Review unmatched tags before saving.", true);
     } finally {
@@ -1687,9 +1755,10 @@
 
   async function saveDraftAndNext() {
     const item = getCurrentItem();
-    if (!item || state.saving) return;
+    if (!item || state.saving || state.matchingTags) return;
+    const savedIndex = state.currentIndex;
 
-    const draft = ensureDraftForContent(item);
+    const draft = cloneDraftForSave(ensureDraftForContent(item));
     if (!draft) return;
 
     try {
@@ -1721,16 +1790,14 @@
         };
         const imageValue = getDraftImageValue(draft);
         if (imageValue) patch.image = imageValue;
-        if (draft.remoteSiteId && endpoint) {
-          patch.stash_ids = [{ endpoint, stash_id: draft.remoteSiteId }];
-        }
+        addScrapedStashIdPatch(patch, item, draft.remoteSiteId, endpoint);
         setStatus("Saving performer metadata...");
         await updatePerformerMetadata(item.id, patch);
         state.completedCount += 1;
         state.completedIds.add(item.id);
         state.skippedIds.delete(item.id);
         setStatus(`Saved edits for ${patch.name}.`);
-        advanceQueue();
+        advanceQueue(savedIndex + 1);
         return;
       }
 
@@ -1744,16 +1811,14 @@
         };
         const imageValue = getDraftImageValue(draft);
         if (imageValue) patch.image = imageValue;
-        if (draft.remoteSiteId && endpoint) {
-          patch.stash_ids = [{ endpoint, stash_id: draft.remoteSiteId }];
-        }
+        addScrapedStashIdPatch(patch, item, draft.remoteSiteId, endpoint);
         setStatus("Saving studio metadata...");
         await updateStudioMetadata(item.id, patch);
         state.completedCount += 1;
         state.completedIds.add(item.id);
         state.skippedIds.delete(item.id);
         setStatus(`Saved edits for ${patch.name}.`);
-        advanceQueue();
+        advanceQueue(savedIndex + 1);
         return;
       }
 
@@ -1781,7 +1846,7 @@
         state.completedIds.add(item.id);
         state.skippedIds.delete(item.id);
         setStatus(`Saved edits for ${item.title}.`);
-        advanceQueue();
+        advanceQueue(savedIndex + 1);
         return;
       }
 
@@ -1803,9 +1868,7 @@
         const imageValue = getDraftImageValue(draft);
         if (imageValue) patch.cover_image = imageValue;
       }
-      if (draft.remoteSiteId && endpoint) {
-        patch.stash_ids = [{ endpoint, stash_id: draft.remoteSiteId }];
-      }
+      addScrapedStashIdPatch(patch, item, draft.remoteSiteId, endpoint);
 
       setStatus("Saving edited metadata...");
       await updateSceneMetadata(item.id, patch);
@@ -1813,7 +1876,7 @@
       state.completedIds.add(item.id);
       state.skippedIds.delete(item.id);
       setStatus(`Saved edits for ${patch.title || item.title}.`);
-      advanceQueue();
+      advanceQueue(savedIndex + 1);
     } catch (err) {
       console.error("[CleanUpQueue] Save edited metadata failed", err);
       setStatus(err?.message || "Could not save edited metadata.", true);
@@ -1834,9 +1897,10 @@
       .length;
   }
 
-  function advanceQueue() {
+  function advanceQueue(startIndex = state.currentIndex + 1) {
     const missingOption = getActiveMissingFieldOption();
-    state.currentIndex = findNextUncompletedIndex(state.currentIndex + 1);
+    invalidateSearches();
+    state.currentIndex = findNextUncompletedIndex(startIndex);
     state.draft = null;
     state.draftItemKey = "";
     state.scrapeResults = [];
@@ -1863,7 +1927,7 @@
   }
 
   function goBackInQueue() {
-    if (state.saving || state.matchingTags || !state.queue.length) return;
+    if (isWorkflowBusy() || !state.queue.length) return;
     const previousIndex = findPreviousUncompletedIndex(state.currentIndex - 1);
     if (previousIndex < 0) {
       setStatus("No previous unresolved item in this queue.");
@@ -1871,6 +1935,7 @@
       return;
     }
     const missingOption = getActiveMissingFieldOption();
+    invalidateSearches();
     state.currentIndex = previousIndex;
     state.draft = null;
     state.draftItemKey = "";
@@ -1883,6 +1948,11 @@
   }
 
   function skipCurrentItem() {
+    if (isWorkflowBusy()) {
+      setStatus("Finish the current operation before skipping.", true);
+      renderPanel();
+      return;
+    }
     const item = getCurrentItem();
     if (item?.id) state.skippedIds.add(item.id);
     advanceQueue();
@@ -2042,6 +2112,7 @@
     const skipped = state.skippedIds.size;
     const position = hasQueue ? Math.min(state.currentIndex + 1, state.queue.length) : 0;
     const remaining = getRemainingCount();
+    const controlsDisabled = isWorkflowBusy();
 
     panel.innerHTML = `
       <div class="cleanup-queue__backdrop" data-cleanup-action="close"></div>
@@ -2057,17 +2128,17 @@
         <div class="cleanup-queue__controls">
           <label>
             <span>Content</span>
-            <select class="cleanup-queue__content-type" ${state.loading ? "disabled" : ""}>
+            <select class="cleanup-queue__content-type" ${controlsDisabled ? "disabled" : ""}>
               ${CONTENT_TYPES.map((type) => `<option value="${escapeHtml(type.value)}" ${type.value === state.contentType ? "selected" : ""}>${escapeHtml(type.label)}</option>`).join("")}
             </select>
           </label>
           <label>
             <span>Missing field</span>
-            <select class="cleanup-queue__missing-field" ${state.loading ? "disabled" : ""}>
+            <select class="cleanup-queue__missing-field" ${controlsDisabled ? "disabled" : ""}>
               ${getMissingFieldOptions().map((option) => `<option value="${escapeHtml(option.value)}" ${option.value === state.missingField ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
             </select>
           </label>
-          <button type="button" class="cleanup-queue__primary" data-cleanup-action="load" ${state.loading ? "disabled" : ""}>
+          <button type="button" class="cleanup-queue__primary" data-cleanup-action="load" ${controlsDisabled ? "disabled" : ""}>
             ${state.loading ? "Loading..." : "Load queue"}
           </button>
           <div class="cleanup-queue__queue-summary">
@@ -2093,7 +2164,7 @@
 
   function renderQueueFooter(item) {
     if (!item || state.loading) return "";
-    const canSave = !state.saving && !state.matchingTags;
+    const canSave = !isWorkflowBusy();
     return `
       <footer class="cleanup-queue__footer">
         <div class="cleanup-queue__footer-hints">
@@ -2102,7 +2173,7 @@
           <span>${renderShortcutKbd("ArrowLeft")} previous unresolved</span>
         </div>
         <div class="cleanup-queue__footer-actions">
-          <button type="button" class="cleanup-queue__secondary" data-cleanup-action="skip" ${state.saving ? "disabled" : ""}>Skip</button>
+          <button type="button" class="cleanup-queue__secondary" data-cleanup-action="skip" ${isWorkflowBusy() ? "disabled" : ""}>Skip</button>
           <button type="button" class="cleanup-queue__primary" data-cleanup-action="save-draft" ${canSave ? "" : "disabled"}>
             ${state.saving ? "Saving..." : state.matchingTags ? "Matching tags..." : "Save edits and next"}
           </button>
@@ -2191,7 +2262,7 @@
         <div class="cleanup-queue__empty">
           <strong>Queue complete</strong>
           <span>${state.completedCount} completed, ${state.skippedIds.size} skipped.</span>
-          <button type="button" data-cleanup-action="load">Reload queue</button>
+          <button type="button" data-cleanup-action="load" ${isWorkflowBusy() ? "disabled" : ""}>Reload queue</button>
         </div>
       `;
     }
@@ -2207,7 +2278,7 @@
           <div class="cleanup-queue__actions">
             <a href="${escapeHtml(getContentUrl(scene))}" target="_blank" rel="noopener noreferrer">Open ${escapeHtml(getContentSingularLabel(scene.type))}</a>
             ${scene.type === "scenes" ? `<a href="${escapeHtml(getNativeTaggerUrl(scene))}" target="_blank" rel="noopener noreferrer">Open tagger</a>` : `<a href="${escapeHtml(getContentUrl(scene))}" target="_blank" rel="noopener noreferrer">Open editor</a>`}
-            <button type="button" data-cleanup-action="skip">Skip</button>
+            <button type="button" data-cleanup-action="skip" ${isWorkflowBusy() ? "disabled" : ""}>Skip</button>
           </div>
           ${scene.type === "scenes" ? renderScrapePanel() : ""}
         </div>
@@ -2240,7 +2311,7 @@
         <div class="cleanup-queue__empty">
           <strong>Queue complete</strong>
           <span>${state.completedCount} completed, ${state.skippedIds.size} skipped.</span>
-          <button type="button" data-cleanup-action="load">Reload queue</button>
+          <button type="button" data-cleanup-action="load" ${isWorkflowBusy() ? "disabled" : ""}>Reload queue</button>
         </div>
       `;
     }
@@ -2255,8 +2326,8 @@
           </div>
           <div class="cleanup-queue__actions">
             <a href="${escapeHtml(getContentUrl(item))}" target="_blank" rel="noopener noreferrer">Open ${escapeHtml(getContentSingularLabel(item.type))}</a>
-            <button type="button" data-cleanup-action="save-draft">Save edits</button>
-            <button type="button" data-cleanup-action="skip">Skip</button>
+            <button type="button" data-cleanup-action="save-draft" ${isWorkflowBusy() ? "disabled" : ""}>Save edits</button>
+            <button type="button" data-cleanup-action="skip" ${isWorkflowBusy() ? "disabled" : ""}>Skip</button>
           </div>
           ${renderScrapePanel()}
         </div>
@@ -2611,8 +2682,8 @@
           .join("")
       : `<option value="">${state.scrapeSourcesLoaded ? "No stash-box sources" : "Loading sources..."}</option>`;
 
-    const canScrape = Boolean(getCurrentItem()) && Boolean(getSelectedScrapeSource()) && !state.scrapeLoading;
-    const canApply = state.selectedScrapeIndex >= 0 && state.scrapeResults[state.selectedScrapeIndex] && !state.saving && !state.matchingTags;
+    const canScrape = Boolean(getCurrentItem()) && Boolean(getSelectedScrapeSource()) && !isWorkflowBusy();
+    const canApply = state.selectedScrapeIndex >= 0 && state.scrapeResults[state.selectedScrapeIndex] && !isWorkflowBusy();
 
     return `
       <div class="cleanup-queue__scrape">
@@ -2689,6 +2760,32 @@
     panel.querySelectorAll("[data-cleanup-action]").forEach((button) => {
       button.addEventListener("click", (event) => {
         const action = event.currentTarget.getAttribute("data-cleanup-action");
+        const blockedWhileBusy = new Set([
+          "load",
+          "skip",
+          "save-draft",
+          "clear-scope-filters",
+          "remove-scope-filter",
+          "toggle-scope-mode",
+          "reset-draft",
+          "clear-draft-image",
+          "clear-draft-studio",
+          "remove-draft-entity",
+          "create-missing-tag",
+          "create-all-missing-tags",
+          "remove-missing-tag",
+          "search-missing-tag",
+          "scrape",
+          "select-scrape-match",
+          "apply-scrape-match",
+        ]);
+        if (isWorkflowBusy() && blockedWhileBusy.has(action)) {
+          event.preventDefault();
+          event.stopPropagation();
+          setStatus("Finish the current operation before changing the queue.", true);
+          renderPanel();
+          return;
+        }
         if (action === "close") closePanel();
         if (action === "load") loadQueue();
         if (action === "skip") skipCurrentItem();
@@ -3058,6 +3155,7 @@
     if (!results) return;
 
     const trimmed = String(query || "").trim();
+    const token = ++state.searchTokens.studio;
     if (trimmed.length < 2) {
       results.innerHTML = `<div class="cleanup-queue__hint">Type at least 2 characters.</div>`;
       return;
@@ -3066,8 +3164,10 @@
     results.innerHTML = `<div class="cleanup-queue__hint">Searching...</div>`;
     try {
       const studios = await searchStudios(trimmed);
+      if (token !== state.searchTokens.studio) return;
       renderStudioResults(studios);
     } catch (err) {
+      if (token !== state.searchTokens.studio) return;
       console.error("[CleanUpQueue] Studio search failed", err);
       results.innerHTML = `<div class="cleanup-queue__error">Search failed.</div>`;
     }
@@ -3080,6 +3180,7 @@
     if (!results) return;
 
     const trimmed = String(query || "").trim();
+    const token = ++state.searchTokens.scope[kind];
     if (trimmed.length < 2) {
       results.innerHTML = "";
       return;
@@ -3094,9 +3195,11 @@
             ? await searchPerformers(trimmed)
             : kind === "tags"
               ? await searchTags(trimmed)
-              : [];
+            : [];
+      if (token !== state.searchTokens.scope[kind]) return;
       renderScopeResults(kind, items);
     } catch (err) {
+      if (token !== state.searchTokens.scope[kind]) return;
       console.error("[CleanUpQueue] Scope search failed", kind, err);
       results.innerHTML = `<div class="cleanup-queue__error">Search failed.</div>`;
     }
@@ -3184,6 +3287,7 @@
     if (!results) return;
 
     const trimmed = String(query || "").trim();
+    const token = ++state.searchTokens[kind];
     if (trimmed.length < 2) {
       results.innerHTML = `<div class="cleanup-queue__hint">Type at least 2 characters.</div>`;
       return;
@@ -3192,8 +3296,10 @@
     results.innerHTML = `<div class="cleanup-queue__hint">Searching...</div>`;
     try {
       const items = kind === "performer" ? await searchPerformers(trimmed) : await searchTags(trimmed);
+      if (token !== state.searchTokens[kind]) return;
       renderEntityResults(kind, items);
     } catch (err) {
+      if (token !== state.searchTokens[kind]) return;
       console.error(`[CleanUpQueue] ${kind} search failed`, err);
       results.innerHTML = `<div class="cleanup-queue__error">Search failed.</div>`;
     }
@@ -3237,27 +3343,46 @@
   }
 
   function installRouteHooks() {
+    const hooks = window.__cleanUpQueueNavigationHooks || {};
+    window.__cleanUpQueueNavigationHooks = hooks;
     window.__cleanUpQueueRouteHandler = () => scheduleRefresh();
-    if (!window.__cleanUpQueueRouteEventListener) {
-      window.__cleanUpQueueRouteEventListener = () => {
-        if (typeof window.__cleanUpQueueRouteHandler === "function") {
-          window.__cleanUpQueueRouteHandler();
-        }
-      };
-      window.addEventListener(ROUTE_EVENT, window.__cleanUpQueueRouteEventListener);
+    if (window.__cleanUpQueueRouteEventListener) {
+      window.removeEventListener(ROUTE_EVENT, window.__cleanUpQueueRouteEventListener);
+      window.__cleanUpQueueRouteEventListener = null;
     }
+    if (hooks.routeEventListener) {
+      window.removeEventListener(ROUTE_EVENT, hooks.routeEventListener);
+    }
+    hooks.routeEventListener = () => {
+      if (typeof window.__cleanUpQueueRouteHandler === "function") {
+        window.__cleanUpQueueRouteHandler();
+      }
+    };
+    window.addEventListener(ROUTE_EVENT, hooks.routeEventListener);
 
-    if (window.__cleanUpQueueRouteHooksInstalled) return;
-    window.__cleanUpQueueRouteHooksInstalled = true;
-    ["pushState", "replaceState"].forEach((method) => {
-      const original = history[method];
-      history[method] = function patchedHistoryMethod(...args) {
-        const result = original.apply(this, args);
+    if (!hooks.historyWrapped) {
+      hooks.originalPushState = history.pushState;
+      hooks.originalReplaceState = history.replaceState;
+      hooks.patchedPushState = function patchedCleanUpQueuePushState(...args) {
+        const result = hooks.originalPushState.apply(this, args);
         window.dispatchEvent(new Event(ROUTE_EVENT));
         return result;
       };
-    });
-    window.addEventListener("popstate", () => window.dispatchEvent(new Event(ROUTE_EVENT)));
+      hooks.patchedReplaceState = function patchedCleanUpQueueReplaceState(...args) {
+        const result = hooks.originalReplaceState.apply(this, args);
+        window.dispatchEvent(new Event(ROUTE_EVENT));
+        return result;
+      };
+      history.pushState = hooks.patchedPushState;
+      history.replaceState = hooks.patchedReplaceState;
+      hooks.historyWrapped = true;
+    }
+
+    if (hooks.popstateListener) {
+      window.removeEventListener("popstate", hooks.popstateListener);
+    }
+    hooks.popstateListener = () => window.dispatchEvent(new Event(ROUTE_EVENT));
+    window.addEventListener("popstate", hooks.popstateListener);
   }
 
   function cleanup() {
@@ -3277,6 +3402,20 @@
     window.clearTimeout(state.routeTimer);
     window.clearTimeout(state.fallbackTimer);
     document.removeEventListener("keydown", handlePanelHotkey, true);
+    const hooks = window.__cleanUpQueueNavigationHooks;
+    if (hooks) {
+      if (hooks.routeEventListener) window.removeEventListener(ROUTE_EVENT, hooks.routeEventListener);
+      if (hooks.popstateListener) window.removeEventListener("popstate", hooks.popstateListener);
+      if (hooks.historyWrapped && history.pushState === hooks.patchedPushState) {
+        history.pushState = hooks.originalPushState;
+      }
+      if (hooks.historyWrapped && history.replaceState === hooks.patchedReplaceState) {
+        history.replaceState = hooks.originalReplaceState;
+      }
+      window.__cleanUpQueueNavigationHooks = null;
+    }
+    window.__cleanUpQueueRouteEventListener = null;
+    window.__cleanUpQueueRouteHooksInstalled = false;
     if (window.__cleanUpQueueCleanup === cleanup) window.__cleanUpQueueCleanup = null;
   }
 
@@ -3290,7 +3429,7 @@
     document.addEventListener("keydown", handlePanelHotkey, true);
     loadConfig().catch((err) => console.warn("[CleanUpQueue] Config refresh failed", err));
     scheduleRefresh(0);
-    state.observer = new MutationObserver(() => enhanceCurrentPage());
+    state.observer = new MutationObserver(() => scheduleRefresh());
     state.observer.observe(document.body, { childList: true, subtree: true });
   }
 
