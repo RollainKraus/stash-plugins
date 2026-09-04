@@ -57,6 +57,7 @@
         slideshowTimer: 0,
         transitionTimer: 0,
         navigationToken: 0,
+        viewButtonSetupToken: 0,
         backgroundDisplayMode: BACKGROUND_MODE_ENABLED,
     };
 
@@ -68,9 +69,10 @@
 
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    const waitForElement = async (selector) => {
+    const waitForElement = async (selector, timeoutMs = 5000) => {
+        const deadline = Date.now() + timeoutMs;
         let element = document.querySelector(selector);
-        while (!element) {
+        while (!element && Date.now() < deadline) {
             await sleep(100);
             element = document.querySelector(selector);
         }
@@ -164,7 +166,11 @@
     };
 
     const main = async () => {
-        state.root = await waitForElement('#root');
+        state.root = await waitForElement('#root', 10000);
+        if (!state.root) {
+            console.error('Could not find #root for Background Images Slideshow plugin.');
+            return;
+        }
 
         const plugins = await makeRequest(configRequest);
         const config = plugins?.data?.configuration?.plugins?.[PLUGIN_ID] || {};
@@ -328,7 +334,10 @@
             const images = await getBackgroundImages(performerId);
             if (token !== state.navigationToken || getCurrentPerformerId() !== performerId) return;
 
-            setActiveBackgrounds(images, `performer:${performerId}`);
+            setActiveBackgrounds(
+                images.length ? images : state.globalBackgroundImages,
+                images.length ? `performer:${performerId}` : 'global'
+            );
             applyBackgroundDisplayMode();
             return;
         }
@@ -628,13 +637,15 @@
      * Create and prepend the background display control in the nav bar utilities.
      */
     const setupViewBackgroundButton = async () => {
+        const setupToken = ++state.viewButtonSetupToken;
         if (!state.showViewBackgroundButton) {
             setBackgroundDisplayMode(BACKGROUND_MODE_ENABLED, { persist: true });
             document.querySelector('.background-images-slideshow__view')?.remove();
             return;
         }
 
-        const parentNode = await waitForElement('.navbar-buttons');
+        const parentNode = await waitForElement('.navbar-buttons', 2500);
+        if (setupToken !== state.viewButtonSetupToken || !parentNode) return;
         const existingNode = document.querySelector('.background-images-slideshow__view');
         if (existingNode) {
             existingNode.remove();
@@ -701,16 +712,15 @@
     };
 
     const applyBackgroundDisplayMode = () => {
-        const mainElement = document.querySelector('.main');
         const targetOpacity = getTargetOpacity();
 
         applyThemeCompatibilityStyles();
 
         if (state.backgroundDisplayMode === BACKGROUND_MODE_VIEWING) {
-            if (mainElement) mainElement.style.opacity = 0;
+            document.documentElement.classList.add('background-images-slideshow--viewing');
             document.addEventListener('keydown', escapeListener);
         } else {
-            if (mainElement) mainElement.style.opacity = '';
+            document.documentElement.classList.remove('background-images-slideshow--viewing');
             document.removeEventListener('keydown', escapeListener);
         }
 
