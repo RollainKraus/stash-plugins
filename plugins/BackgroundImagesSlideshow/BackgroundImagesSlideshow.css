@@ -69,6 +69,10 @@
     opacity: 0.55;
 }
 
+html.background-images-slideshow--viewing .main {
+    opacity: 0 !important;
+}
+
 html.background-images-slideshow--transparent-main {
     background: var(--background-images-slideshow-backdrop) !important;
     background-color: var(--background-images-slideshow-backdrop) !important;
