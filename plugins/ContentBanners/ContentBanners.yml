@@ -1,6 +1,6 @@
 name: Content Banners
 description: Adds configurable scene preview banners to Stash detail pages.
-version: 2.2.0
+version: 2.4.0
 ui:
   css:
     - ContentBanners.css
