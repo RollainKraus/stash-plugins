@@ -165,7 +165,8 @@
 
 .cleanup-queue__primary:disabled,
 .cleanup-queue__secondary:disabled,
-.cleanup-queue__actions button:disabled {
+.cleanup-queue__actions button:disabled,
+.cleanup-queue__empty button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
