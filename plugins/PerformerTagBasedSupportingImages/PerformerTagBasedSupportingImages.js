@@ -86,6 +86,19 @@
     cardPreviewViewportBound: false,
     cardPreviewSessionData: null,
     cardPreviewSlideshowTimer: null,
+    quickTagMenus: new Set(),
+    quickTagPopupPanels: new Set(),
+    navigationHooksInstalled: false,
+    originalPushState: null,
+    originalReplaceState: null,
+    wrappedPushState: null,
+    wrappedReplaceState: null,
+    handlePopState: null,
+    handleNavigation: null,
+    detailInteractionHandler: null,
+    layoutScrollHandler: null,
+    layoutResizeHandler: null,
+    layoutChangedHandler: null,
   };
 
   function gqlRequest(query, variables = {}) {
@@ -865,7 +878,8 @@
     });
   }
 
-  function applyRailSizing(host, panel, availableHeight) {
+  function applyRailSizing(host, panel, availableHeight, options = {}) {
+    const { compact = false } = options;
     const fallbackPanelHeight = Math.max(
       PANEL_MIN_HEIGHT,
       window.innerHeight - STICKY_TOP - PANEL_BOTTOM_GAP
@@ -879,9 +893,27 @@
     const clampedPanelHeight = Math.max(0, Math.round(panelHeight));
     const hostRect = host.getBoundingClientRect();
     const hostWidth = Math.max(
-      state.isCollapsed ? PANEL_COLLAPSED_WIDTH : 260,
+      compact ? 0 : state.isCollapsed ? PANEL_COLLAPSED_WIDTH : 260,
       Math.round(hostRect.width || host.clientWidth || 0)
     );
+
+    if (compact) {
+      host.style.height = "auto";
+      host.style.minHeight = "0";
+      host.style.maxHeight = "none";
+      panel.style.height = "auto";
+      panel.style.minHeight = "0";
+      panel.style.maxHeight = "none";
+      panel.style.width = "100%";
+      panel.classList.toggle("is-collapsed", !!state.isCollapsed);
+      host.classList.toggle(
+        "performer-tag-based-supporting-images__host--collapsed",
+        !!state.isCollapsed
+      );
+      panel.classList.remove("is-hidden");
+      panel.classList.toggle("is-content-hovered", false);
+      return;
+    }
 
     if (state.isCollapsed) {
       host.style.height = "auto";
@@ -972,6 +1004,7 @@
 
     const overlayTop = topCandidates.length ? Math.min(...topCandidates) : null;
     const overlayRight = rightCandidates.length ? Math.max(...rightCandidates) : null;
+    const isCompactViewport = window.innerWidth <= 900;
     const configuredPanelWidth = getPanelWidth(state.config || {});
     const overlayWidth = state.isCollapsed
       ? PANEL_COLLAPSED_WIDTH
@@ -982,10 +1015,18 @@
         : null;
     const overlayBottom = bottomCandidates.length ? Math.min(...bottomCandidates) : null;
 
-    host.style.position = "absolute";
-    host.style.top = Number.isFinite(overlayTop) ? `${overlayTop}px` : "";
-    host.style.left = Number.isFinite(overlayLeft) ? `${overlayLeft}px` : "";
-    host.style.width = `${overlayWidth}px`;
+    host.style.position = isCompactViewport ? "static" : "absolute";
+    host.style.top = isCompactViewport
+      ? ""
+      : Number.isFinite(overlayTop)
+        ? `${overlayTop}px`
+        : "";
+    host.style.left = isCompactViewport
+      ? ""
+      : Number.isFinite(overlayLeft)
+        ? `${overlayLeft}px`
+        : "";
+    host.style.width = isCompactViewport ? "100%" : `${overlayWidth}px`;
     host.style.zIndex = "20";
     if (state.isCollapsed) {
       clearOverlayOffsets();
@@ -997,11 +1038,14 @@
       0,
       Math.round(host.getBoundingClientRect().height || host.clientHeight || 0)
     );
-    const availableHeight =
-      (Number.isFinite(overlayBottom) && Number.isFinite(overlayTop)
-        ? overlayBottom - overlayTop - PANEL_BOTTOM_GAP
-        : null) ?? (hostHeight > 0 ? hostHeight : null);
-    applyRailSizing(host, panel, availableHeight);
+    const availableHeight = isCompactViewport
+      ? null
+      : (Number.isFinite(overlayBottom) && Number.isFinite(overlayTop)
+          ? overlayBottom - overlayTop - PANEL_BOTTOM_GAP
+          : null) ?? (hostHeight > 0 ? hostHeight : null);
+    applyRailSizing(host, panel, availableHeight, {
+      compact: isCompactViewport,
+    });
     updateLoopReelSizing(panel);
   }
 
@@ -1473,21 +1517,6 @@
     return map;
   }
 
-  async function fetchPerformerName(performerId) {
-    const data = await gqlRequest(
-      `
-        query PerformerSupportingImagesName($id: ID!) {
-          findPerformer(id: $id) {
-            id
-            name
-          }
-        }
-      `,
-      { id: performerId }
-    );
-    return data?.findPerformer || null;
-  }
-
   async function fetchImageTagIds(imageId) {
     const data = await gqlRequest(
       `
@@ -1554,8 +1583,21 @@
     return data?.imageUpdate?.id || null;
   }
 
-  async function queryImagesForTagSet(performerId, tagIds, perPage = 40) {
+  async function queryImagesForTagSet(
+    performerId,
+    tagIds,
+    selectionMode = "first"
+  ) {
     if (!tagIds.length) return [];
+
+    const isRandom = selectionMode === "random";
+    const filter = {
+      per_page: -1,
+      sort: isRandom ? "random" : "created_at",
+    };
+    if (!isRandom) {
+      filter.direction = "DESC";
+    }
 
     const data = await gqlRequest(
       `
@@ -1568,6 +1610,9 @@
                 path
                 width
                 height
+              }
+              tags {
+                id
               }
               paths {
                 image
@@ -1582,30 +1627,47 @@
         imageFilter: {
           performers: {
             value: [String(performerId)],
-            modifier: "INCLUDES",
+            modifier: "INCLUDES_ALL",
           },
           tags: {
             value: tagIds.map(String),
             modifier: "INCLUDES",
           },
         },
-        filter: {
-          per_page: perPage,
-        },
+        filter,
       }
     );
 
     return data?.findImages?.images || [];
   }
 
-  async function findImagesForSlot(performerId, tagGroups) {
-    const groups = Array.isArray(tagGroups) ? tagGroups.filter((group) => (group?.tagIds || []).length) : [];
+  async function findImagesForSlot(performerId, tagGroups, selectionMode = "first") {
+    const groups = Array.isArray(tagGroups)
+      ? tagGroups.filter((group) => (group?.tagIds || []).length)
+      : [];
     if (!groups.length) return [];
 
     const unionTagIds = Array.from(
       new Set(groups.flatMap((group) => group.tagIds || []).map(String).filter(Boolean))
     );
-    return queryImagesForTagSet(performerId, unionTagIds, 40);
+    const images = await queryImagesForTagSet(
+      performerId,
+      unionTagIds,
+      selectionMode
+    );
+
+    if (groups.length === 1) return images;
+
+    return images.filter((image) => {
+      const imageTagIds = new Set(
+        (image?.tags || [])
+          .map((tag) => String(tag?.id || ""))
+          .filter(Boolean)
+      );
+      return groups.every((group) =>
+        group.tagIds.some((tagId) => imageTagIds.has(String(tagId)))
+      );
+    });
   }
 
   function getImageUrl(image) {
@@ -1668,7 +1730,7 @@
 
     return {
       type: "tags",
-      modifier: "INCLUDES",
+      modifier: "INCLUDES_ALL",
       value: {
         items,
         excluded: [],
@@ -1932,7 +1994,12 @@
     return didChange;
   }
 
-  async function loadSlotMatches(slot, performerId, tagMap) {
+  async function loadSlotMatches(
+    slot,
+    performerId,
+    tagMap,
+    selectionMode = "first"
+  ) {
     const resolvedTags = resolveSlotTagGroups(
       slot,
       tagMap,
@@ -1941,7 +2008,11 @@
     const missingTags = resolvedTags.missingTags;
     const images =
       missingTags.length === 0 && resolvedTags.groups.length
-        ? await findImagesForSlot(performerId, resolvedTags.groups)
+        ? await findImagesForSlot(
+            performerId,
+            resolvedTags.groups,
+            selectionMode
+          )
         : [];
 
     return {
@@ -2014,7 +2085,12 @@
 
     const tagMap = options.tagMap || (await ensureTagMap());
     const selectionMode = getSelectionMode(cfg);
-    const { images } = await loadSlotMatches(slot, performerId, tagMap);
+    const { images } = await loadSlotMatches(
+      slot,
+      performerId,
+      tagMap,
+      selectionMode
+    );
     const { aspectMode } = buildLoadedSlotViewState(slot, performerId, images, selectionMode, cfg, {
       autoFit: false,
       preserveState: false,
@@ -2648,13 +2724,23 @@
       }
 
       await updateImageTagIds(imageId, nextTagIds);
-      if (!isApplied) {
-        const performerId = getPerformerFromPath(window.location.pathname)?.id || "";
-        await autoFitImageForSlotAssignment(imageId, slot, cfg, performerId);
-      }
       setCachedQuickTagImageTags(imageId, nextTagIds);
       applyQuickTagMenuSelectionState(menu, nextTagIds, slots);
+      const performerId = getPerformerFromPath(window.location.pathname)?.id || "";
+      invalidatePerformerCardPreviewCache(performerId);
       setQuickTagMenuStatus(menu, "saved", isApplied ? "Removed" : "Added");
+
+      if (!isApplied) {
+        try {
+          await autoFitImageForSlotAssignment(imageId, slot, cfg, performerId);
+        } catch (err) {
+          console.error(
+            "[PerformerTagBasedSupportingImages] image auto-fit failed after tag update",
+            err
+          );
+          setQuickTagMenuStatus(menu, "saved", "Added; crop unchanged");
+        }
+      }
     } catch (err) {
       console.error("[PerformerTagBasedSupportingImages] image quick tag failed", err);
       setQuickTagMenuStatus(menu, "error", "Tag update failed");
@@ -2815,6 +2901,8 @@
     status.className = "performer-tag-based-supporting-images__quick-tag-status";
     panel.appendChild(status);
     document.body.appendChild(panel);
+    state.quickTagMenus.add(menu);
+    state.quickTagPopupPanels.add(panel);
 
     [menu, panel].forEach((target) => {
       addEventListeners(target, ["click", "mousedown", "pointerdown"], (event) => {
@@ -2827,6 +2915,8 @@
       clearCloseTimer();
       unbindViewportEvents();
       panel.remove();
+      state.quickTagMenus.delete(menu);
+      state.quickTagPopupPanels.delete(panel);
     });
 
     trigger.addEventListener("click", (event) => {
@@ -2902,6 +2992,14 @@
   }
 
   function cleanupQuickTagMenus() {
+    state.quickTagMenus.forEach((menu) => {
+      cleanupQuickTagMenuElement(menu);
+      menu.remove();
+    });
+    state.quickTagPopupPanels.forEach((panel) => panel.remove());
+    state.quickTagMenus.clear();
+    state.quickTagPopupPanels.clear();
+
     document
       .querySelectorAll(".performer-tag-based-supporting-images__quick-tag")
       .forEach((menu) => {
@@ -2928,6 +3026,13 @@
 
     state.quickTagDecorating = true;
     try {
+      state.quickTagMenus.forEach((menu) => {
+        if (!menu.isConnected || !menu.closest(".image-card")) {
+          cleanupQuickTagMenuElement(menu);
+          menu.remove();
+        }
+      });
+
       const slots = await getQuickTagSlots();
       const actionableSlots = getActionableQuickTagSlots(slots);
       if (!actionableSlots.length) {
@@ -2990,13 +3095,17 @@
         return;
       }
 
-      const hasRelevantMutation = mutations.some((mutation) =>
-        Array.from(mutation.addedNodes || []).some(
+      const hasRelevantMutation = mutations.some((mutation) => {
+        const changedNodes = [
+          ...Array.from(mutation.addedNodes || []),
+          ...Array.from(mutation.removedNodes || []),
+        ];
+        return changedNodes.some(
           (node) =>
             node instanceof Element &&
             !node.closest(".performer-tag-based-supporting-images__quick-tag")
-        )
-      );
+        );
+      });
       if (hasRelevantMutation) {
         scheduleQuickTagRefresh();
       }
@@ -3017,6 +3126,15 @@
 
   function getCardPreviewCacheKey(cfg) {
     return `${getQuickTagSlotCacheKey(cfg)}|${getSelectionMode(cfg)}|${getCardPreviewSlotOrder(cfg).join("")}|${shouldShowEmptyCardPreviewSlots(cfg) ? "show-empty" : "hide-empty"}`;
+  }
+
+  function invalidatePerformerCardPreviewCache(performerId) {
+    const key = String(performerId || "").trim();
+    if (key) {
+      state.cardPreviewDataCache.delete(key);
+    } else {
+      state.cardPreviewDataCache.clear();
+    }
   }
 
   function getCardPreviewInitialIndex(slot, cfg) {
@@ -3105,7 +3223,12 @@
     const slotResults = await Promise.all(
       slots.map(async (slot) => {
         try {
-          const { missingTags, images } = await loadSlotMatches(slot, performerId, tagMap);
+          const { missingTags, images } = await loadSlotMatches(
+            slot,
+            performerId,
+            tagMap,
+            selectionMode
+          );
 
           if (!images.length) {
             return showEmptySlots
@@ -3907,6 +4030,12 @@
     if (state.cardPreviewObserver || typeof MutationObserver !== "function") return;
     state.cardPreviewObserver = new MutationObserver(() => {
       if (
+        state.cardPreviewActiveCard &&
+        !state.cardPreviewActiveCard.isConnected
+      ) {
+        closePerformerCardPreviewImmediate();
+      }
+      if (
         shouldEnablePerformerCardPreview() ||
         (state.cardPreviewRoot && state.cardPreviewRoot.childElementCount > 0)
       ) {
@@ -3921,7 +4050,6 @@
 
   async function buildPanelData(performer, cfg) {
     let tagMap = await ensureTagMap();
-    const performerInfo = await fetchPerformerName(performer.id);
     const selectionMode = getSelectionMode(cfg);
     const slots = getSlotConfigs(cfg);
     const configuredTagNames = slots.flatMap((slot) => slot.tagNames);
@@ -3940,7 +4068,8 @@
           const { resolvedTags, missingTags, images } = await loadSlotMatches(
             slot,
             performer.id,
-            tagMap
+            tagMap,
+            selectionMode
           );
           const tagIds = resolvedTags.resolvedTagIds;
 
@@ -3984,8 +4113,8 @@
     );
 
     return {
-      performer: performerInfo || performer,
-      slots: slotResults.filter((slot) => slot.images.length > 0),
+      performer,
+      slots: slotResults,
     };
   }
 
@@ -4927,28 +5056,38 @@
   }
 
   function installNavigationHooks() {
-    if (window.__ptbsiHistoryWrapped) return;
-    window.__ptbsiHistoryWrapped = true;
+    if (state.navigationHooksInstalled) return;
 
     const originalPushState = history.pushState;
     const originalReplaceState = history.replaceState;
+    const handlePopState = () =>
+      window.dispatchEvent(new Event("ptbsi:navigation"));
+    const handleNavigation = () => handleRouteChange();
 
-    history.pushState = function () {
+    const wrappedPushState = function () {
       const result = originalPushState.apply(this, arguments);
       window.dispatchEvent(new Event("ptbsi:navigation"));
       return result;
     };
 
-    history.replaceState = function () {
+    const wrappedReplaceState = function () {
       const result = originalReplaceState.apply(this, arguments);
       window.dispatchEvent(new Event("ptbsi:navigation"));
       return result;
     };
 
-    window.addEventListener("popstate", () =>
-      window.dispatchEvent(new Event("ptbsi:navigation"))
-    );
-    window.addEventListener("ptbsi:navigation", handleRouteChange);
+    state.originalPushState = originalPushState;
+    state.originalReplaceState = originalReplaceState;
+    state.wrappedPushState = wrappedPushState;
+    state.wrappedReplaceState = wrappedReplaceState;
+    state.handlePopState = handlePopState;
+    state.handleNavigation = handleNavigation;
+    state.navigationHooksInstalled = true;
+
+    history.pushState = wrappedPushState;
+    history.replaceState = wrappedReplaceState;
+    window.addEventListener("popstate", handlePopState);
+    window.addEventListener("ptbsi:navigation", handleNavigation);
   }
 
   function installObserver() {
@@ -5009,33 +5148,30 @@
   }
 
   function installDetailInteractionHook() {
-    if (window.__ptbsiDetailInteractionHookInstalled) return;
-    window.__ptbsiDetailInteractionHookInstalled = true;
+    if (state.detailInteractionHandler) return;
 
-    document.addEventListener(
-      "click",
-      (event) => {
-        if (!isPerformerPage()) return;
-        const target = event.target;
-        if (!(target instanceof Element)) return;
+    state.detailInteractionHandler = (event) => {
+      if (!isPerformerPage()) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
 
-        const withinDetail =
-          target.closest(".detail-header") ||
-          target.closest(".detail-container");
-        if (!withinDetail) return;
+      const withinDetail =
+        target.closest(".detail-header") ||
+        target.closest(".detail-container");
+      if (!withinDetail) return;
 
-        scheduleLayoutRefresh();
-      },
-      true
-    );
+      scheduleLayoutRefresh();
+    };
+
+    document.addEventListener("click", state.detailInteractionHandler, true);
   }
 
   function installLayoutHandlers() {
     if (state.layoutHandlersInstalled) return;
     state.layoutHandlersInstalled = true;
-    window.addEventListener("scroll", updateFloatingPanelLayout, { passive: true });
-    window.addEventListener("resize", updateFloatingPanelLayout);
-    window.addEventListener(LAYOUT_CHANGED_EVENT, () => {
+    state.layoutScrollHandler = updateFloatingPanelLayout;
+    state.layoutResizeHandler = updateFloatingPanelLayout;
+    state.layoutChangedHandler = () => {
       if (!isPerformerPage()) return;
       refreshObservedElements();
       if (state.panelData) {
@@ -5052,7 +5188,10 @@
         }
       }
       scheduleLayoutRefresh([0, 80, 180, 320, 500]);
-    });
+    };
+    window.addEventListener("scroll", state.layoutScrollHandler, { passive: true });
+    window.addEventListener("resize", state.layoutResizeHandler);
+    window.addEventListener(LAYOUT_CHANGED_EVENT, state.layoutChangedHandler);
   }
 
   async function injectPanel() {
@@ -5113,6 +5252,68 @@
     }
   }
 
+  function disposePluginInstance() {
+    state.injectToken += 1;
+    state.scheduledRouteToken += 1;
+    state.scheduledLayoutToken += 1;
+
+    if (state.observerTimer) {
+      window.clearTimeout(state.observerTimer);
+      state.observerTimer = null;
+    }
+    if (state.quickTagRefreshHandle) {
+      window.cancelAnimationFrame(state.quickTagRefreshHandle);
+      state.quickTagRefreshHandle = 0;
+    }
+    if (state.cardPreviewRefreshHandle) {
+      window.cancelAnimationFrame(state.cardPreviewRefreshHandle);
+      state.cardPreviewRefreshHandle = 0;
+    }
+
+    state.observer?.disconnect();
+    state.resizeObserver?.disconnect();
+    state.quickTagObserver?.disconnect();
+    state.cardPreviewObserver?.disconnect();
+    state.observer = null;
+    state.resizeObserver = null;
+    state.quickTagObserver = null;
+    state.cardPreviewObserver = null;
+
+    cleanupQuickTagMenus();
+    closePerformerCardPreviewImmediate();
+    state.cardPreviewRoot?.remove();
+    state.cardPreviewRoot = null;
+    cleanupPanel();
+
+    if (state.detailInteractionHandler) {
+      document.removeEventListener("click", state.detailInteractionHandler, true);
+      state.detailInteractionHandler = null;
+    }
+    if (state.layoutScrollHandler) {
+      window.removeEventListener("scroll", state.layoutScrollHandler);
+      state.layoutScrollHandler = null;
+    }
+    if (state.layoutResizeHandler) {
+      window.removeEventListener("resize", state.layoutResizeHandler);
+      state.layoutResizeHandler = null;
+    }
+    if (state.layoutChangedHandler) {
+      window.removeEventListener(LAYOUT_CHANGED_EVENT, state.layoutChangedHandler);
+      state.layoutChangedHandler = null;
+    }
+    if (state.navigationHooksInstalled) {
+      window.removeEventListener("popstate", state.handlePopState);
+      window.removeEventListener("ptbsi:navigation", state.handleNavigation);
+      if (history.pushState === state.wrappedPushState) {
+        history.pushState = state.originalPushState;
+      }
+      if (history.replaceState === state.wrappedReplaceState) {
+        history.replaceState = state.originalReplaceState;
+      }
+      state.navigationHooksInstalled = false;
+    }
+  }
+
   function handleRouteChange() {
     const path = window.location.pathname;
     if (path === state.lastPath) return;
@@ -5128,6 +5329,12 @@
   }
 
   function init() {
+    const previousCleanup = window.__ptbsiInstanceCleanup;
+    if (typeof previousCleanup === "function") {
+      previousCleanup();
+    }
+    window.__ptbsiInstanceCleanup = disposePluginInstance;
+
     installNavigationHooks();
     installObserver();
     installResizeObserver();
