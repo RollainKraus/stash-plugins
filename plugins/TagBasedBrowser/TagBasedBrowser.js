@@ -4,13 +4,20 @@
   const PLUGIN_ID = "TagBasedBrowser";
   const PLUGIN_NAME = "Tag Browser";
   const ROUTE_PATH = "/plugin/TagBasedBrowser";
+  const OPEN_ROUTE_QUERY_KEY = "openTagBasedBrowser";
   const NAV_BUTTON_ID = "tag-based-browser-nav-button";
   const EXPANDED_STORAGE_KEY = "tag-based-browser-expanded-v1";
   const COLUMN_COUNT_STORAGE_KEY = "tag-based-browser-column-count-v1";
   const SORT_STATE_STORAGE_KEY = "tag-based-browser-sort-state-v1";
   const SELECTION_UI_STORAGE_KEY = "tag-based-browser-selection-ui-v1";
+  const TAG_DATA_SESSION_KEY = "tag-based-browser-tag-data-v1";
+  const TAG_DATA_SESSION_TTL_MS = 10 * 60 * 1000;
   const DEFAULT_TAB = "scenes";
   const PAGE_SIZE = 24;
+  const CONTENT_CACHE_MAX_ENTRIES = 120;
+  const CONTENT_CACHE_TTL_MS = 5 * 60 * 1000;
+  const BOOTSTRAP_WATCH_MAX_ATTEMPTS = 60;
+  const CACHE_INVALIDATION_EVENT = "tag-based-browser-cache-invalidated";
   const COLUMN_COUNT_LIMITS = {
     scenes: { min: 2, max: 8, defaultValue: 5 },
     studios: { min: 2, max: 8, defaultValue: 5 },
@@ -33,6 +40,7 @@
       { value: "updated_at", label: "Updated At" },
       { value: "title", label: "Title" },
       { value: "rating", label: "Rating" },
+      { value: "o_counter", label: "O-Count" },
       { value: "bit_rate", label: "Bit Rate" },
       { value: "duration", label: "Duration" },
       { value: "file_size", label: "File Size" },
@@ -56,6 +64,7 @@
       { value: "updated_at", label: "Updated At" },
       { value: "title", label: "Title" },
       { value: "rating", label: "Rating" },
+      { value: "o_counter", label: "O-Count" },
       { value: "file_size", label: "File Size" },
       { value: "path", label: "Path" },
       { value: "organized", label: "Organized" },
@@ -115,6 +124,38 @@
     return window.__tagBasedBrowserPluginApi?.React || window.PluginApi?.React || null;
   }
 
+  function getCachedContentPage(cache, key) {
+    const entry = cache.get(key);
+    if (!entry) return null;
+
+    // Accept the old raw-state shape so a hot reload cannot break the current view.
+    if (!entry.cachedAt) return entry;
+    if (Date.now() - entry.cachedAt > CONTENT_CACHE_TTL_MS) {
+      cache.delete(key);
+      return null;
+    }
+    cache.delete(key);
+    cache.set(key, entry);
+    return entry.state || null;
+  }
+
+  function setCachedContentPage(cache, key, state) {
+    cache.set(key, { state, cachedAt: Date.now() });
+    while (cache.size > CONTENT_CACHE_MAX_ENTRIES) {
+      const oldestKey = cache.keys().next().value;
+      if (oldestKey === undefined) break;
+      cache.delete(oldestKey);
+    }
+  }
+
+  function clearContentCache() {
+    tagBrowserCache.contentPages.clear();
+  }
+
+  function isAbortError(error) {
+    return error?.name === "AbortError";
+  }
+
   function h() {
     const React = getReactApi();
     if (!React?.createElement) {
@@ -153,11 +194,12 @@
     return React.Fragment;
   }
 
-  function gqlRequest(query, variables = {}) {
+  function gqlRequest(query, variables = {}, signal) {
     return fetch("/graphql", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
+      signal,
       body: JSON.stringify({ query, variables }),
     })
       .then((res) => {
@@ -229,6 +271,69 @@
     return Array.from(arguments).filter(Boolean).join(" ");
   }
 
+  function getStorageKey(key) {
+    return `${key}:${window.location.origin}`;
+  }
+
+  function readStorageValue(key) {
+    try {
+      const scopedKey = getStorageKey(key);
+      const scopedValue = window.localStorage.getItem(scopedKey);
+      if (scopedValue !== null) return scopedValue;
+
+      const legacyValue = window.localStorage.getItem(key);
+      if (legacyValue !== null) {
+        window.localStorage.setItem(scopedKey, legacyValue);
+      }
+      return legacyValue;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function writeStorageValue(key, value) {
+    try {
+      window.localStorage.setItem(getStorageKey(key), value);
+    } catch (err) {
+      void err;
+    }
+  }
+
+  function loadSessionTagData() {
+    try {
+      const raw = window.sessionStorage.getItem(TAG_DATA_SESSION_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.tags)) return null;
+      if (Date.now() - Number(parsed.cachedAt) > TAG_DATA_SESSION_TTL_MS) {
+        window.sessionStorage.removeItem(TAG_DATA_SESSION_KEY);
+        return null;
+      }
+      return parsed.tags;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function saveSessionTagData(tags) {
+    try {
+      window.sessionStorage.setItem(
+        TAG_DATA_SESSION_KEY,
+        JSON.stringify({ cachedAt: Date.now(), tags })
+      );
+    } catch (err) {
+      void err;
+    }
+  }
+
+  function clearSessionTagData() {
+    try {
+      window.sessionStorage.removeItem(TAG_DATA_SESSION_KEY);
+    } catch (err) {
+      void err;
+    }
+  }
+
   function getFontAwesomeLibrary(style = "solid") {
     if (style === "regular") return window.PluginApi?.libraries?.FontAwesomeRegular || null;
     return window.PluginApi?.libraries?.FontAwesomeSolid || null;
@@ -298,6 +403,12 @@
     if (tagBrowserCache.tagData) return tagBrowserCache.tagData;
     if (tagBrowserCache.tagDataPromise) return tagBrowserCache.tagDataPromise;
 
+    const sessionTags = loadSessionTagData();
+    if (sessionTags) {
+      tagBrowserCache.tagData = sessionTags;
+      return sessionTags;
+    }
+
     const queryWithCounts = `
       query TagBasedBrowserAllTagsWithCounts {
         findTags(filter: { per_page: -1, sort: "name", direction: ASC }) {
@@ -359,6 +470,7 @@
       try {
         const data = await gqlRequest(queryWithCounts);
         tagBrowserCache.tagData = data?.findTags?.tags || [];
+        saveSessionTagData(tagBrowserCache.tagData);
         return tagBrowserCache.tagData;
       } catch (err) {
         console.warn("[TagBasedBrowser] count fields unavailable, retrying without counts", err);
@@ -371,6 +483,7 @@
           gallery_count: 0,
           performer_count: 0,
         }));
+        saveSessionTagData(tagBrowserCache.tagData);
         return tagBrowserCache.tagData;
       } finally {
         tagBrowserCache.tagDataPromise = null;
@@ -378,6 +491,52 @@
     })();
 
     return tagBrowserCache.tagDataPromise;
+  }
+
+  async function fetchServerTagSearch(query, signal) {
+    const normalizedQuery = String(query || "").trim();
+    if (normalizedQuery.length < 2) return [];
+
+    const data = await gqlRequest(
+      `
+        query TagBasedBrowserSearchTags($query: String!) {
+          findTags(
+            filter: { q: $query, per_page: 18, page: 1, sort: "name", direction: ASC }
+          ) {
+            tags {
+              id
+              name
+              sort_name
+              image_path
+              scene_count
+              studio_count
+              image_count
+              gallery_count
+              performer_count
+              children {
+                id
+              }
+              parents {
+                id
+                name
+                sort_name
+                parents {
+                  id
+                  name
+                  sort_name
+                }
+              }
+            }
+          }
+        }
+      `,
+      { query: normalizedQuery },
+      signal
+    );
+    const tags = data?.findTags?.tags || [];
+    if (!tags.length) return [];
+    const built = buildHierarchy(tags);
+    return buildSearchIndex(tags, built.tagMap).slice(0, 18);
   }
 
   function createTagMap(tags) {
@@ -706,7 +865,7 @@
 
   function loadExpandedState() {
     try {
-      const raw = window.localStorage.getItem(EXPANDED_STORAGE_KEY);
+      const raw = readStorageValue(EXPANDED_STORAGE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return null;
@@ -717,14 +876,7 @@
   }
 
   function saveExpandedState(expandedIds) {
-    try {
-      window.localStorage.setItem(
-        EXPANDED_STORAGE_KEY,
-        JSON.stringify(Array.from(expandedIds))
-      );
-    } catch (err) {
-      void err;
-    }
+    writeStorageValue(EXPANDED_STORAGE_KEY, JSON.stringify(Array.from(expandedIds)));
   }
 
   function getInitialExpandedIds(groups, behavior) {
@@ -761,7 +913,7 @@
 
   function loadColumnCountState() {
     try {
-      const raw = window.localStorage.getItem(COLUMN_COUNT_STORAGE_KEY);
+      const raw = readStorageValue(COLUMN_COUNT_STORAGE_KEY);
       if (!raw) return getDefaultColumnCountState();
       return normalizeColumnCountState(JSON.parse(raw));
     } catch (err) {
@@ -770,14 +922,10 @@
   }
 
   function saveColumnCountState(columnState) {
-    try {
-      window.localStorage.setItem(
-        COLUMN_COUNT_STORAGE_KEY,
-        JSON.stringify(normalizeColumnCountState(columnState))
-      );
-    } catch (err) {
-      void err;
-    }
+    writeStorageValue(
+      COLUMN_COUNT_STORAGE_KEY,
+      JSON.stringify(normalizeColumnCountState(columnState))
+    );
   }
 
   function getSortOptions(tabKey) {
@@ -818,7 +966,7 @@
 
   function loadSortState() {
     try {
-      const raw = window.localStorage.getItem(SORT_STATE_STORAGE_KEY);
+      const raw = readStorageValue(SORT_STATE_STORAGE_KEY);
       if (!raw) return getDefaultSortState();
       return normalizeSortState(JSON.parse(raw));
     } catch (err) {
@@ -827,14 +975,7 @@
   }
 
   function saveSortState(sortState) {
-    try {
-      window.localStorage.setItem(
-        SORT_STATE_STORAGE_KEY,
-        JSON.stringify(normalizeSortState(sortState))
-      );
-    } catch (err) {
-      void err;
-    }
+    writeStorageValue(SORT_STATE_STORAGE_KEY, JSON.stringify(normalizeSortState(sortState)));
   }
 
   function normalizeSelectionMode(value) {
@@ -861,7 +1002,7 @@
 
   function loadSelectionUiState() {
     try {
-      const raw = window.localStorage.getItem(SELECTION_UI_STORAGE_KEY);
+      const raw = readStorageValue(SELECTION_UI_STORAGE_KEY);
       if (!raw) return normalizeSelectionUiState(DEFAULT_SELECTION_UI_STATE);
       return normalizeSelectionUiState(JSON.parse(raw));
     } catch (err) {
@@ -870,34 +1011,82 @@
   }
 
   function saveSelectionUiState(state) {
-    try {
-      window.localStorage.setItem(
-        SELECTION_UI_STORAGE_KEY,
-        JSON.stringify(normalizeSelectionUiState(state))
-      );
-    } catch (err) {
-      void err;
-    }
+    writeStorageValue(
+      SELECTION_UI_STORAGE_KEY,
+      JSON.stringify(normalizeSelectionUiState(state))
+    );
   }
 
   function parseRouteState() {
     const url = new URL(window.location.href);
     const tagId = String(url.searchParams.get("tag") || "").trim();
+    const routeTagIds = Array.from(
+      new Set(
+        String(url.searchParams.get("tags") || "")
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean)
+      )
+    );
+    const routeMode = String(url.searchParams.get("mode") || "").trim().toLowerCase();
+    const hasSelectionQuery =
+      routeMode === "multi" ||
+      routeMode === "single" ||
+      routeTagIds.length > 0 ||
+      url.searchParams.has("match") ||
+      url.searchParams.has("subtags");
     const tab = String(url.searchParams.get("tab") || DEFAULT_TAB).trim().toLowerCase();
     const page = parseInt(String(url.searchParams.get("page") || "1"), 10);
+    const selectionUiState = {};
+    if (routeMode === "multi" || routeTagIds.length > 1) selectionUiState.mode = "multi";
+    if (url.searchParams.get("match") === "all") selectionUiState.matchMode = "all";
+    if (url.searchParams.get("subtags") === "exclude") {
+      selectionUiState.subTagContent = "exclude";
+    }
+    const mode = selectionUiState.mode || "single";
+    const selectedTagIds =
+      mode === "multi"
+        ? Array.from(new Set([...(tagId ? [tagId] : []), ...routeTagIds]))
+        : tagId
+        ? [tagId]
+        : [];
 
     return {
-      tagId,
+      tagId: tagId || selectedTagIds[0] || "",
+      selectedTagIds,
+      selectionUiState,
+      hasSelectionQuery,
       tab: TAB_DEFS.some((item) => item.key === tab) ? tab : DEFAULT_TAB,
       page: Number.isFinite(page) && page > 0 ? page : 1,
     };
   }
 
-  function writeRouteState(tagId, tab, page) {
+  function writeRouteState(tagId, tagIds, tab, page, selectionUiState) {
     if (window.location.pathname !== ROUTE_PATH) return;
     const url = new URL(window.location.href);
+    const normalizedSelection = normalizeSelectionUiState(selectionUiState);
+    const normalizedTagIds = Array.from(
+      new Set((tagIds || []).map(String).filter(Boolean))
+    );
     if (tagId) url.searchParams.set("tag", String(tagId));
     else url.searchParams.delete("tag");
+    if (normalizedSelection.mode === "multi" && normalizedTagIds.length) {
+      url.searchParams.set("tags", normalizedTagIds.join(","));
+      url.searchParams.set("mode", "multi");
+    } else {
+      url.searchParams.delete("tags");
+      url.searchParams.delete("mode");
+    }
+    if (normalizedSelection.mode === "multi" && normalizedSelection.matchMode === "all") {
+      url.searchParams.set("match", "all");
+    } else {
+      url.searchParams.delete("match");
+    }
+    if (normalizedSelection.subTagContent === "exclude") {
+      url.searchParams.set("subtags", "exclude");
+    } else {
+      url.searchParams.delete("subtags");
+    }
     if (tab && tab !== DEFAULT_TAB) url.searchParams.set("tab", tab);
     else url.searchParams.delete("tab");
     if (page > 1) url.searchParams.set("page", String(page));
@@ -994,7 +1183,15 @@
     return ids;
   }
 
-  async function fetchContentPage(tagIds, tab, page, sortConfig, matchMode) {
+  async function fetchContentPage(
+    tagIds,
+    tab,
+    page,
+    sortConfig,
+    matchMode,
+    signal,
+    pageSize = PAGE_SIZE
+  ) {
     const normalizedTagIds = Array.from(
       new Set((Array.isArray(tagIds) ? tagIds : [tagIds]).map(String).filter(Boolean))
     );
@@ -1005,7 +1202,7 @@
     const normalizedSort = normalizeSortConfig(tab, sortConfig);
     const tagModifier = getTagMatchModifier(matchMode);
     const filter = {
-      per_page: PAGE_SIZE,
+      per_page: pageSize,
       page,
       sort: normalizedSort.sort,
     };
@@ -1016,11 +1213,12 @@
       tagIds: normalizedTagIds,
       filter,
     };
+    const request = (query) => gqlRequest(query, variables, signal);
 
     switch (tab) {
       case "studios": {
         try {
-          const data = await gqlRequest(
+          const data = await request(
             `
               query TagBasedBrowserStudios($tagIds: [ID!]!, $filter: FindFilterType) {
                 findStudios(
@@ -1051,7 +1249,7 @@
             items: data?.findStudios?.studios || [],
           };
         } catch (err) {
-          const data = await gqlRequest(
+          const data = await request(
             `
               query TagBasedBrowserStudiosFallback($tagIds: [ID!]!, $filter: FindFilterType) {
                 findStudios(
@@ -1084,44 +1282,88 @@
       }
 
       case "images": {
-        const data = await gqlRequest(
-          `
-            query TagBasedBrowserImages($tagIds: [ID!]!, $filter: FindFilterType) {
-              findImages(
-                image_filter: { tags: { value: $tagIds, modifier: ${tagModifier} } }
-                filter: $filter
-              ) {
-                count
-                images {
-                  id
-                  title
-                  rating100
-                  galleries {
+        try {
+          const data = await request(
+            `
+              query TagBasedBrowserImages($tagIds: [ID!]!, $filter: FindFilterType) {
+                findImages(
+                  image_filter: { tags: { value: $tagIds, modifier: ${tagModifier} } }
+                  filter: $filter
+                ) {
+                  count
+                  images {
                     id
                     title
-                  }
-                  performers {
-                    id
-                    name
-                  }
-                  paths {
-                    thumbnail
-                    image
+                    details
+                    photographer
+                    rating100
+                    o_counter
+                    organized
+                    files {
+                      size
+                      width
+                      height
+                    }
+                    galleries {
+                      id
+                      title
+                    }
+                    performers {
+                      id
+                      name
+                    }
+                    paths {
+                      thumbnail
+                      image
+                    }
                   }
                 }
               }
-            }
-          `,
-          variables
-        );
-        return {
-          count: data?.findImages?.count || 0,
-          items: data?.findImages?.images || [],
-        };
+            `
+          );
+          return {
+            count: data?.findImages?.count || 0,
+            items: data?.findImages?.images || [],
+          };
+        } catch (err) {
+          const data = await request(
+            `
+              query TagBasedBrowserImagesFallback($tagIds: [ID!]!, $filter: FindFilterType) {
+                findImages(
+                  image_filter: { tags: { value: $tagIds, modifier: ${tagModifier} } }
+                  filter: $filter
+                ) {
+                  count
+                  images {
+                    id
+                    title
+                    rating100
+                    galleries {
+                      id
+                      title
+                    }
+                    performers {
+                      id
+                      name
+                    }
+                    paths {
+                      thumbnail
+                      image
+                    }
+                  }
+                }
+              }
+            `
+          );
+          return {
+            count: data?.findImages?.count || 0,
+            items: data?.findImages?.images || [],
+          };
+        }
       }
 
       case "galleries": {
-        const data = await gqlRequest(
+        const data = await request(
           `
             query TagBasedBrowserGalleries($tagIds: [ID!]!, $filter: FindFilterType) {
               findGalleries(
@@ -1159,7 +1401,7 @@
       }
 
       case "performers": {
-        const data = await gqlRequest(
+        const data = await request(
           `
             query TagBasedBrowserPerformers($tagIds: [ID!]!, $filter: FindFilterType) {
               findPerformers(
@@ -1192,41 +1434,91 @@
 
       case "scenes":
       default: {
-        const data = await gqlRequest(
-          `
-            query TagBasedBrowserScenes($tagIds: [ID!]!, $filter: FindFilterType) {
-              findScenes(
-                scene_filter: { tags: { value: $tagIds, modifier: ${tagModifier} } }
-                filter: $filter
-              ) {
-                count
-                scenes {
-                  id
-                  title
-                  date
-                  rating100
-                  performers {
+        try {
+          const data = await request(
+            `
+              query TagBasedBrowserScenes($tagIds: [ID!]!, $filter: FindFilterType) {
+                findScenes(
+                  scene_filter: { tags: { value: $tagIds, modifier: ${tagModifier} } }
+                  filter: $filter
+                ) {
+                  count
+                  scenes {
                     id
-                    name
-                  }
-                  paths {
-                    screenshot
-                    preview
-                  }
-                  studio {
-                    id
-                    name
+                    title
+                    details
+                    date
+                    rating100
+                    o_counter
+                    organized
+                    play_count
+                    created_at
+                    updated_at
+                    files {
+                      size
+                      duration
+                      width
+                      height
+                      frame_rate
+                      bit_rate
+                    }
+                    performers {
+                      id
+                      name
+                    }
+                    paths {
+                      screenshot
+                      preview
+                    }
+                    studio {
+                      id
+                      name
+                    }
                   }
                 }
               }
-            }
-          `,
-          variables
-        );
-        return {
-          count: data?.findScenes?.count || 0,
-          items: data?.findScenes?.scenes || [],
-        };
+            `
+          );
+          return {
+            count: data?.findScenes?.count || 0,
+            items: data?.findScenes?.scenes || [],
+          };
+        } catch (err) {
+          const data = await request(
+            `
+              query TagBasedBrowserScenesFallback($tagIds: [ID!]!, $filter: FindFilterType) {
+                findScenes(
+                  scene_filter: { tags: { value: $tagIds, modifier: ${tagModifier} } }
+                  filter: $filter
+                ) {
+                  count
+                  scenes {
+                    id
+                    title
+                    date
+                    rating100
+                    performers {
+                      id
+                      name
+                    }
+                    paths {
+                      screenshot
+                      preview
+                    }
+                    studio {
+                      id
+                      name
+                    }
+                  }
+                }
+              }
+            `
+          );
+          return {
+            count: data?.findScenes?.count || 0,
+            items: data?.findScenes?.scenes || [],
+          };
+        }
       }
     }
   }
@@ -1248,6 +1540,60 @@
   function formatRating(value) {
     const rating = Number(value);
     return Number.isFinite(rating) && rating > 0 ? `${rating}/100` : "Unrated";
+  }
+
+  function getRatingMeta(value) {
+    const rating = Number(value);
+    return Number.isFinite(rating) && rating > 0 ? `Rating ${formatRating(rating)}` : "";
+  }
+
+  function getOrganizedMeta(value) {
+    return value === true ? "Organized" : value === false ? "Unorganized" : "";
+  }
+
+  function formatDuration(value) {
+    const seconds = Math.max(0, Math.round(Number(value) || 0));
+    if (!seconds) return "";
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const remaining = seconds % 60;
+    return hours
+      ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remaining).padStart(2, "0")}`
+      : `${minutes}:${String(remaining).padStart(2, "0")}`;
+  }
+
+  function formatBytes(value) {
+    const bytes = Number(value);
+    if (!Number.isFinite(bytes) || bytes <= 0) return "";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    const unitIndex = Math.min(
+      units.length - 1,
+      Math.floor(Math.log(bytes) / Math.log(1024))
+    );
+    const amount = bytes / 1024 ** unitIndex;
+    return `${amount >= 10 || unitIndex === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unitIndex]}`;
+  }
+
+  function getPrimarySceneFile(item) {
+    return Array.isArray(item?.files) ? item.files[0] || null : null;
+  }
+
+  function getSceneFileMeta(file) {
+    if (!file) return [];
+    const resolution = file.width > 0 && file.height > 0
+      ? `${file.width}x${file.height}`
+      : "";
+    const duration = formatDuration(file.duration);
+    const size = formatBytes(file.size);
+    const frameRate = Number(file.frame_rate);
+    const fps = Number.isFinite(frameRate) && frameRate > 0
+      ? `${Math.round(frameRate * 10) / 10} fps`
+      : "";
+    const bitRateValue = Number(file.bit_rate);
+    const rate = Number.isFinite(bitRateValue) && bitRateValue > 0
+      ? `${Math.round(bitRateValue / 1000)} kbps`
+      : "";
+    return [resolution, duration, size, fps, rate].filter(Boolean);
   }
 
   function formatGender(value) {
@@ -1309,7 +1655,7 @@
         className: "tag-browser__count-badge",
         title: approximate ? "Approximate summed content count" : null,
       },
-      formatCount(count)
+      approximate ? `~${formatCount(count)}` : formatCount(count)
     );
   }
 
@@ -1325,7 +1671,7 @@
         className: "tag-browser__count-detail-icon",
         title: null,
       }),
-      h("span", null, formatCount(count))
+      h("span", null, approximate ? `~${formatCount(count)}` : formatCount(count))
     );
   }
 
@@ -1748,7 +2094,14 @@
     );
   }
   function SearchResults(props) {
-    const { results, onSelectResult } = props;
+    const { results, onSelectResult, loading = false } = props;
+    if (loading) {
+      return h(
+        "div",
+        { className: "tag-browser__search-empty" },
+        "Searching tags..."
+      );
+    }
     if (!results.length) {
       return h(
         "div",
@@ -1789,6 +2142,7 @@
 
   function TabButton(props) {
     const { tab, activeTab, count, approximate, onChange } = props;
+    const countLabel = count === null || count === undefined ? "..." : formatCount(count);
     return h(
       "button",
       {
@@ -1808,15 +2162,26 @@
         "span",
         {
           className: "tag-browser__tab-count",
-          title: approximate ? "Approximate summed content count" : null,
+          title: approximate
+            ? "Approximate summed content count"
+            : count === null || count === undefined
+            ? "Loading exact count"
+            : null,
         },
-        formatCount(count)
+        countLabel
       )
     );
   }
 
   function SceneCard({ item }) {
     const href = `/scenes/${item.id}`;
+    const file = getPrimarySceneFile(item);
+    const fileMeta = [
+      ...getSceneFileMeta(file),
+      getRatingMeta(item.rating100),
+      getOrganizedMeta(item.organized),
+    ].filter(Boolean);
+    const details = String(item.details || "").trim();
     const performers = Array.isArray(item.performers)
       ? item.performers.filter((performer) => performer?.name)
       : [];
@@ -1845,6 +2210,16 @@
         "div",
         { className: "tag-browser__card-body" },
         h("div", { className: "tag-browser__card-title" }, item.title || `Scene ${item.id}`),
+        details
+          ? h(
+              "div",
+              {
+                className: "tag-browser__card-description",
+                title: details,
+              },
+              details
+            )
+          : null,
         h(
           "div",
           { className: "tag-browser__scene-meta-row" },
@@ -1859,6 +2234,17 @@
             formatDate(item.date) || ""
           )
         ),
+        fileMeta.length ||
+        (item.o_counter !== null && item.o_counter !== undefined)
+          ? h(
+              "div",
+              { className: "tag-browser__scene-file-meta" },
+              fileMeta.map((value) => h("span", { key: value }, value)),
+              item.o_counter !== null && item.o_counter !== undefined
+                ? h("span", { key: "o-count", title: "O-count" }, `O ${formatCount(item.o_counter)}`)
+                : null
+            )
+          : null,
         performers.length
           ? h(
               "div",
@@ -1979,6 +2365,19 @@
       : [];
     const performerNames = performers.map((performer) => performer.name).join(", ");
     const galleries = Array.isArray(item.galleries) ? item.galleries : [];
+    const imageFile = Array.isArray(item.files) ? item.files[0] || null : null;
+    const imageMeta = [
+      imageFile?.width > 0 && imageFile?.height > 0
+        ? `${imageFile.width}x${imageFile.height}`
+        : "",
+      formatBytes(imageFile?.size),
+      getRatingMeta(item.rating100),
+      getOrganizedMeta(item.organized),
+      item.o_counter !== null && item.o_counter !== undefined
+        ? `O ${formatCount(item.o_counter)}`
+        : "",
+    ].filter(Boolean);
+    const details = String(item.details || "").trim();
     return h(
       "a",
       {
@@ -2010,6 +2409,23 @@
         "div",
         { className: "tag-browser__card-footer" },
         h("div", { className: "tag-browser__card-title" }, item.title || `Image ${item.id}`),
+        details
+          ? h(
+              "div",
+              {
+                className: "tag-browser__card-description",
+                title: details,
+              },
+              details
+            )
+          : null,
+        imageMeta.length
+          ? h(
+              "div",
+              { className: "tag-browser__scene-file-meta" },
+              imageMeta.map((value) => h("span", { key: value }, value))
+            )
+          : null,
         h(
           "div",
           { className: "tag-browser__gallery-meta" },
@@ -2400,7 +2816,7 @@
               item,
               onRatioReady: handleRatioReady,
               style: {
-                width: `${Math.max(width, 120)}px`,
+                width: `${Math.max(width, 1)}px`,
               },
             })
           )
@@ -2496,12 +2912,19 @@
     });
     const [expandedIds, setExpandedIds] = useState(null);
     const [searchQuery, setSearchQuery] = useState("");
+    const [remoteSearchResults, setRemoteSearchResults] = useState([]);
+    const [remoteSearchLoading, setRemoteSearchLoading] = useState(false);
     const [selectedTagId, setSelectedTagId] = useState(routeState.tagId);
-    const [selectionUiState, setSelectionUiState] = useState(() => loadSelectionUiState());
+    const [selectionUiState, setSelectionUiState] = useState(() =>
+      normalizeSelectionUiState({
+        ...loadSelectionUiState(),
+        ...routeState.selectionUiState,
+      })
+    );
     const [configState, setConfigState] = useState(() => tagBrowserCache.config || DEFAULT_CONFIG);
     const [configLoaded, setConfigLoaded] = useState(() => !!tagBrowserCache.config);
     const [selectedTagIds, setSelectedTagIds] = useState(() =>
-      routeState.tagId ? [String(routeState.tagId)] : []
+      routeState.selectedTagIds || []
     );
     const [selectedTab, setSelectedTab] = useState(routeState.tab);
     const [page, setPage] = useState(routeState.page);
@@ -2513,8 +2936,12 @@
       count: 0,
       items: [],
     });
+    const [tabCounts, setTabCounts] = useState({});
+    const [refreshRevision, setRefreshRevision] = useState(0);
+    const [contentRefreshRevision, setContentRefreshRevision] = useState(0);
     const itemRefs = useRef(new Map());
     const contentCache = useRef(tagBrowserCache.contentPages);
+    const randomSessionId = useRef(Math.random().toString(36).slice(2));
 
     useEffect(() => {
       let active = true;
@@ -2581,13 +3008,17 @@
       return () => {
         active = false;
       };
-    }, []);
+    }, [refreshRevision]);
 
     useEffect(() => {
       const handler = () => {
         if (window.location.pathname !== ROUTE_PATH) return;
         const next = parseRouteState();
         setSelectedTagId(next.tagId);
+        setSelectedTagIds(next.selectedTagIds || []);
+        if (next.hasSelectionQuery) {
+          setSelectionUiState(normalizeSelectionUiState(next.selectionUiState));
+        }
         setSelectedTab(next.tab);
         setPage(next.page);
       };
@@ -2645,14 +3076,33 @@
       const fallbackId = firstGroup?.parent?.id || firstGroup?.items?.[0]?.id || "";
       if (fallbackId) {
         setSelectedTagId(String(fallbackId));
-        setSelectedTagIds((prev) => (prev.length ? prev : [String(fallbackId)]));
+        setSelectedTagIds([String(fallbackId)]);
         setPage(1);
       }
     }, [treeState, selectedTagId]);
 
     useEffect(() => {
-      writeRouteState(selectedTagId, selectedTab, page);
-    }, [selectedTagId, selectedTab, page]);
+      writeRouteState(selectedTagId, selectedTagIds, selectedTab, page, selectionUiState);
+    }, [selectedTagId, selectedTagIds, selectedTab, page, selectionUiState]);
+
+    useEffect(() => {
+      const handleVisibilityChange = () => {
+        if (document.visibilityState !== "visible") return;
+        clearContentCache();
+        setContentRefreshRevision((previous) => previous + 1);
+      };
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+      return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+    }, []);
+
+    useEffect(() => {
+      const handleCacheInvalidation = () => {
+        clearContentCache();
+        setContentRefreshRevision((previous) => previous + 1);
+      };
+      window.addEventListener(CACHE_INVALIDATION_EVENT, handleCacheInvalidation);
+      return () => window.removeEventListener(CACHE_INVALIDATION_EVENT, handleCacheInvalidation);
+    }, []);
 
     useEffect(() => {
       if (!selectedTagId) return;
@@ -2698,6 +3148,7 @@
     }, [selectedTagId, activeFilterTagIds]);
 
     useEffect(() => {
+      if (treeState.loading) return;
       if (!activeFilterTagIds.length) {
         setContentState({
           loading: false,
@@ -2710,13 +3161,19 @@
 
       const activeSort = normalizeSortConfig(selectedTab, sortState?.[selectedTab]);
       const filterKey = activeFilterTagIds.join(",");
-      const cacheKey = `${selectionUiState.mode}:${selectionUiState.matchMode}:${filterKey}:${selectedTab}:${page}:${activeSort.sort}:${activeSort.direction}`;
-      if (contentCache.current.has(cacheKey)) {
-        setContentState(contentCache.current.get(cacheKey));
-        return;
+      const randomKey = activeSort.sort === "random" ? randomSessionId.current : "stable";
+      const cacheKey = `${selectionUiState.mode}:${selectionUiState.matchMode}:${filterKey}:${selectedTab}:${page}:${activeSort.sort}:${activeSort.direction}:${randomKey}`;
+      const shouldCache = true;
+      if (shouldCache) {
+        const cachedState = getCachedContentPage(contentCache.current, cacheKey);
+        if (cachedState) {
+          setContentState(cachedState);
+          return;
+        }
       }
 
       let active = true;
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
       setContentState((prev) => ({ ...prev, loading: true, error: "" }));
 
       fetchContentPage(
@@ -2724,7 +3181,8 @@
         selectedTab,
         page,
         activeSort,
-        selectionUiState.matchMode
+        selectionUiState.matchMode,
+        controller?.signal
       )
         .then((result) => {
           if (!active) return;
@@ -2734,11 +3192,16 @@
             count: result.count || 0,
             items: result.items || [],
           };
-          contentCache.current.set(cacheKey, nextState);
+          const totalPages = Math.max(1, Math.ceil(nextState.count / PAGE_SIZE));
+          if (page > totalPages) {
+            setPage(totalPages);
+            return;
+          }
+          if (shouldCache) setCachedContentPage(contentCache.current, cacheKey, nextState);
           setContentState(nextState);
         })
         .catch((err) => {
-          if (!active) return;
+          if (!active || isAbortError(err)) return;
           console.error("[TagBasedBrowser] failed to load content", err);
           setContentState({
             loading: false,
@@ -2750,6 +3213,7 @@
 
       return () => {
         active = false;
+        controller?.abort();
       };
     }, [
       activeFilterTagIds,
@@ -2758,6 +3222,73 @@
       sortState,
       selectionUiState.mode,
       selectionUiState.matchMode,
+      contentRefreshRevision,
+      treeState.loading,
+    ]);
+
+    useEffect(() => {
+      if (
+        treeState.loading ||
+        contentState.loading ||
+        !multiSelectEnabled ||
+        activeFilterTagIds.length <= 1
+      ) {
+        setTabCounts({});
+        return undefined;
+      }
+
+      let active = true;
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      const countTabs = TAB_DEFS.filter((tab) => tab.key !== selectedTab);
+      const timeoutId = window.setTimeout(() => {
+        Promise.all(
+          countTabs.map((tab) =>
+            fetchContentPage(
+              activeFilterTagIds,
+              tab.key,
+              1,
+              DEFAULT_SORT_STATE[tab.key],
+              selectionUiState.matchMode,
+              controller?.signal,
+              1
+            )
+              .then((result) => [tab.key, Number(result.count) || 0])
+              .catch((err) => {
+                if (isAbortError(err)) throw err;
+                console.warn(`[TagBasedBrowser] exact ${tab.key} count failed`, err);
+                return [tab.key, null];
+              })
+          )
+        )
+          .then((entries) => {
+            if (!active) return;
+            setTabCounts(
+              entries.reduce((counts, [tabKey, count]) => {
+                if (count !== null) counts[tabKey] = count;
+                return counts;
+              }, {})
+            );
+          })
+          .catch((err) => {
+            if (active && !isAbortError(err)) {
+              console.warn("[TagBasedBrowser] exact tab counts failed", err);
+              setTabCounts({});
+            }
+          });
+      }, 0);
+
+      return () => {
+        active = false;
+        window.clearTimeout(timeoutId);
+        controller?.abort();
+      };
+    }, [
+      activeFilterTagIds,
+      contentState.loading,
+      multiSelectEnabled,
+      selectedTab,
+      selectionUiState.matchMode,
+      treeState.loading,
     ]);
 
     const selectedTag = useMemo(() => {
@@ -2787,6 +3318,44 @@
         })
         .slice(0, 18);
     }, [searchQuery, treeState.searchIndex]);
+
+    useEffect(() => {
+      const needle = normalizeSearchText(searchQuery);
+      if (needle.length < 2 || searchResults.length) {
+        setRemoteSearchResults([]);
+        setRemoteSearchLoading(false);
+        return undefined;
+      }
+
+      let active = true;
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      setRemoteSearchLoading(true);
+      const timeoutId = window.setTimeout(() => {
+        fetchServerTagSearch(needle, controller?.signal)
+          .then((results) => {
+            if (active) setRemoteSearchResults(results);
+          })
+          .catch((err) => {
+            if (active && !isAbortError(err)) {
+              console.warn("[TagBasedBrowser] server tag search failed", err);
+              setRemoteSearchResults([]);
+            }
+          })
+          .finally(() => {
+            if (active) setRemoteSearchLoading(false);
+          });
+      }, 220);
+
+      return () => {
+        active = false;
+        window.clearTimeout(timeoutId);
+        controller?.abort();
+      };
+    }, [searchQuery, searchResults.length]);
+
+    const displayedSearchResults = searchResults.length
+      ? searchResults
+      : remoteSearchResults;
 
     const onToggle = useCallback((id) => {
       setExpandedIds((prev) => {
@@ -2852,19 +3421,74 @@
       const nextId = String(tagId);
       setSelectedTagIds((prev) => prev.filter((id) => String(id) !== nextId));
       setSelectedTagId((prev) => (String(prev || "") === nextId ? "" : prev));
+      setPage(1);
     }, []);
 
     const onSelectSearchResult = useCallback((result) => {
+      const nextId = String(result.id);
       setExpandedIds((prev) => {
         const next = new Set(prev instanceof Set ? prev : []);
         result.ancestorIds.forEach((id) => next.add(String(id)));
         return next;
       });
-      setSelectedTagId(String(result.id));
+      setSelectedTagId(nextId);
+      setSelectedTagIds((prev) => {
+        if (selectionUiState.mode === "single") return [nextId];
+        const current = (prev || []).map(String);
+        return current.includes(nextId) ? current : current.concat(nextId);
+      });
       setSelectedTab(DEFAULT_TAB);
       setPage(1);
       setSearchQuery("");
+    }, [selectionUiState.mode]);
+
+    const onSelectionModeChange = useCallback((mode) => {
+      const next = normalizeSelectionUiState({
+        ...selectionUiState,
+        mode,
+      });
+      setSelectionUiState(next);
+      setSelectedTagIds(
+        next.mode === "single" && selectedTagId
+          ? [String(selectedTagId)]
+          : next.mode === "single"
+          ? []
+          : selectedTagIds
+      );
+      setPage(1);
+    }, [selectionUiState, selectedTagId, selectedTagIds]);
+
+    const onSubTagContentChange = useCallback((subTagContent) => {
+      setSelectionUiState((prev) =>
+        normalizeSelectionUiState({
+          ...prev,
+          subTagContent,
+        })
+      );
+      setPage(1);
     }, []);
+
+    const onMatchModeChange = useCallback((matchMode) => {
+      setSelectionUiState((prev) =>
+        normalizeSelectionUiState({
+          ...prev,
+          matchMode,
+        })
+      );
+      setPage(1);
+    }, []);
+
+    const onRefresh = useCallback(() => {
+      if (treeState.loading) return;
+      clearContentCache();
+      clearSessionTagData();
+      tagBrowserCache.tagData = null;
+      tagBrowserCache.tagDataPromise = null;
+      tagBrowserCache.builtTree = null;
+      setContentState({ loading: true, error: "", count: 0, items: [] });
+      setTreeState((previous) => ({ ...previous, loading: true, error: "" }));
+      setRefreshRevision((previous) => previous + 1);
+    }, [treeState.loading]);
 
     const registerRef = useCallback((id, el) => {
       const key = String(id);
@@ -2920,43 +3544,31 @@
                 { className: "tag-browser__sidebar-header-actions" },
                 h(SelectionModeControl, {
                   value: selectionUiState.mode,
-                  onChange: (mode) =>
-                    setSelectionUiState((prev) => {
-                      const next = normalizeSelectionUiState({
-                        ...prev,
-                        mode,
-                      });
-                      if (next.mode === "single" && selectedTagId) {
-                        setSelectedTagIds([String(selectedTagId)]);
-                      } else if (next.mode === "multi" && selectedTagId && !selectedTagIdSet.size) {
-                        setSelectedTagIds([String(selectedTagId)]);
-                      }
-                      return next;
-                    }),
+                  onChange: onSelectionModeChange,
                 }),
                 h(SubTagContentControl, {
                   value: selectionUiState.subTagContent,
                   disabled: subTagContentDisabled,
-                  onChange: (subTagContent) =>
-                    setSelectionUiState((prev) =>
-                      normalizeSelectionUiState({
-                        ...prev,
-                        subTagContent,
-                      })
-                    ),
+                  onChange: onSubTagContentChange,
                 }),
                 h(MatchModeControl, {
                   value: selectionUiState.matchMode,
                   disabled: !multiSelectEnabled,
-                  onChange: (matchMode) =>
-                    setSelectionUiState((prev) =>
-                      normalizeSelectionUiState({
-                        ...prev,
-                        matchMode,
-                      })
-                    ),
+                  onChange: onMatchModeChange,
                 })
               )
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                className: "tag-browser__refresh-button",
+                disabled: treeState.loading,
+                title: "Refresh tags and content",
+                onClick: onRefresh,
+              },
+              h(FontAwesomeSvgIcon, { icon: "faArrowsRotate", title: null }),
+              treeState.loading ? "Refreshing" : "Refresh"
             )
           ),
           h(
@@ -2977,7 +3589,11 @@
                 })
               : null,
             searchQuery
-              ? h(SearchResults, { results: searchResults, onSelectResult: onSelectSearchResult })
+              ? h(SearchResults, {
+                  results: displayedSearchResults,
+                  loading: remoteSearchLoading,
+                  onSelectResult: onSelectSearchResult,
+                })
               : null
           ),
           h(
@@ -3023,11 +3639,19 @@
                         key: tab.key,
                         tab,
                         activeTab: selectedTab,
-                        count:
-                          multiSelectionActive
-                            ? getApproxTabCount(activeFilterTagIds, treeState.tagMap, tab.countKey)
-                            : getCountValue(selectedTag, tab.countKey),
-                        approximate: multiSelectionActive,
+                          count:
+                            multiSelectionActive &&
+                            (tab.key === selectedTab
+                              ? contentState.loading
+                              : tabCounts[tab.key] === undefined)
+                              ? null
+                              : tab.key === selectedTab
+                              ? contentState.count
+                              : multiSelectionActive
+                              ? tabCounts[tab.key]
+                              : getCountValue(selectedTag, tab.countKey),
+                        approximate:
+                          false,
                         onChange: (nextTab) => {
                           setSelectedTab(nextTab);
                           setPage(1);
@@ -3127,7 +3751,7 @@
     `;
     button.addEventListener("click", (event) => {
       event.preventDefault();
-      openTagBasedBrowserRoute();
+      openTagBasedBrowserInNewTab();
     });
     navbarButtons.insertBefore(button, navbarButtons.firstChild);
     return true;
@@ -3138,6 +3762,21 @@
       window.history.pushState({}, "", ROUTE_PATH);
     }
     window.dispatchEvent(new PopStateEvent("popstate"));
+  }
+
+  function consumeOpenRouteRequest() {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get(OPEN_ROUTE_QUERY_KEY) !== "1") return false;
+    url.searchParams.delete(OPEN_ROUTE_QUERY_KEY);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    return true;
+  }
+
+  function openTagBasedBrowserInNewTab() {
+    const url = new URL("/", window.location.origin);
+    url.searchParams.set(OPEN_ROUTE_QUERY_KEY, "1");
+    const opened = window.open(url.toString(), "_blank", "noopener,noreferrer");
+    if (!opened) openTagBasedBrowserRoute();
   }
 
   function openTagBasedBrowserRoute() {
@@ -3167,7 +3806,24 @@
     }, 100);
   }
 
+  function installLocationListener(PluginApi) {
+    if (!PluginApi?.Event?.addEventListener) return;
+    if (window.__tagBasedBrowserLocationListenerInstalled) return;
+
+    window.__tagBasedBrowserLocationListenerInstalled = true;
+    PluginApi.Event.addEventListener("stash:location", () => {
+      clearContentCache();
+      if (typeof window.Event === "function") {
+        window.dispatchEvent(new window.Event(CACHE_INVALIDATION_EVENT));
+      }
+      init();
+      ensureNavButton();
+      startBootstrapWatch();
+    });
+  }
+
   function installNavButton(PluginApi) {
+    installLocationListener(PluginApi);
     if (ensureNavButton()) return;
 
     const retryDelays = [0, 150, 500, 1200, 2500];
@@ -3177,15 +3833,6 @@
       }, delay);
     });
 
-    if (PluginApi?.Event?.addEventListener) {
-      if (!window.__tagBasedBrowserLocationListenerInstalled) {
-        window.__tagBasedBrowserLocationListenerInstalled = true;
-        PluginApi.Event.addEventListener("stash:location", () => {
-          init();
-          ensureNavButton();
-        });
-      }
-    }
   }
 
   function init() {
@@ -3202,6 +3849,10 @@
       window.__tagBasedBrowserRouteReady = true;
       installNavButton(PluginApi);
 
+      if (consumeOpenRouteRequest()) {
+        window.setTimeout(() => navigateToTagBasedBrowserRoute(), 50);
+      }
+
       if (window.location.pathname === ROUTE_PATH) {
         window.setTimeout(() => {
           window.dispatchEvent(new PopStateEvent("popstate"));
@@ -3217,20 +3868,28 @@
   function startBootstrapWatch() {
     if (window.__tagBasedBrowserBootstrapWatchStarted) return;
     window.__tagBasedBrowserBootstrapWatchStarted = true;
+    let attempts = 0;
 
     const tick = () => {
+      attempts += 1;
       init();
       ensureNavButton();
-      if (window.__tagBasedBrowserInitialized && document.getElementById(NAV_BUTTON_ID)) {
+      if (
+        (window.__tagBasedBrowserInitialized && document.getElementById(NAV_BUTTON_ID)) ||
+        attempts >= BOOTSTRAP_WATCH_MAX_ATTEMPTS
+      ) {
         if (window.__tagBasedBrowserBootstrapWatchId) {
           window.clearInterval(window.__tagBasedBrowserBootstrapWatchId);
           window.__tagBasedBrowserBootstrapWatchId = null;
         }
+        window.__tagBasedBrowserBootstrapWatchStarted = false;
       }
     };
 
     tick();
-    window.__tagBasedBrowserBootstrapWatchId = window.setInterval(tick, 1000);
+    if (window.__tagBasedBrowserBootstrapWatchStarted) {
+      window.__tagBasedBrowserBootstrapWatchId = window.setInterval(tick, 1000);
+    }
   }
 
   const retryDelays = [0, 150, 500, 1200, 2500];
@@ -3241,15 +3900,7 @@
     }, delay);
   });
 
-  if (window.PluginApi?.Event?.addEventListener) {
-    if (!window.__tagBasedBrowserInitLocationListenerInstalled) {
-      window.__tagBasedBrowserInitLocationListenerInstalled = true;
-      window.PluginApi.Event.addEventListener("stash:location", () => {
-        init();
-        ensureNavButton();
-      });
-    }
-  }
+  installLocationListener(window.PluginApi);
 
   startBootstrapWatch();
 })();
