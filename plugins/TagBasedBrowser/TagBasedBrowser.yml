@@ -1,6 +1,6 @@
 name: Tag Based Browser
 description: Hierarchical tag-based browser with split-view content browsing
-version: 0.1.0
+version: 0.1.4
 url: https://github.com/RollainKraus/stash-plugins
 
 settings:
