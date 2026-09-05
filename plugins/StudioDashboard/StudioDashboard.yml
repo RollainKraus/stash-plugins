@@ -1,6 +1,6 @@
 name: Studio Dashboard
 description: Adds a dashboard tab to studio pages with insights, performer and scene highlights, top tags, release timelines, configurable pie charts, and needs-attention checks
-version: 0.1.1
+version: 0.1.2
 ui:
   css:
     - StudioDashboard.css
