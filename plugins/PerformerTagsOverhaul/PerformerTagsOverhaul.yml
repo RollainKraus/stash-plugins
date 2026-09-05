@@ -1,6 +1,6 @@
 name: Performer Tags Overhaul
 description: Hierarchical tag browser for performer details with display and edit modes
-version: 0.1.4
+version: 0.1.5
 url: https://github.com/RollainKraus/stash-plugins
 
 settings:
