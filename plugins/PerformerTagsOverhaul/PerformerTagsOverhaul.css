@@ -8,6 +8,7 @@
   color: var(--pto-font-color);
   --pto-image-size: 72px;
   --pto-image-only-size: 80px;
+  --pto-leaf-track-size: 72px;
   --pto-image-columns: 3;
   --pto-effective-image-columns: 3;
   --pto-selected-border-color: #ffffff;
@@ -409,15 +410,20 @@
 .performer-tags-overhaul__leaf-wrap[data-display-mode="image"] {
   grid-template-columns: repeat(
     var(--pto-effective-image-columns),
-    var(--pto-image-only-size)
+    minmax(0, var(--pto-leaf-track-size))
   );
 }
 
 .performer-tags-overhaul__leaf-wrap[data-display-mode="imageAndText"] {
   grid-template-columns: repeat(
     var(--pto-effective-image-columns),
-    var(--pto-image-size)
+    minmax(0, var(--pto-leaf-track-size))
   );
+}
+
+.performer-tags-overhaul__leaf-wrap--strict {
+  width: max-content !important;
+  max-width: none !important;
 }
 
 .performer-tags-overhaul__tag {
@@ -529,6 +535,26 @@
   .performer-tags-overhaul__leaf-wrap[data-display-mode="image"],
   .performer-tags-overhaul__leaf-wrap[data-display-mode="imageAndText"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .performer-tags-overhaul__leaf-wrap--strict {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .performer-tags-overhaul__tag--image-only,
+  .performer-tags-overhaul__tag--image-and-text {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .performer-tags-overhaul__tag--image-only .performer-tags-overhaul__tag-image,
+  .performer-tags-overhaul__tag--image-and-text .performer-tags-overhaul__tag-image {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
   }
 }
 
