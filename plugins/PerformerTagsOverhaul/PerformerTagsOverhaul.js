@@ -1,11 +1,15 @@
 (function () {
   "use strict";
 
+  if (window.__performerTagsOverhaulLoaded) return;
+  window.__performerTagsOverhaulLoaded = true;
+
   const PLUGIN_ID = "PerformerTagsOverhaul";
   const PANEL_ID = "kmv-performer-tags-overhaul";
   const FALLBACK_GROUP_ID = "kmv-performer-tags-overhaul-host";
   const LAYOUT_CHANGED_EVENT = "performer-page-layout-changed";
   const ROUTE_RETRY_DELAYS = [0, 150, 400, 900, 1600];
+  const GRAPHQL_TIMEOUT_MS = 30000;
   const PINNED_SECTION_STATES_STORAGE_KEY =
     "PerformerTagsOverhaul:pinnedSectionStates:v1";
 
@@ -13,12 +17,15 @@
     currentPerformer: null,
     selectedTagIds: new Set(),
     allTags: null,
+    allTagsPromise: null,
     config: null,
+    configPromise: null,
     searchIndex: null,
     currentSearchQuery: "",
     currentMode: null,
     isSaving: false,
     isInjecting: false,
+    injectAbortController: null,
     injectToken: 0,
     scheduledRouteToken: 0,
     injectedForKey: null,
@@ -39,11 +46,59 @@
     },
   };
 
-  function gqlRequest(query, variables = {}) {
-    return fetch("/graphql", {
+  function isAbortError(error) {
+    return error?.name === "AbortError" || error?.code === 20;
+  }
+
+  function getAppBasePath() {
+    const baseHref = document.querySelector("base")?.getAttribute("href") || "/";
+    try {
+      const baseUrl = new URL(baseHref, window.location.href);
+      const basePath = baseUrl.pathname.replace(/\/+$/, "");
+      return basePath === "/" ? "" : basePath;
+    } catch {
+      return "";
+    }
+  }
+
+  function getAppRelativePath(pathname = window.location.pathname) {
+    const basePath = getAppBasePath();
+    if (basePath && pathname.startsWith(`${basePath}/`)) {
+      return pathname.slice(basePath.length);
+    }
+    return pathname;
+  }
+
+  function getAppPath(pathname) {
+    const normalizedPath = String(pathname || "").startsWith("/")
+      ? String(pathname)
+      : `/${pathname}`;
+    return `${getAppBasePath()}${normalizedPath}`;
+  }
+
+  function getGraphqlEndpoint() {
+    return getAppPath("/graphql");
+  }
+
+  function gqlRequest(query, variables = {}, options = {}) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(
+      () => controller.abort(),
+      GRAPHQL_TIMEOUT_MS
+    );
+    const parentSignal = options.signal;
+    const abortFromParent = () => controller.abort();
+
+    if (parentSignal) {
+      if (parentSignal.aborted) controller.abort();
+      else parentSignal.addEventListener("abort", abortFromParent, { once: true });
+    }
+
+    return fetch(getGraphqlEndpoint(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
+      signal: controller.signal,
       body: JSON.stringify({ query, variables }),
     })
       .then((res) => {
@@ -55,6 +110,10 @@
           throw new Error(json.errors.map((err) => err.message).join("; "));
         }
         return json.data;
+      })
+      .finally(() => {
+        window.clearTimeout(timeoutId);
+        parentSignal?.removeEventListener("abort", abortFromParent);
       });
   }
 
@@ -289,7 +348,7 @@
   }
 
   function getTagPerformersHref(tagId) {
-    return `/tags/${tagId}/performers`;
+    return getAppPath(`/tags/${tagId}/performers`);
   }
 
   function applyPanelVariables(panel, cfg) {
@@ -342,38 +401,53 @@
     );
   }
 
-  async function loadConfig(forceReload = false) {
+  async function loadConfig(forceReload = false, options = {}) {
     if (state.config && !forceReload) return state.config;
+    if (state.configPromise && !forceReload) return state.configPromise;
 
-    try {
-      const data = await gqlRequest(`
+    state.configPromise = gqlRequest(
+      `
         query PerformerTagsOverhaulConfig {
           configuration {
             plugins
           }
         }
-      `);
-      state.config = data?.configuration?.plugins?.[PLUGIN_ID] || {};
-    } catch (err) {
-      console.error("[PerformerTagsOverhaul] config load failed", err);
-      state.config = {};
-    }
+      `,
+      {},
+      options
+    )
+      .then((data) => {
+        state.config = data?.configuration?.plugins?.[PLUGIN_ID] || {};
+        return state.config;
+      })
+      .catch((err) => {
+        if (isAbortError(err)) throw err;
+        console.error("[PerformerTagsOverhaul] config load failed", err);
+        state.config = {};
+        return state.config;
+      })
+      .finally(() => {
+        state.configPromise = null;
+      });
+
+    const config = await state.configPromise;
 
     const uiState = getCurrentUiState();
     if (uiState && !uiState.mode) {
-      uiState.mode = getDefaultMode(state.config);
+      uiState.mode = getDefaultMode(config);
     }
     if (!state.currentMode) {
-      state.currentMode = uiState?.mode || getDefaultMode(state.config);
+      state.currentMode = uiState?.mode || getDefaultMode(config);
     }
 
-    return state.config;
+    return config;
   }
 
-  async function fetchAllTags() {
+  async function fetchAllTags(options = {}) {
     if (state.allTags) return state.allTags;
+    if (state.allTagsPromise) return state.allTagsPromise;
 
-    const data = await gqlRequest(`
+    state.allTagsPromise = gqlRequest(`
       query PerformerTagsOverhaulAllTags {
         findTags(filter: { per_page: -1, sort: "name", direction: ASC }) {
           tags {
@@ -388,23 +462,24 @@
               id
               name
               sort_name
-              parents {
-                id
-                name
-                sort_name
-              }
             }
           }
         }
       }
-    `);
+    `, {}, options)
+      .then((data) => {
+        state.allTags = data?.findTags?.tags || [];
+        return state.allTags;
+      })
+      .finally(() => {
+        state.allTagsPromise = null;
+      });
 
-    state.allTags = data?.findTags?.tags || [];
-    return state.allTags;
+    return state.allTagsPromise;
   }
 
   function getPerformerFromPath(pathname) {
-    const match = pathname.match(/^\/performers\/(\d+)/);
+    const match = getAppRelativePath(pathname).match(/^\/performers\/(\d+)/);
     if (!match) return null;
     return { id: match[1], type: "performer" };
   }
@@ -612,7 +687,7 @@
     }
   }
 
-  async function fetchPerformerTagIds(performerId) {
+  async function fetchPerformerTagIds(performerId, options = {}) {
     const data = await gqlRequest(
       `
         query FindPerformerForTagsOverhaul($id: ID!) {
@@ -624,7 +699,8 @@
           }
         }
       `,
-      { id: performerId }
+      { id: performerId },
+      options
     );
 
     return new Set((data?.findPerformer?.tags || []).map((tag) => String(tag.id)));
@@ -650,11 +726,11 @@
     return data?.performerUpdate?.id;
   }
 
-  async function ensureSelectedTagIds(performer) {
+  async function ensureSelectedTagIds(performer, options = {}) {
     const key = getCurrentKey(performer);
     if (state.loadedSelectionKey === key) return state.selectedTagIds;
 
-    state.selectedTagIds = await fetchPerformerTagIds(performer.id);
+    state.selectedTagIds = await fetchPerformerTagIds(performer.id, options);
     state.loadedSelectionKey = key;
     return state.selectedTagIds;
   }
@@ -680,11 +756,6 @@
           id: String(parent.id),
           name: parent.name,
           sort_name: parent.sort_name || parent.name || "",
-          parents: (parent.parents || []).map((grandparent) => ({
-            id: String(grandparent.id),
-            name: grandparent.name,
-            sort_name: grandparent.sort_name || grandparent.name || "",
-          })),
         })),
         childIds: (tag.children || []).map((child) => String(child.id)),
       });
@@ -707,41 +778,84 @@
     };
   }
 
+  function getParentChains(tagRecord, tagMap) {
+    const chains = [];
+
+    function visit(parentRef, childChain, visitedIds) {
+      const parentId = String(parentRef.id);
+      if (visitedIds.has(parentId)) {
+        chains.push(childChain);
+        return;
+      }
+
+      const parentRecord = tagMap.get(parentId);
+      const parent = parentRecord || {
+        id: parentId,
+        name: parentRef.name || parentId,
+        sort_name: parentRef.sort_name || parentRef.name || parentId,
+        image_path: parentRef.image_path || "",
+        parents: [],
+      };
+      const nextChain = [parent, ...childChain];
+      const nextVisitedIds = new Set(visitedIds);
+      nextVisitedIds.add(parentId);
+
+      if (!parent.parents.length) {
+        chains.push(nextChain);
+        return;
+      }
+
+      parent.parents.forEach((ancestor) => {
+        visit(ancestor, nextChain, nextVisitedIds);
+      });
+    }
+
+    tagRecord.parents.forEach((parent) => visit(parent, [], new Set([tagRecord.id])));
+    return chains;
+  }
+
   function getParentPaths(tagRecord, tagMap, duplicateMultiParentTags) {
     if (!tagRecord.parents.length) return [{ type: "ungrouped" }];
 
     const paths = [];
 
-    for (const immediateParent of tagRecord.parents) {
-      const parentRecord = tagMap.get(String(immediateParent.id));
+    for (const chain of getParentChains(tagRecord, tagMap)) {
+      if (!chain.length) continue;
 
-      if (parentRecord && parentRecord.parents && parentRecord.parents.length > 0) {
-        for (const topParent of parentRecord.parents) {
-          paths.push({
-            type: "subgroup",
-            topParent,
-            subgroupParent: parentRecord,
-          });
-          if (!duplicateMultiParentTags) return paths;
-        }
+      const topParent = chain[0];
+      if (chain.length === 1) {
+        paths.push({ type: "group", topParent });
       } else {
+        const immediateParent = chain[chain.length - 1];
         paths.push({
-          type: "group",
-          topParent: immediateParent,
+          type: "subgroup",
+          topParent,
+          ancestorPath: chain.map((parent) => parent.name).join(" > "),
+          subgroupParent: {
+            ...immediateParent,
+            id: chain.map((parent) => parent.id).join("/"),
+            name: chain.slice(1).map((parent) => parent.name).join(" > "),
+            sort_name: chain
+              .slice(1)
+              .map((parent) => parent.sort_name || parent.name || "")
+              .join(" > "),
+            linkId: immediateParent.id,
+          },
         });
-        if (!duplicateMultiParentTags) return paths;
       }
+
+      if (!duplicateMultiParentTags) break;
     }
 
     return paths;
   }
 
   function buildNestedGroups(tags, cfg, options = {}) {
-    const duplicateMultiParentTags = getConfigBoolean(
-      cfg.a_duplicateMultiParentTags,
-      false
-    );
     const mode = options.mode === "edit" ? "edit" : "display";
+    const duplicateMultiParentTags =
+      mode === "edit"
+        ? getConfigBoolean(cfg.a_duplicateMultiParentTags, false)
+        : true;
     const selectedOnly = !!options.selectedOnly;
     const showParentTagsAsLeaves = !!options.showParentTagsAsLeaves;
     const selectedTagIds = options.selectedTagIds || new Set();
@@ -787,6 +901,7 @@
           name: parentRecord.name,
           sort_name: parentRecord.sort_name || parentRecord.name || "",
           image_path: parentRecord.image_path || "",
+          linkId: parentRecord.linkId || parentRecord.id,
           children: [],
           childIds: new Set(),
         };
@@ -797,7 +912,6 @@
     }
 
     function addLeafToGroup(topGroup, tagRecord) {
-      if (!duplicateMultiParentTags && topGroup.leafIds.has(tagRecord.id)) return;
       if (topGroup.leafIds.has(tagRecord.id)) return;
       topGroup.items.push(createLeaf(tagRecord));
       topGroup.leafIds.add(tagRecord.id);
@@ -891,10 +1005,10 @@
   }
 
   function buildSearchIndex(tags, cfg, mode = "edit") {
-    const duplicateMultiParentTags = getConfigBoolean(
-      cfg.a_duplicateMultiParentTags,
-      false
-    );
+    const duplicateMultiParentTags =
+      mode === "edit"
+        ? getConfigBoolean(cfg.a_duplicateMultiParentTags, false)
+        : true;
     const tagMap = createTagMap(tags);
     const blacklistedTagIds = getBlacklistedTagIds(tags, cfg, mode, tagMap);
     const results = [];
@@ -919,10 +1033,12 @@
           groupId = String(path.topParent.id);
           if (parentTag) targetId = String(path.topParent.id);
         } else if (path.type === "subgroup") {
-          breadcrumb = `${path.topParent.name} > ${path.subgroupParent.name}`;
+          breadcrumb =
+            path.ancestorPath ||
+            `${path.topParent.name} > ${path.subgroupParent.name}`;
           groupId = String(path.topParent.id);
           subgroupId = String(path.subgroupParent.id);
-          if (parentTag) targetId = String(path.subgroupParent.id);
+          if (parentTag) targetId = String(path.subgroupParent.linkId || path.subgroupParent.id);
         }
 
         results.push({
@@ -1205,21 +1321,19 @@
     const trackSize = displayMode === "image" ? imageOnlySize : imageSize;
 
     wrap.style.setProperty("--pto-effective-image-columns", `${columns}`);
-    wrap.style.gridTemplateColumns = `repeat(${columns}, ${trackSize}px)`;
-    if (isStrictLeafLayout(cfg, mode)) {
-      wrap.style.width = "max-content";
-      wrap.style.maxWidth = "none";
-    } else {
-      wrap.style.removeProperty("width");
-      wrap.style.removeProperty("max-width");
-    }
+    wrap.style.setProperty("--pto-leaf-track-size", `${trackSize}px`);
+    wrap.classList.toggle(
+      "performer-tags-overhaul__leaf-wrap--strict",
+      isStrictLeafLayout(cfg, mode)
+    );
   }
 
   function createSubgroupSection(subgroup, cfg, mode) {
     const section = document.createElement("section");
     section.className = "performer-tags-overhaul__subgroup";
     section.setAttribute("data-pto-subgroup-id", subgroup.id);
-    section.setAttribute("data-pto-header-tag-id", subgroup.id);
+    const subgroupLinkId = subgroup.linkId || subgroup.id;
+    section.setAttribute("data-pto-header-tag-id", subgroupLinkId);
     if (isStrictLeafLayout(cfg, mode)) {
       section.classList.add("performer-tags-overhaul__subgroup--strict");
     }
@@ -1232,7 +1346,7 @@
 
     const title = createHeaderTitle(
       subgroup.name,
-      subgroup.id,
+      subgroupLinkId,
       cfg,
       "performer-tags-overhaul__subgroup-title",
       "performer-tags-overhaul__subgroup-title-link"
@@ -1263,7 +1377,7 @@
     if (mode === "edit") {
       const actions = document.createElement("div");
       actions.className = "performer-tags-overhaul__subgroup-actions";
-      actions.appendChild(createParentToggleButton(subgroup.id));
+      actions.appendChild(createParentToggleButton(subgroupLinkId));
       if (pinButton) actions.appendChild(pinButton);
       if (shouldShowCollapseButtons(cfg)) {
         actions.appendChild(
@@ -1495,12 +1609,14 @@
     displayButton.className = "performer-tags-overhaul__mode-button";
     displayButton.textContent = "Display";
     displayButton.setAttribute("data-pto-mode", "display");
+    displayButton.setAttribute("aria-pressed", state.currentMode === "display");
 
     const editButton = document.createElement("button");
     editButton.type = "button";
     editButton.className = "performer-tags-overhaul__mode-button";
     editButton.textContent = "Edit";
     editButton.setAttribute("data-pto-mode", "edit");
+    editButton.setAttribute("aria-pressed", state.currentMode === "edit");
 
     if (state.currentMode === "display") displayButton.classList.add("is-active");
     if (state.currentMode === "edit") editButton.classList.add("is-active");
@@ -1745,6 +1861,9 @@
   async function onTagToggle(tagId) {
     if (!state.currentPerformer || state.isSaving) return;
 
+    const performer = state.currentPerformer;
+    const performerKey = getCurrentKey(performer);
+
     const wasSelected = state.selectedTagIds.has(tagId);
     if (wasSelected) state.selectedTagIds.delete(tagId);
     else state.selectedTagIds.add(tagId);
@@ -1754,17 +1873,34 @@
     state.isSaving = true;
     document.body.classList.add("performer-tags-overhaul--saving");
 
+    let mutationSucceeded = false;
     try {
-      await savePerformerTagIds(
-        state.currentPerformer.id,
+      const updatedPerformerId = await savePerformerTagIds(
+        performer.id,
         Array.from(state.selectedTagIds)
       );
-      state.loadedSelectionKey = getCurrentKey(state.currentPerformer);
+      if (!updatedPerformerId) {
+        throw new Error("Performer tag update returned no performer id");
+      }
+      mutationSucceeded = true;
+
+      const currentPerformer = getPerformerFromPath(window.location.pathname);
+      if (!currentPerformer || getCurrentKey(currentPerformer) !== performerKey) {
+        return;
+      }
+
+      state.selectedTagIds = await fetchPerformerTagIds(performer.id);
+      state.loadedSelectionKey = performerKey;
+      rerenderPanel();
     } catch (err) {
       console.error("[PerformerTagsOverhaul] tag save failed", err);
-      if (wasSelected) state.selectedTagIds.add(tagId);
-      else state.selectedTagIds.delete(tagId);
-      syncRenderedSelectionStates();
+      if (!mutationSucceeded) {
+        if (wasSelected) state.selectedTagIds.add(tagId);
+        else state.selectedTagIds.delete(tagId);
+        syncRenderedSelectionStates();
+      } else {
+        state.loadedSelectionKey = null;
+      }
     } finally {
       state.isSaving = false;
       document.body.classList.remove("performer-tags-overhaul--saving");
@@ -1997,14 +2133,20 @@
 
     state.isInjecting = true;
     const token = ++state.injectToken;
+    const abortController = new AbortController();
+    state.injectAbortController = abortController;
+    const requestOptions = { signal: abortController.signal };
 
     try {
       state.currentPerformer = performer;
 
-      const [cfg, allTags] = await Promise.all([loadConfig(true), fetchAllTags()]);
+      const [cfg, allTags] = await Promise.all([
+        loadConfig(false, requestOptions),
+        fetchAllTags(requestOptions),
+      ]);
       const uiState = getCurrentUiState();
       state.currentMode = uiState?.mode || getDefaultMode(cfg);
-      await ensureSelectedTagIds(performer);
+      await ensureSelectedTagIds(performer, requestOptions);
 
       if (token !== state.injectToken) return false;
 
@@ -2042,6 +2184,9 @@
       state.injectedForKey = key;
       return true;
     } finally {
+      if (state.injectAbortController === abortController) {
+        state.injectAbortController = null;
+      }
       if (token === state.injectToken) state.isInjecting = false;
     }
   }
@@ -2053,6 +2198,7 @@
       setTimeout(() => {
         if (routeToken !== state.scheduledRouteToken) return;
         injectPanelIfPossible().catch((err) => {
+          if (isAbortError(err)) return;
           console.error("[PerformerTagsOverhaul] injection failed", err);
         });
       }, delay);
@@ -2065,6 +2211,7 @@
     setTimeout(() => {
       if (routeToken !== state.scheduledRouteToken) return;
       injectPanelIfPossible().catch((err) => {
+        if (isAbortError(err)) return;
         console.error("[PerformerTagsOverhaul] delayed injection failed", err);
       });
     }, delay);
@@ -2074,6 +2221,8 @@
     const path = window.location.pathname + window.location.search;
     if (path === state.lastPath) return;
     state.lastPath = path;
+    state.scheduledRouteToken += 1;
+    state.injectAbortController?.abort();
 
     if (!isSupportedPage()) {
       cleanupPanel();
@@ -2094,6 +2243,9 @@
   }
 
   function installHistoryHooks() {
+    if (window.__performerTagsOverhaulHistoryHooksInstalled) return;
+    window.__performerTagsOverhaulHistoryHooksInstalled = true;
+
     const originalPushState = history.pushState;
     const originalReplaceState = history.replaceState;
 
@@ -2155,6 +2307,7 @@
       state.observerTimer = setTimeout(() => {
         if (!isSupportedPage() || document.getElementById(PANEL_ID)) return;
         injectPanelIfPossible().catch((err) => {
+          if (isAbortError(err)) return;
           console.error("[PerformerTagsOverhaul] observer injection failed", err);
         });
       }, 250);
