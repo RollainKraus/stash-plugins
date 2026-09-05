@@ -1,6 +1,6 @@
 name: Stash Dashboard
 description: Adds a dedicated dashboard page for Stash-wide performer highlights, top tags, scene release timelines, highlighted scenes, and configurable pie charts
-version: 0.1.1
+version: 0.1.2
 ui:
   css:
     - StashDashboard.css
