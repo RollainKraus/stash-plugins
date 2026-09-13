@@ -280,6 +280,22 @@
     return !state.isPaused && state.isDocumentVisible && state.isInViewport;
   }
 
+  function playBannerVideo(video, retry = true) {
+    const isPlayable = () => video.isConnected &&
+      video.closest(".content-banners-media")?.classList.contains("is-active") &&
+      canPlayBannerMedia();
+    if (!isPlayable() || video.readyState < 3) return;
+    video.play().catch((error) => {
+      if (!isPlayable()) return;
+      // An interrupted play request does not mean the media is unusable.
+      if (isAbortError(error)) {
+        if (retry) requestAnimationFrame(() => playBannerVideo(video, false));
+      } else if (error?.name === "NotSupportedError") {
+        video.onerror?.();
+      }
+    });
+  }
+
   function syncPlaybackState() {
     getBannerVideos().forEach((video) => {
       video.playbackRate = state.speedMultiplier;
@@ -287,7 +303,7 @@
       if (!isActive || !canPlayBannerMedia()) {
         video.pause();
       } else {
-        video.play().catch(() => {});
+        playBannerVideo(video);
       }
     });
     updateControlsState();
@@ -821,22 +837,24 @@
 
     if (type === "video") {
       const video = document.createElement("video");
-      video.src = url;
       if (item.screenshot) video.poster = item.screenshot;
-      video.autoplay = true;
       video.muted = true;
+      video.defaultMuted = true;
       video.loop = true;
       video.playsInline = true;
-      video.preload = "metadata";
+      video.preload = "auto";
       video.playbackRate = state.speedMultiplier;
-      video.onerror = () => handleVideoFailure(slot, item);
-      video.addEventListener("loadeddata", () => slot.classList.remove("is-loading"), { once: true });
+      const isCurrent = () => slot.isConnected && video.parentNode === slot;
+      video.onerror = () => {
+        if (isCurrent()) handleVideoFailure(slot, item);
+      };
+      video.addEventListener("loadeddata", () => {
+        if (isCurrent()) slot.classList.remove("is-loading");
+      }, { once: true });
+      video.addEventListener("canplay", () => playBannerVideo(video));
+      video.src = url;
       slot.appendChild(video);
-      if (!slot.classList.contains("is-active") || !canPlayBannerMedia()) {
-        video.pause();
-      } else {
-        video.play().catch(() => handleVideoFailure(slot, item));
-      }
+      playBannerVideo(video);
     } else {
       renderImage(slot, url, item);
     }
