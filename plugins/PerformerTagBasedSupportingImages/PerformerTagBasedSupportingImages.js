@@ -4386,12 +4386,7 @@
     }
 
     if (!slot.images.length) {
-      slotEl.appendChild(createSlotInfo(slot, cfg, getSlotInfoPosition(cfg)));
-      slotEl.appendChild(
-        createEmptyState(
-          "No matching image found for this performer and tag combination."
-        )
-      );
+      slotEl.hidden = true;
       return slotEl;
     }
 
@@ -4564,10 +4559,20 @@
     return slotEl;
   }
 
+  function shouldRenderPanelSlot(slot) {
+    if (!slot) return false;
+    if ((slot.images?.length || 0) > 0) return true;
+    if (slot.missingTags?.length) return true;
+    return !!slot.error;
+  }
+
   function renderPanel() {
     const cfg = state.config || {};
     const data = state.panelData;
-    if (!data || !data.slots.length) return null;
+    const slots = Array.isArray(data?.slots)
+      ? data.slots.filter(shouldRenderPanelSlot)
+      : [];
+    if (!slots.length) return null;
 
     const panel = document.createElement("aside");
     panel.id = PANEL_ID;
@@ -4583,24 +4588,24 @@
     const slotsWrap = document.createElement("div");
     slotsWrap.className = "performer-tag-based-supporting-images__slots";
 
-    const loopSlots = shouldEnableLoopingSlots(data.slots, cfg);
+    const loopSlots = shouldEnableLoopingSlots(slots, cfg);
     if (loopSlots) {
       slotsWrap.classList.add("performer-tag-based-supporting-images__slots--loop");
       slotsWrap.setAttribute(
         "data-ptbsi-loop-segment-size",
-        String(data.slots.length)
+        String(slots.length)
       );
     }
 
     const renderSource = loopSlots
       ? Array.from({ length: LOOP_REPEAT_COUNT }, (_, repeatIndex) =>
-          data.slots.map((slot) => ({
+          slots.map((slot) => ({
             slot,
             repeatIndex,
             isLoopClone: repeatIndex !== 1,
           }))
         ).flat()
-      : data.slots.map((slot) => ({
+      : slots.map((slot) => ({
           slot,
           repeatIndex: 0,
           isLoopClone: false,
