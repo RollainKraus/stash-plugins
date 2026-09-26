@@ -1,6 +1,6 @@
 name: Performer Tag Based Supporting Images
 description: Supporting performer images selected by performer plus slot tag rules
-version: 2.3.1
+version: 2.4.0
 url: https://github.com/RollainKraus/stash-plugins
 
 settings:
@@ -119,6 +119,11 @@ settings:
     type: STRING
     description: "Comma-separated tag names required for slot 1 matches (Default: empty)"
 
+  b1_slot1ScanTarget:
+    displayName: Slot 1 Scan Category
+    type: STRING
+    description: "Optional Supporting Image Lab category: breasts, ass, genitals, or face"
+
   c_slot1Label:
     displayName: Slot 1 Label
     type: STRING
@@ -133,6 +138,11 @@ settings:
     displayName: Slot 2 Tags
     type: STRING
     description: "Comma-separated tag names required for slot 2 matches (Default: empty)"
+
+  d1_slot2ScanTarget:
+    displayName: Slot 2 Scan Category
+    type: STRING
+    description: "Optional Supporting Image Lab category: breasts, ass, genitals, or face"
 
   e_slot2Label:
     displayName: Slot 2 Label
@@ -149,6 +159,11 @@ settings:
     type: STRING
     description: "Comma-separated tag names required for slot 3 matches (Default: empty)"
 
+  f1_slot3ScanTarget:
+    displayName: Slot 3 Scan Category
+    type: STRING
+    description: "Optional Supporting Image Lab category: breasts, ass, genitals, or face"
+
   g_slot3Label:
     displayName: Slot 3 Label
     type: STRING
@@ -163,6 +178,11 @@ settings:
     displayName: Slot 4 Tags
     type: STRING
     description: "Comma-separated tag names required for slot 4 matches (Default: empty)"
+
+  h1_slot4ScanTarget:
+    displayName: Slot 4 Scan Category
+    type: STRING
+    description: "Optional Supporting Image Lab category: breasts, ass, genitals, or face"
 
   i_slot4Label:
     displayName: Slot 4 Label
@@ -179,6 +199,11 @@ settings:
     type: STRING
     description: "Comma-separated tag names required for slot 5 matches (Default: empty)"
 
+  j1_slot5ScanTarget:
+    displayName: Slot 5 Scan Category
+    type: STRING
+    description: "Optional Supporting Image Lab category: breasts, ass, genitals, or face"
+
   k_slot5Label:
     displayName: Slot 5 Label
     type: STRING
@@ -193,6 +218,11 @@ settings:
     displayName: Slot 6 Tags
     type: STRING
     description: "Comma-separated tag names required for slot 6 matches (Default: empty)"
+
+  l1_slot6ScanTarget:
+    displayName: Slot 6 Scan Category
+    type: STRING
+    description: "Optional Supporting Image Lab category: breasts, ass, genitals, or face"
 
   m_slot6Label:
     displayName: Slot 6 Label
