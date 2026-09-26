@@ -20,6 +20,8 @@
   const COLLAPSED_STORAGE_KEY = "ptbsi-panel-collapsed-v1";
   const BACKUP_VERSION = 1;
   const SLOT_ASPECT_MODES = ["tall", "portrait", "square", "landscape", "widescreen"];
+  const LAB_TARGETS = new Set(["breasts", "ass", "genitals", "face"]);
+  const LAB_REFRESH_KEY = "performer-supporting-image-lab:imported";
   const LOOP_REPEAT_COUNT = 3;
   const LAYOUT_REFRESH_DELAYS = [0, 80, 180, 320];
   const QUICK_TAG_CLOSE_DELAY_MS = 140;
@@ -50,6 +52,7 @@
     panelData: null,
     panelKey: null,
     isInjecting: false,
+    pendingInjection: false,
     injectToken: 0,
     scheduledRouteToken: 0,
     scheduledLayoutToken: 0,
@@ -683,7 +686,7 @@
   }
 
   function getPerformerFromPath(pathname) {
-    const match = pathname.match(/^\/performers\/(\d+)/);
+    const match = pathname.match(/^\/performers\/(\d+)(?:\/|$)/);
     if (!match) return null;
     return { id: match[1], type: "performer" };
   }
@@ -969,10 +972,6 @@
     }
   }
 
-  function updateLoopReelSizing(panel) {
-    void panel;
-  }
-
   function updateFloatingPanelLayout() {
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
@@ -1046,7 +1045,6 @@
     applyRailSizing(host, panel, availableHeight, {
       compact: isCompactViewport,
     });
-    updateLoopReelSizing(panel);
   }
 
   function getSelectionMode(cfg) {
@@ -1066,7 +1064,8 @@
     return (
       getConfigBoolean(cfg?.a_loopSlots, true) &&
       Array.isArray(slots) &&
-      slots.length > 1
+      slots.length > 1 &&
+      slots.every((slot) => (slot.images?.length || 0) > 0)
     );
   }
 
@@ -1284,12 +1283,9 @@
 
   function readConfigValue(cfg, key, legacyKey) {
     if (cfg && Object.prototype.hasOwnProperty.call(cfg, key)) {
-      const value = cfg[key];
-      if (value !== undefined && value !== null) {
-        return value;
-      }
+      return cfg[key];
     }
-    return legacyKey ? cfg?.[legacyKey] : undefined;
+    return legacyKey && cfg ? cfg[legacyKey] : undefined;
   }
 
   function getSlotConfigs(cfg) {
@@ -1297,6 +1293,7 @@
       {
         key: "slot1",
         tagNames: parseTagList(cfg.b_slot1Tags || ""),
+        scanTarget: String(cfg.b1_slot1ScanTarget || "").trim().toLowerCase(),
         customLabel: parseLabelText(readConfigValue(cfg, "c_slot1Label", "j_slot1Label")),
         includeDescendantTags: getConfigBoolean(
           readConfigValue(cfg, "c1_slot1IncludeSubTags"),
@@ -1306,6 +1303,7 @@
       {
         key: "slot2",
         tagNames: parseTagList(readConfigValue(cfg, "d_slot2Tags", "c_slot2Tags")),
+        scanTarget: String(cfg.d1_slot2ScanTarget || "").trim().toLowerCase(),
         customLabel: parseLabelText(readConfigValue(cfg, "e_slot2Label", "k_slot2Label")),
         includeDescendantTags: getConfigBoolean(
           readConfigValue(cfg, "e1_slot2IncludeSubTags"),
@@ -1315,6 +1313,7 @@
       {
         key: "slot3",
         tagNames: parseTagList(readConfigValue(cfg, "f_slot3Tags", "d_slot3Tags")),
+        scanTarget: String(cfg.f1_slot3ScanTarget || "").trim().toLowerCase(),
         customLabel: parseLabelText(readConfigValue(cfg, "g_slot3Label", "l_slot3Label")),
         includeDescendantTags: getConfigBoolean(
           readConfigValue(cfg, "g1_slot3IncludeSubTags"),
@@ -1324,6 +1323,7 @@
       {
         key: "slot4",
         tagNames: parseTagList(readConfigValue(cfg, "h_slot4Tags", "e_slot4Tags")),
+        scanTarget: String(cfg.h1_slot4ScanTarget || "").trim().toLowerCase(),
         customLabel: parseLabelText(readConfigValue(cfg, "i_slot4Label", "m_slot4Label")),
         includeDescendantTags: getConfigBoolean(
           readConfigValue(cfg, "i1_slot4IncludeSubTags"),
@@ -1333,6 +1333,7 @@
       {
         key: "slot5",
         tagNames: parseTagList(readConfigValue(cfg, "j_slot5Tags", "f_slot5Tags")),
+        scanTarget: String(cfg.j1_slot5ScanTarget || "").trim().toLowerCase(),
         customLabel: parseLabelText(readConfigValue(cfg, "k_slot5Label", "n_slot5Label")),
         includeDescendantTags: getConfigBoolean(
           readConfigValue(cfg, "k1_slot5IncludeSubTags"),
@@ -1342,6 +1343,7 @@
       {
         key: "slot6",
         tagNames: parseTagList(readConfigValue(cfg, "l_slot6Tags", "g_slot6Tags")),
+        scanTarget: String(cfg.l1_slot6ScanTarget || "").trim().toLowerCase(),
         customLabel: parseLabelText(readConfigValue(cfg, "m_slot6Label", "o_slot6Label")),
         includeDescendantTags: getConfigBoolean(
           readConfigValue(cfg, "m1_slot6IncludeSubTags"),
@@ -4209,6 +4211,16 @@
     return empty;
   }
 
+  function canOpenSupportingImageLab(slot) {
+    return Boolean(
+      typeof window.PerformerSupportingImageLab?.open === "function" &&
+      LAB_TARGETS.has(slot?.scanTarget) &&
+      slot?.tagNames?.length &&
+      !slot?.missingTags?.length &&
+      slot?.performerId
+    );
+  }
+
   function createSlotInfo(slot, cfg, infoPosition) {
     const tagText = slot.customLabel || (slot.tagNames.length
       ? slot.tagNames.join(", ")
@@ -4237,6 +4249,17 @@
     }
     label.textContent = tagText;
     info.appendChild(label);
+
+    if (canOpenSupportingImageLab(slot)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "performer-tag-based-supporting-images__scan-action";
+      button.setAttribute("data-ptbsi-scan-slot", slot.key);
+      button.setAttribute("aria-label", `Find ${slot.scanTarget} candidates for ${getSlotDisplayName(slot)}`);
+      button.title = `Find ${slot.scanTarget} candidates`;
+      button.textContent = "\u2315";
+      info.appendChild(button);
+    }
 
     if (slot.tagNames.length) {
       const tooltip = document.createElement("div");
@@ -4386,7 +4409,12 @@
     }
 
     if (!slot.images.length) {
-      slotEl.hidden = true;
+      if (canOpenSupportingImageLab(slot)) {
+        slotEl.classList.add("performer-tag-based-supporting-images__slot--lab-empty");
+        slotEl.appendChild(createSlotInfo(slot, cfg, infoPosition));
+      } else {
+        slotEl.hidden = true;
+      }
       return slotEl;
     }
 
@@ -4562,6 +4590,7 @@
   function shouldRenderPanelSlot(slot) {
     if (!slot) return false;
     if ((slot.images?.length || 0) > 0) return true;
+    if (canOpenSupportingImageLab(slot)) return true;
     if (slot.missingTags?.length) return true;
     return !!slot.error;
   }
@@ -4909,7 +4938,6 @@
     );
     if (!slotsWrap) return;
 
-    updateLoopReelSizing(panel);
     const segmentSize = Number(
       slotsWrap.getAttribute("data-ptbsi-loop-segment-size")
     );
@@ -4944,6 +4972,17 @@
 
   function attachPanelEvents(panel) {
     panel.addEventListener("click", (event) => {
+      const scanAction = event.target.closest("[data-ptbsi-scan-slot]");
+      if (scanAction) {
+        event.preventDefault();
+        event.stopPropagation();
+        const key = scanAction.getAttribute("data-ptbsi-scan-slot");
+        const slot = state.panelData?.slots?.find((item) => item.key === key);
+        if (canOpenSupportingImageLab(slot)) {
+          window.PerformerSupportingImageLab.open({ performerId: slot.performerId, slotKey: key });
+        }
+        return;
+      }
       const panelToggle = event.target.closest("[data-ptbsi-panel-toggle]");
       if (panelToggle) {
         event.preventDefault();
@@ -5050,6 +5089,8 @@
   }
 
   function scheduleRouteInjection() {
+    state.injectToken += 1;
+    if (state.isInjecting) state.pendingInjection = true;
     state.scheduledRouteToken += 1;
     const token = state.scheduledRouteToken;
     ROUTE_RETRY_DELAYS.forEach((delay) => {
@@ -5232,9 +5273,10 @@
         state.slotIndices = new Map();
       }
 
-      state.currentPerformer = performer;
-      state.panelData = await buildPanelData(performer, cfg);
+      const panelData = await buildPanelData(performer, cfg);
       if (token !== state.injectToken) return;
+      state.currentPerformer = performer;
+      state.panelData = panelData;
 
       cleanupPanel({ preserveHost: true });
 
@@ -5254,11 +5296,16 @@
       console.error("[PerformerTagBasedSupportingImages] inject failed", err);
     } finally {
       state.isInjecting = false;
+      if (state.pendingInjection) {
+        state.pendingInjection = false;
+        void injectPanel();
+      }
     }
   }
 
   function disposePluginInstance() {
     state.injectToken += 1;
+    state.pendingInjection = false;
     state.scheduledRouteToken += 1;
     state.scheduledLayoutToken += 1;
 
@@ -5306,6 +5353,14 @@
       window.removeEventListener(LAYOUT_CHANGED_EVENT, state.layoutChangedHandler);
       state.layoutChangedHandler = null;
     }
+    if (state.labReadyHandler) {
+      window.removeEventListener("performer-supporting-image-lab:ready", state.labReadyHandler);
+      state.labReadyHandler = null;
+    }
+    if (state.labImportHandler) {
+      window.removeEventListener("storage", state.labImportHandler);
+      state.labImportHandler = null;
+    }
     if (state.navigationHooksInstalled) {
       window.removeEventListener("popstate", state.handlePopState);
       window.removeEventListener("ptbsi:navigation", state.handleNavigation);
@@ -5323,6 +5378,14 @@
     const path = window.location.pathname;
     if (path === state.lastPath) return;
     state.lastPath = path;
+    const nextPerformer = getPerformerFromPath(path);
+    if (String(nextPerformer?.id || "") !== String(state.currentPerformer?.id || "")) {
+      cleanupPanel();
+      state.currentPerformer = null;
+      state.panelData = null;
+      state.panelKey = null;
+      state.slotIndices = new Map();
+    }
     closeCropEditor();
     closeOtherQuickTagMenus(null);
     closePerformerCardPreviewImmediate();
@@ -5347,6 +5410,30 @@
     installPerformerCardPreviewObserver();
     installDetailInteractionHook();
     installLayoutHandlers();
+    state.labReadyHandler = () => window.dispatchEvent(new Event(LAYOUT_CHANGED_EVENT));
+    state.labImportHandler = (event) => {
+      if (event.key !== LAB_REFRESH_KEY) return;
+      let performerId;
+      try {
+        const payload = JSON.parse(event.newValue || "{}");
+        performerId = String(payload.performerId || "");
+        if (!/^\d+$/.test(performerId)) return;
+      } catch (_error) {
+        return;
+      }
+      invalidatePerformerCardPreviewCache(performerId);
+      if (
+        state.cardPreviewActivePerformerId === performerId &&
+        state.cardPreviewActiveCard?.isConnected
+      ) {
+        void openPerformerCardPreview(state.cardPreviewActiveCard, { forceRefresh: true });
+      }
+      if (performerId !== getPerformerFromPath(window.location.pathname)?.id) return;
+      state.panelKey = null;
+      scheduleRouteInjection();
+    };
+    window.addEventListener("performer-supporting-image-lab:ready", state.labReadyHandler);
+    window.addEventListener("storage", state.labImportHandler);
     state.lastPath = window.location.pathname;
     if (isPerformerPage()) {
       refreshObservedElements();
