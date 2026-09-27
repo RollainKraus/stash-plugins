@@ -29,6 +29,7 @@
         root: null,
         entityId: null,
         galleryMode: false,
+        uniqueScenePage: false,
         uniquePerformerPage: false,
         performerGalleryMode: false,
         performerEntityId: null,
@@ -57,7 +58,6 @@
         slideshowTimer: 0,
         transitionTimer: 0,
         navigationToken: 0,
-        viewButtonSetupToken: 0,
         backgroundDisplayMode: BACKGROUND_MODE_ENABLED,
     };
 
@@ -176,13 +176,8 @@
         const config = plugins?.data?.configuration?.plugins?.[PLUGIN_ID] || {};
 
         state.entityId = config.id;
-
-        if (!state.entityId) {
-            console.error('No ID set for Background Images Slideshow plugin.');
-            return;
-        }
-
         state.galleryMode = getConfigBoolean(config.mode, false);
+        state.uniqueScenePage = getConfigBoolean(config.scenePage, false);
         state.uniquePerformerPage = getConfigBoolean(config.performerPage, false);
         state.performerGalleryMode = getConfigBoolean(config.performerPageEntity, false);
         state.performerEntityId = config.performerPageId ?? null;
@@ -247,12 +242,21 @@
         );
         applyThemeCompatibilityStyles();
         ensureBackgroundContainer();
+        setupViewBackgroundButton();
+        installHeaderObserver();
+        applyBackgroundDisplayMode();
 
-        state.globalBackgroundImages = await getBackgroundImages();
+        if (state.entityId) {
+            try {
+                state.globalBackgroundImages = await getBackgroundImages();
+            } catch (err) {
+                console.warn('Could not load global background images.', err);
+            }
+        }
 
         installNavigationHooks();
 
-        if (state.uniquePerformerPage) {
+        if (state.uniqueScenePage || state.uniquePerformerPage) {
             await onPageNavigation();
         } else {
             setActiveBackgrounds(state.globalBackgroundImages, 'global');
@@ -263,7 +267,12 @@
     };
 
     const getCurrentPerformerId = () => {
-        const match = location.pathname.match(/\/performers\/(\d+)/);
+        const match = location.pathname.match(/^\/performers\/(\d+)(?:\/|$)/);
+        return match ? match[1] : '';
+    };
+
+    const getCurrentSceneId = () => {
+        const match = location.pathname.match(/^\/scenes\/(\d+)(?:\/|$)/);
         return match ? match[1] : '';
     };
 
@@ -323,14 +332,30 @@
         return layer;
     };
 
-    /**
-     * Handler for page navigation when unique performer background mode is enabled.
-     */
+    /** Select the scene, performer, or global source after navigation. */
     const onPageNavigation = async () => {
         const token = ++state.navigationToken;
+        const sceneId = state.uniqueScenePage ? getCurrentSceneId() : '';
+        if (sceneId) {
+            let screenshot = '';
+            try {
+                screenshot = await getSceneScreenshot(sceneId);
+            } catch (err) {
+                console.warn('Could not load scene background image.', err);
+            }
+            if (token !== state.navigationToken || getCurrentSceneId() !== sceneId) return;
+
+            setActiveBackgrounds(
+                screenshot ? [screenshot] : state.globalBackgroundImages,
+                screenshot ? `scene:${sceneId}` : 'global'
+            );
+            applyBackgroundDisplayMode();
+            return;
+        }
+
         const performerId = getCurrentPerformerId();
 
-        if (performerId) {
+        if (performerId && state.uniquePerformerPage) {
             const images = await getBackgroundImages(performerId);
             if (token !== state.navigationToken || getCurrentPerformerId() !== performerId) return;
 
@@ -349,7 +374,7 @@
     const onAppNavigation = () => {
         setupViewBackgroundButton();
 
-        if (state.uniquePerformerPage) {
+        if (state.uniqueScenePage || state.uniquePerformerPage) {
             onPageNavigation();
         } else {
             applyBackgroundDisplayMode();
@@ -404,11 +429,26 @@
         window.addEventListener(NAVIGATION_EVENT, hooks.navigationListener);
     };
 
+    const installHeaderObserver = () => {
+        const hooks = window[GLOBAL_HOOK_KEY] || {};
+        window[GLOBAL_HOOK_KEY] = hooks;
+        hooks.headerObserver?.disconnect();
+        hooks.headerObserver = new MutationObserver(() => {
+            if (!state.showViewBackgroundButton) return;
+            const parent = document.querySelector('.navbar-buttons');
+            if (parent && !parent.querySelector('.background-images-slideshow__view')) {
+                setupViewBackgroundButton();
+            }
+        });
+        hooks.headerObserver.observe(state.root, { childList: true, subtree: true });
+    };
+
     const setActiveBackgrounds = (images, sourceKey) => {
         clearSlideshowTimer();
         state.activeImages = Array.isArray(images) ? images.filter(Boolean) : [];
         state.activeImageIndex = 0;
         state.activeSourceKey = sourceKey;
+        updateBackgroundControlButton();
 
         setBackground(getColumnImages(state.activeImageIndex), true);
 
@@ -633,31 +673,25 @@
         }, state.transitionDurationMs);
     };
 
-    /**
-     * Create and prepend the background display control in the nav bar utilities.
-     */
-    const setupViewBackgroundButton = async () => {
-        const setupToken = ++state.viewButtonSetupToken;
+    /** Keep the control attached when Stash replaces the header during navigation. */
+    const setupViewBackgroundButton = () => {
         if (!state.showViewBackgroundButton) {
             setBackgroundDisplayMode(BACKGROUND_MODE_ENABLED, { persist: true });
             document.querySelector('.background-images-slideshow__view')?.remove();
             return;
         }
 
-        const parentNode = await waitForElement('.navbar-buttons', 2500);
-        if (setupToken !== state.viewButtonSetupToken || !parentNode) return;
-        const existingNode = document.querySelector('.background-images-slideshow__view');
-        if (existingNode) {
-            existingNode.remove();
+        const parentNode = document.querySelector('.navbar-buttons');
+        if (!parentNode) return;
+        let node = document.querySelector('.background-images-slideshow__view');
+        if (!node) {
+            node = document.createElement('button');
+            node.type = 'button';
+            node.className = 'nav-utility btn minimal background-images-slideshow__view';
+            node.addEventListener('click', cycleBackgroundDisplayMode);
         }
-
-        const node = document.createElement('button');
-        node.classList = 'nav-utility btn minimal background-images-slideshow__view';
-
-        node.addEventListener('click', cycleBackgroundDisplayMode);
+        if (node.parentElement !== parentNode) parentNode.append(node);
         updateBackgroundControlButton(node);
-
-        parentNode.append(node);
     };
 
     const getBackgroundControlMeta = () => {
@@ -685,12 +719,15 @@
         if (!node) return;
         const meta = getBackgroundControlMeta();
         node.innerHTML = meta.icon;
-        node.title = meta.title;
-        node.setAttribute('aria-label', meta.title);
+        const title = state.activeImages.length ? meta.title : 'No background images are available on this page.';
+        node.title = title;
+        node.setAttribute('aria-label', title);
         node.dataset.backgroundMode = state.backgroundDisplayMode;
+        node.disabled = !state.activeImages.length;
     };
 
     const cycleBackgroundDisplayMode = () => {
+        if (!state.activeImages.length) return;
         if (state.backgroundDisplayMode === BACKGROUND_MODE_ENABLED) {
             setBackgroundDisplayMode(BACKGROUND_MODE_VIEWING, { persist: true });
             return;
@@ -716,7 +753,7 @@
 
         applyThemeCompatibilityStyles();
 
-        if (state.backgroundDisplayMode === BACKGROUND_MODE_VIEWING) {
+        if (state.backgroundDisplayMode === BACKGROUND_MODE_VIEWING && state.activeImages.length) {
             document.documentElement.classList.add('background-images-slideshow--viewing');
             document.addEventListener('keydown', escapeListener);
         } else {
@@ -749,6 +786,8 @@
     };
 
     const getBackgroundImages = async (performerId) => {
+        const sourceId = performerId ? state.performerEntityId ?? state.entityId : state.entityId;
+        if (!sourceId) return [];
         const images = await makeRequest(
             imageRequest(
                 performerId,
@@ -758,6 +797,17 @@
         return (images?.data?.findImages?.images || [])
             .map((image) => image?.paths?.image)
             .filter(Boolean);
+    };
+
+    const getSceneScreenshot = async (sceneId) => {
+        const result = await makeRequest({
+            operationName: 'BackgroundSceneScreenshot',
+            query: `query BackgroundSceneScreenshot($id: ID!) {
+                findScene(id: $id) { paths { screenshot } }
+            }`,
+            variables: { id: sceneId },
+        });
+        return result?.data?.findScene?.paths?.screenshot || '';
     };
 
     const configRequest = {
