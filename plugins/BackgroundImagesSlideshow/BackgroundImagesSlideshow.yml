@@ -20,9 +20,9 @@ settings:
     description: When true, performer pages use background images containing the current performer. If none are found, the global background is used.
     type: BOOLEAN
   scenePage:
-    displayName: Unique Scene Backgrounds (optional)
-    description: When true, scene detail pages use that scene's Stash-generated screenshot. If unavailable, the global background is used. Default false.
-    type: BOOLEAN
+    displayName: Scene Background Mode (optional)
+    description: "Enter disable, thumbnail, or preview. Preview plays the scene's generated clip silently and falls back to its screenshot, then the global background. Existing true/false values remain supported. Default: disable."
+    type: STRING
   performerPageId:
     displayName: Performer Source ID (optional)
     description: Optional tag or gallery ID for performer page backgrounds. If unset, the global source ID is used.
