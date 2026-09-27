@@ -69,6 +69,11 @@
     opacity: 0.55;
 }
 
+.background-images-slideshow__view:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
 html.background-images-slideshow--viewing .main {
     opacity: 0 !important;
 }
