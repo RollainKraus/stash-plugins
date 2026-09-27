@@ -9,6 +9,9 @@
     const BACKGROUND_MODE_ENABLED = 'enabled';
     const BACKGROUND_MODE_VIEWING = 'viewing';
     const BACKGROUND_MODE_DISABLED = 'disabled';
+    const SCENE_MODE_DISABLED = 'disable';
+    const SCENE_MODE_THUMBNAIL = 'thumbnail';
+    const SCENE_MODE_PREVIEW = 'preview';
     const DEFAULT_BACKGROUND_OPACITY = 0.3;
     const DEFAULT_BACKGROUND_BRIGHTNESS = 1;
     const DEFAULT_BACKGROUND_SATURATION = 1;
@@ -29,7 +32,7 @@
         root: null,
         entityId: null,
         galleryMode: false,
-        uniqueScenePage: false,
+        sceneBackgroundMode: SCENE_MODE_DISABLED,
         uniquePerformerPage: false,
         performerGalleryMode: false,
         performerEntityId: null,
@@ -59,6 +62,14 @@
         transitionTimer: 0,
         navigationToken: 0,
         backgroundDisplayMode: BACKGROUND_MODE_ENABLED,
+        scenePreviewUrl: '',
+        scenePreviewFailed: false,
+        sceneVideo: null,
+        sceneVideoReady: false,
+        scenePlayPending: false,
+        scenePlayAttempt: 0,
+        reducedMotionQuery: null,
+        lastRouteKey: '',
     };
 
     const validBackgroundModes = new Set([
@@ -87,6 +98,17 @@
             if (normalized === 'false') return false;
         }
         return fallback;
+    };
+
+    const getSceneBackgroundMode = (value) => {
+        if (value === true) return SCENE_MODE_THUMBNAIL;
+        if (value === false) return SCENE_MODE_DISABLED;
+        const normalized = String(value ?? '').trim().toLowerCase();
+        if (normalized === SCENE_MODE_PREVIEW) return SCENE_MODE_PREVIEW;
+        if (normalized === SCENE_MODE_THUMBNAIL || normalized === 'true') {
+            return SCENE_MODE_THUMBNAIL;
+        }
+        return SCENE_MODE_DISABLED;
     };
 
     const getConfigNumber = (value, fallback, min, max) => {
@@ -177,7 +199,7 @@
 
         state.entityId = config.id;
         state.galleryMode = getConfigBoolean(config.mode, false);
-        state.uniqueScenePage = getConfigBoolean(config.scenePage, false);
+        state.sceneBackgroundMode = getSceneBackgroundMode(config.scenePage);
         state.uniquePerformerPage = getConfigBoolean(config.performerPage, false);
         state.performerGalleryMode = getConfigBoolean(config.performerPageEntity, false);
         state.performerEntityId = config.performerPageId ?? null;
@@ -231,6 +253,7 @@
         state.backgroundDisplayMode = state.showViewBackgroundButton
             ? loadBackgroundDisplayMode()
             : BACKGROUND_MODE_ENABLED;
+        state.reducedMotionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)') || null;
 
         state.root.style.setProperty(
             '--background-images-slideshow-transition-duration',
@@ -244,6 +267,7 @@
         ensureBackgroundContainer();
         setupViewBackgroundButton();
         installHeaderObserver();
+        installSceneVideoHandlers();
         applyBackgroundDisplayMode();
 
         if (state.entityId) {
@@ -255,8 +279,9 @@
         }
 
         installNavigationHooks();
+        state.lastRouteKey = getRouteKey();
 
-        if (state.uniqueScenePage || state.uniquePerformerPage) {
+        if (state.sceneBackgroundMode !== SCENE_MODE_DISABLED || state.uniquePerformerPage) {
             await onPageNavigation();
         } else {
             setActiveBackgrounds(state.globalBackgroundImages, 'global');
@@ -275,6 +300,8 @@
         const match = location.pathname.match(/^\/scenes\/(\d+)(?:\/|$)/);
         return match ? match[1] : '';
     };
+
+    const getRouteKey = () => `${getCurrentSceneId()}|${getCurrentPerformerId()}`;
 
     const ensureBackgroundContainer = () => {
         if (state.backgroundContainer) return state.backgroundContainer;
@@ -335,13 +362,26 @@
     /** Select the scene, performer, or global source after navigation. */
     const onPageNavigation = async () => {
         const token = ++state.navigationToken;
-        const sceneId = state.uniqueScenePage ? getCurrentSceneId() : '';
+        resetSceneVideo();
+        applyBackgroundDisplayMode();
+        const sceneId = state.sceneBackgroundMode !== SCENE_MODE_DISABLED ? getCurrentSceneId() : '';
         if (sceneId) {
-            let screenshot = '';
+            let paths = {};
             try {
-                screenshot = await getSceneScreenshot(sceneId);
+                paths = await getSceneBackgroundPaths(sceneId);
             } catch (err) {
-                console.warn('Could not load scene background image.', err);
+                console.warn('Could not load scene background media.', err);
+            }
+            if (token !== state.navigationToken || getCurrentSceneId() !== sceneId) return;
+
+            let screenshot = '';
+            if (paths.screenshot) {
+                try {
+                    await preloadImage(paths.screenshot);
+                    screenshot = paths.screenshot;
+                } catch (err) {
+                    console.warn('Scene screenshot is unavailable; using global backgrounds.', err);
+                }
             }
             if (token !== state.navigationToken || getCurrentSceneId() !== sceneId) return;
 
@@ -349,6 +389,9 @@
                 screenshot ? [screenshot] : state.globalBackgroundImages,
                 screenshot ? `scene:${sceneId}` : 'global'
             );
+            if (state.sceneBackgroundMode === SCENE_MODE_PREVIEW) {
+                state.scenePreviewUrl = paths.preview || '';
+            }
             applyBackgroundDisplayMode();
             return;
         }
@@ -374,8 +417,14 @@
     const onAppNavigation = () => {
         setupViewBackgroundButton();
 
-        if (state.uniqueScenePage || state.uniquePerformerPage) {
-            onPageNavigation();
+        if (state.sceneBackgroundMode !== SCENE_MODE_DISABLED || state.uniquePerformerPage) {
+            const routeKey = getRouteKey();
+            if (routeKey !== state.lastRouteKey) {
+                state.lastRouteKey = routeKey;
+                void onPageNavigation();
+            } else {
+                applyBackgroundDisplayMode();
+            }
         } else {
             applyBackgroundDisplayMode();
         }
@@ -441,6 +490,115 @@
             }
         });
         hooks.headerObserver.observe(state.root, { childList: true, subtree: true });
+    };
+
+    const installSceneVideoHandlers = () => {
+        const hooks = window[GLOBAL_HOOK_KEY] || {};
+        window[GLOBAL_HOOK_KEY] = hooks;
+        hooks.sceneVideoCleanup?.();
+        const onMotionChange = () => {
+            if (state.reducedMotionQuery.matches) releaseSceneVideo();
+            applyBackgroundDisplayMode();
+        };
+        document.addEventListener('visibilitychange', syncSceneVideoPlayback);
+        state.reducedMotionQuery?.addEventListener?.('change', onMotionChange);
+        hooks.sceneVideoCleanup = () => {
+            document.removeEventListener('visibilitychange', syncSceneVideoPlayback);
+            state.reducedMotionQuery?.removeEventListener?.('change', onMotionChange);
+            releaseSceneVideo();
+        };
+    };
+
+    const releaseSceneVideo = () => {
+        const video = state.sceneVideo;
+        state.sceneVideo = null;
+        state.sceneVideoReady = false;
+        state.scenePlayPending = false;
+        state.scenePlayAttempt += 1;
+        if (!video) return;
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        video.remove();
+    };
+
+    const resetSceneVideo = () => {
+        state.scenePreviewUrl = '';
+        state.scenePreviewFailed = false;
+        releaseSceneVideo();
+    };
+
+    const hasBackgroundSource = () =>
+        state.activeImages.length > 0 ||
+        (Boolean(state.scenePreviewUrl) && !state.scenePreviewFailed && !state.reducedMotionQuery?.matches);
+
+    const syncSceneVideoPlayback = () => {
+        const shouldPlay = Boolean(state.scenePreviewUrl) &&
+            !state.scenePreviewFailed &&
+            !state.reducedMotionQuery?.matches &&
+            state.backgroundDisplayMode !== BACKGROUND_MODE_DISABLED &&
+            document.visibilityState !== 'hidden';
+        if (!shouldPlay) {
+            if (state.sceneVideo && (!state.sceneVideo.paused || state.scenePlayPending)) {
+                state.scenePlayAttempt += 1;
+                state.scenePlayPending = false;
+                state.sceneVideo.pause();
+            }
+            return;
+        }
+
+        if (!state.sceneVideo) {
+            const video = document.createElement('video');
+            video.className = 'background-images-slideshow__video';
+            video.muted = true;
+            video.defaultMuted = true;
+            video.loop = true;
+            video.playsInline = true;
+            video.preload = 'auto';
+            video.setAttribute('playsinline', '');
+            video.setAttribute('aria-hidden', 'true');
+            const source = state.scenePreviewUrl;
+            video.addEventListener('playing', () => {
+                if (state.sceneVideo !== video || state.scenePreviewUrl !== source) return;
+                state.sceneVideoReady = true;
+                applyBackgroundDisplayMode();
+            });
+            video.addEventListener('error', () => {
+                if (state.sceneVideo !== video) return;
+                state.scenePreviewFailed = true;
+                releaseSceneVideo();
+                applyBackgroundDisplayMode();
+            });
+            state.sceneVideo = video;
+            ensureBackgroundContainer().append(video);
+            video.src = source;
+        }
+
+        const video = state.sceneVideo;
+        if (!video.paused || state.scenePlayPending) return;
+        state.scenePlayPending = true;
+        const attempt = ++state.scenePlayAttempt;
+        try {
+            const playback = video.play();
+            Promise.resolve(playback).then(() => {
+                if (state.sceneVideo !== video || attempt !== state.scenePlayAttempt) return;
+                state.scenePlayPending = false;
+                if (video.paused) syncSceneVideoPlayback();
+            }).catch(() => {
+                if (state.sceneVideo !== video || attempt !== state.scenePlayAttempt) return;
+                state.scenePlayPending = false;
+                if (document.visibilityState === 'hidden') return;
+                if (state.backgroundDisplayMode === BACKGROUND_MODE_DISABLED) return;
+                state.scenePreviewFailed = true;
+                releaseSceneVideo();
+                applyBackgroundDisplayMode();
+            });
+        } catch (err) {
+            state.scenePlayPending = false;
+            state.scenePreviewFailed = true;
+            releaseSceneVideo();
+            applyBackgroundDisplayMode();
+        }
     };
 
     const setActiveBackgrounds = (images, sourceKey) => {
@@ -538,6 +696,8 @@
         return state.backgroundOpacity;
     };
 
+    const getImageTargetOpacity = () => state.sceneVideoReady ? 0 : getTargetOpacity();
+
     const normalizeWidths = (widths) => {
         const total = widths.reduce((sum, width) => sum + width, 0);
         if (!Number.isFinite(total) || total <= 0) {
@@ -605,7 +765,10 @@
         ensureBackgroundContainer();
 
         const transitionToken = ++state.transitionToken;
-        const targetOpacity = getTargetOpacity();
+        if (skipTransition && state.transitionTimer) {
+            window.clearTimeout(state.transitionTimer);
+            state.transitionTimer = 0;
+        }
         const nextImages = normalizeBackgroundImages(images);
         const currentImages = state.currentBackgroundImages.length
             ? state.currentBackgroundImages
@@ -628,7 +791,7 @@
         ) {
             renderLayer(state.baseLayer, nextImages);
             renderLayer(state.nextLayer, nextImages);
-            state.baseLayer.style.opacity = targetOpacity;
+            state.baseLayer.style.opacity = getImageTargetOpacity();
             state.nextLayer.style.opacity = 0;
             state.currentBackgroundImages = nextImages;
             return;
@@ -650,7 +813,7 @@
 
         renderLayer(state.baseLayer, currentImages);
         renderLayer(state.nextLayer, nextImages);
-        state.baseLayer.style.opacity = targetOpacity;
+        state.baseLayer.style.opacity = getImageTargetOpacity();
         state.nextLayer.style.opacity = 0;
 
         requestAnimationFrame(() => {
@@ -658,7 +821,7 @@
             requestAnimationFrame(() => {
                 if (transitionToken !== state.transitionToken) return;
                 state.baseLayer.style.opacity = 0;
-                state.nextLayer.style.opacity = getTargetOpacity();
+                state.nextLayer.style.opacity = getImageTargetOpacity();
             });
         });
 
@@ -666,7 +829,7 @@
             if (transitionToken !== state.transitionToken) return;
             renderLayer(state.baseLayer, nextImages);
             renderLayer(state.nextLayer, nextImages);
-            state.baseLayer.style.opacity = getTargetOpacity();
+            state.baseLayer.style.opacity = getImageTargetOpacity();
             state.nextLayer.style.opacity = 0;
             state.currentBackgroundImages = nextImages;
             state.transitionTimer = 0;
@@ -698,20 +861,20 @@
         if (state.backgroundDisplayMode === BACKGROUND_MODE_VIEWING) {
             return {
                 icon: '<i class="fa-solid fa-arrows-to-eye"></i>',
-                title: 'Showing background only. Click to disable background images.',
+                title: 'Showing background only. Click to disable the background.',
             };
         }
 
         if (state.backgroundDisplayMode === BACKGROUND_MODE_DISABLED) {
             return {
                 icon: '<i class="fa-regular fa-eye-slash"></i>',
-                title: 'Background images disabled. Click to enable background images.',
+                title: 'Background disabled. Click to enable the background.',
             };
         }
 
         return {
             icon: '<i class="fa-regular fa-eye"></i>',
-            title: 'Background images enabled. Click to show only the background.',
+            title: 'Background enabled. Click to show only the background.',
         };
     };
 
@@ -719,15 +882,15 @@
         if (!node) return;
         const meta = getBackgroundControlMeta();
         node.innerHTML = meta.icon;
-        const title = state.activeImages.length ? meta.title : 'No background images are available on this page.';
+        const title = hasBackgroundSource() ? meta.title : 'No background is available on this page.';
         node.title = title;
         node.setAttribute('aria-label', title);
         node.dataset.backgroundMode = state.backgroundDisplayMode;
-        node.disabled = !state.activeImages.length;
+        node.disabled = !hasBackgroundSource();
     };
 
     const cycleBackgroundDisplayMode = () => {
-        if (!state.activeImages.length) return;
+        if (!hasBackgroundSource()) return;
         if (state.backgroundDisplayMode === BACKGROUND_MODE_ENABLED) {
             setBackgroundDisplayMode(BACKGROUND_MODE_VIEWING, { persist: true });
             return;
@@ -750,10 +913,12 @@
 
     const applyBackgroundDisplayMode = () => {
         const targetOpacity = getTargetOpacity();
+        const imageOpacity = getImageTargetOpacity();
 
         applyThemeCompatibilityStyles();
 
-        if (state.backgroundDisplayMode === BACKGROUND_MODE_VIEWING && state.activeImages.length) {
+        if (state.backgroundDisplayMode === BACKGROUND_MODE_VIEWING &&
+            (state.activeImages.length || state.sceneVideoReady)) {
             document.documentElement.classList.add('background-images-slideshow--viewing');
             document.addEventListener('keydown', escapeListener);
         } else {
@@ -761,8 +926,10 @@
             document.removeEventListener('keydown', escapeListener);
         }
 
-        if (state.baseLayer) state.baseLayer.style.opacity = targetOpacity;
-        if (state.nextLayer && state.transitionTimer) state.nextLayer.style.opacity = targetOpacity;
+        if (state.baseLayer) state.baseLayer.style.opacity = imageOpacity;
+        if (state.nextLayer && state.transitionTimer) state.nextLayer.style.opacity = imageOpacity;
+        if (state.sceneVideo) state.sceneVideo.style.opacity = state.sceneVideoReady ? targetOpacity : 0;
+        syncSceneVideoPlayback();
         updateBackgroundControlButton();
     };
 
@@ -799,15 +966,15 @@
             .filter(Boolean);
     };
 
-    const getSceneScreenshot = async (sceneId) => {
+    const getSceneBackgroundPaths = async (sceneId) => {
         const result = await makeRequest({
-            operationName: 'BackgroundSceneScreenshot',
-            query: `query BackgroundSceneScreenshot($id: ID!) {
-                findScene(id: $id) { paths { screenshot } }
+            operationName: 'BackgroundScenePaths',
+            query: `query BackgroundScenePaths($id: ID!) {
+                findScene(id: $id) { paths { screenshot preview } }
             }`,
             variables: { id: sceneId },
         });
-        return result?.data?.findScene?.paths?.screenshot || '';
+        return result?.data?.findScene?.paths || {};
     };
 
     const configRequest = {
