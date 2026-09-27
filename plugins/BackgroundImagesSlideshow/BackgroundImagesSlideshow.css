@@ -30,6 +30,18 @@
     transition: opacity var(--background-images-slideshow-transition-duration) cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+.background-images-slideshow__video {
+    position: absolute;
+    inset: calc(var(--background-images-slideshow-blur-inset) * -1);
+    width: calc(100% + var(--background-images-slideshow-blur-inset) + var(--background-images-slideshow-blur-inset));
+    height: calc(100% + var(--background-images-slideshow-blur-inset) + var(--background-images-slideshow-blur-inset));
+    object-fit: cover;
+    object-position: center 10%;
+    opacity: 0;
+    filter: var(--background-images-slideshow-filter);
+    transition: opacity var(--background-images-slideshow-transition-duration) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 .background-images-slideshow__column {
     position: absolute;
     top: 0;
