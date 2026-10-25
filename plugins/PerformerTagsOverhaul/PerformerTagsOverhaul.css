@@ -32,8 +32,18 @@
 
 .performer-tags-overhaul__fallback-group {
   width: 100%;
+  min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  /*
+   * Performers Toolkit turns .detail-container into a multi-column grid.
+   * This host is a direct child of that container, so leaving it on auto
+   * placement lets the tag panel's min-content width enlarge the portrait
+   * column and collapse the performer-details column. Keep the overhaul as
+   * a full-width row below the header instead. These grid properties are
+   * inert with Stash's normal non-grid detail container.
+   */
+  grid-column: 1 / -1;
 }
 
 .performer-tags-overhaul__original-hidden {
